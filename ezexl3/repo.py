@@ -113,6 +113,11 @@ def run_repo(
         models = [model_dir]
         forwarded = list(quant_args)
 
+        # Inject devices if not already in quant_args
+        if devices and ("-d" not in forwarded and "--devices" not in forwarded):
+            devices_str = ",".join(str(d) for d in devices)
+            forwarded += ["-d", devices_str]
+
         # If device ratios were supplied via main flags, and user didn't also pass -dr in quant_args,
         # we can inject it (but keep it minimal and non-magical).
         if device_ratios and ("-dr" not in forwarded and "--device-ratios" not in forwarded):
