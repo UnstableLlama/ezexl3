@@ -155,6 +155,10 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("-d", "--device", default="0", help="CUDA device index (default: 0)")
     m.add_argument("--csv", default=None, help="Override CSV output path")
     m.add_argument("--no-skip-done", action="store_true", help="Do not skip rows already in the CSV")
+    m.add_argument(
+        "--exllamav3-root",
+        help="Path to exllamav3 checkout (saved for future runs)",
+    )
 
 
     # Placeholders for later:
