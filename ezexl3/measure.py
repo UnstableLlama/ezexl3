@@ -234,8 +234,11 @@ def run_model_diff(
     ]
     out = run_cmd_capture(cmd)
 
-    ppl_match = re.search(r"Perplexity:\s+([\d.]+)", out)
-    kl_match = re.search(r"K/L Divergence:\s+([\d.]+)", out)
+    # Use more robust regex that handles both "Perplexity" and "B perplexity"
+    # and "K/L Divergence" vs "KL divergence (A, B)"
+    ppl_match = re.search(r"(?:B\s+)?Perplexity:\s+([\d.]+)", out, re.IGNORECASE)
+    kl_match = re.search(r"(?:KL|K/L)\s+divergence(?:\s+\(A,\s+B\))?:\s+([\d.]+)", out, re.IGNORECASE)
+
     if not ppl_match:
         raise ValueError("Could not parse model_diff output (Perplexity pattern didn't match).")
     if not kl_match:

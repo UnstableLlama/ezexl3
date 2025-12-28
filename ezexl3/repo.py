@@ -175,6 +175,8 @@ def run_repo(
             p.daemon = False
             p.start()
             procs.append(p)
+            # Stagger worker starts to reduce simultaneous cache access during initialization
+            time.sleep(2.0)
 
         for p in procs:
             p.join()
