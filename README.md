@@ -1,24 +1,49 @@
-ezexl3 is a small CLI tool that turns a BF16 model directory into a ready-to-upload EXL3 quantized repo using a single command.
+# ezexl3
 
-It handles:
+**ezexl3** is a simple, single-command EXL3 repo generator.
 
--batch quantization across multiple bitrates
+It wraps the EXL3 quantization and evaluation workflow into a tool that:
+- runs batch quantization safely (resume / skip supported),
+- measures quality (PPL + KL) reproducibly,
+- scales across multiple GPUs without CSV corruption,
+- and produces HF-ready artifacts with minimal effort.
 
--automatic resume if something crashes
+This is designed for people who *want the results of EXL3 quantization* without having to wire everything together themselves.
 
--automated measurements
+---
 
--clean output layout
+## What ezexl3 does
 
-Quality quantizations quickly!
+At a high level, `ezexl3 repo` performs:
 
-git add pyproject.toml ezexl3/ README.md LICENSE
-git commit -m "Initial ezexl3 CLI with integrated EXL3 quantization" \
-            -m "- Add pip-installable ezexl3 CLI with subcommands
-- Integrate EXL3 quantization via native Python wrapper
-- Call exllamav3 conversion APIs directly (no subprocesses)
-- Preserve EXL3 skip/resume semantics via config.json and args.json
-- Support multi-model, multi-BPW batch quantization
-- Implement passthrough argument blocks (--quant-args -- ...)
-- Add dry-run mode for safe inspection"
+1. **Quantization**
+   - Batch quantizes a BF16 base model across multiple BPWs
+   - Uses EXL3 via exllamav3
+   - Safe to interrupt and resume
+   - Supports multi-GPU device ratios
 
+2. **Measurement**
+   - Measures each quant against the BF16 base
+   - Records:
+     - PPL (r=10)
+     - KL divergence vs base
+     - PPL (r=100)
+     - Model size (GiB)
+   - Uses per-GPU CSV shards to avoid concurrent-write issues
+   - Merges results into a single canonical CSV
+
+3. **(Coming soon) Reporting**
+   - README tables
+   - Graphs
+   - HF-ready repo layout
+
+---
+
+## Installation
+
+Clone the repo and install in editable mode:
+
+```bash
+git clone https://github.com/UnstableLlama/ezexl3.git
+cd ezexl3
+pip install -e .
