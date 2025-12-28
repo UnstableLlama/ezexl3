@@ -86,40 +86,42 @@ def _csv_or_space_list(values: List[str]) -> List[str]:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="ezexl3",
-        description="ezexl3: single-command EXL3 quantization + measurement + reporting",
+        description="ezexl3: simple single-command EXL3 repo generator"
     )
     p.add_argument("-v", "--version", action="version", version=f"%(prog)s {__version__}")
 
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    # --- process ---
-    proc = sub.add_parser("process", help="Quantize -> measure (parallel) -> report -> optional cleanup")
-    proc.add_argument("-m", "--model", required=True, help="Path to BF16/base model directory")
-    proc.add_argument(
-        "-b", "--bpws",
-        required=True,
-        nargs="+",
-        help="Target BPWs (space-separated or comma-separated). Example: -b 2 3 4 5 6 or -b 2,3,4,5,6",
-    )
-    proc.add_argument(
-        "-d", "--devices",
-        default="0",
-        help="CUDA devices for quant+measure. Example: -d 0,1",
-    )
-    proc.add_argument(
-        "-r", "--device-ratios",
-        default=None,
-        help="Device ratios for quantization only. Example: -r 1,1 (optional)",
-    )
-    proc.add_argument("--schedule", choices=["queue", "static"], default="queue",
-                      help="Measurement scheduling strategy (default: queue)")
-    proc.add_argument("--cleanup", action="store_true", help="Remove w-* working dirs after success")
-    proc.add_argument("--no-quant", action="store_true", help="Skip quantization stage")
-    proc.add_argument("--no-measure", action="store_true", help="Skip measurement stage")
-    proc.add_argument("--no-report", action="store_true", help="Skip report stage")
-    proc.add_argument("--no-meta", action="store_true", help="Do not write run.json receipt")
-    proc.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
+    def add_repo_flags(p_sub: argparse.ArgumentParser) -> None:
+        p_sub.add_argument("-m", "--model", required=True, help="Path to BF16/base model directory")
+        p_sub.add_argument(
+            "-b", "--bpws",
+            required=True,
+            nargs="+",
+            help="Target BPWs (space-separated or comma-separated). Example: -b 2 3 4 5 6 or -b 2,3,4,5,6",
+        )
+        p_sub.add_argument(
+            "-d", "--devices",
+            default="0",
+            help="CUDA devices for quant+measure. Example: -d 0,1",
+        )
+        p_sub.add_argument(
+            "-r", "--device-ratios",
+            default=None,
+            help="Device ratios for quantization only. Example: -r 1,1 (optional)",
+        )
+        p_sub.add_argument("--schedule", choices=["queue", "static"], default="queue",
+                           help="Measurement scheduling strategy (default: queue)")
+        p_sub.add_argument("--cleanup", action="store_true", help="Remove w-* working dirs after success")
+        p_sub.add_argument("--no-quant", action="store_true", help="Skip quantization stage")
+        p_sub.add_argument("--no-measure", action="store_true", help="Skip measurement stage")
+        p_sub.add_argument("--no-report", action="store_true", help="Skip report stage")
+        p_sub.add_argument("--no-meta", action="store_true", help="Do not write run.json receipt")
+        p_sub.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
 
+    # --- repo (main command) ---
+    repo = sub.add_parser("repo", help="Generate an EXL3 repo (quantize -> measure -> report)")
+    add_repo_flags(repo)
 
     # --- quantize ---
     q = sub.add_parser("quantize", help="Quantize only (vendored multiConvert)")
@@ -150,7 +152,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(pt.cleaned_argv)
 
     # Normalize lists
-    if getattr(args, "cmd", None) == "process":
+    if getattr(args, "cmd", None) == "repo":
         args.bpws = _csv_or_space_list(args.bpws)
         # devices: "0,1" -> ["0","1"]
         args.devices = [d.strip() for d in str(args.devices).split(",") if d.strip()]
@@ -176,7 +178,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"  cleanup      : {args.cleanup}")
         print(f"  meta/logs    : meta={not args.no_meta} logs={not args.no_logs}")
         print("")
-        print("Next: implement ezexl3.process.run_process(...) and call it here.")
         return 0
 
     if getattr(args, "cmd", None) == "quantize":
