@@ -101,7 +101,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     def add_repo_flags(p_sub: argparse.ArgumentParser) -> None:
-        p_sub.add_argument("-m", "--model", required=True, help="Path to BF16/base model directory")
+        p_sub.add_argument("-m", "--models", nargs="+", required=True,
+                           help="One or more BF16/base model directories (space or comma separated)")
         p_sub.add_argument(
             "--exllamav3-root",
             help="Path to exllamav3 checkout (saved for future runs)",
@@ -178,6 +179,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Normalize lists
     if getattr(args, "cmd", None) == "repo":
+        args.models = _csv_or_space_list(args.models)
         args.bpws = _csv_or_space_list(args.bpws)
         # devices: "0,1" -> ["0","1"]
         args.devices = [d.strip() for d in str(args.devices).split(",") if d.strip()]
@@ -194,6 +196,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         args.measure_args = pt.measure_args
 
         from ezexl3.repo import run_repo
+        import os
 
         # convert devices list[str] -> list[int]
         devices_i = [int(d) for d in args.devices]
@@ -202,21 +205,50 @@ def main(argv: Optional[List[str]] = None) -> int:
         # run_repo expects a single string like "1,1" (or None) to pass through to converter.
         device_ratios_str = ",".join(args.device_ratios) if args.device_ratios else None
 
-        rc = run_repo(
-            model_dir=args.model,
-            bpws=args.bpws,
-            devices=devices_i,
-            device_ratios=device_ratios_str,
-            quant_args=args.quant_args,
-            measure_args=args.measure_args,
-            exllamav3_root=args.exllamav3_root,   # ← THIS LINE
-            do_quant=(not args.no_quant),
-            do_measure=(not args.no_measure),
-            do_report=(not args.no_report),
-            cleanup=args.cleanup,
-            write_logs=(not args.no_logs),
-        )
-        return rc
+        # Process each model, continuing on error
+        failed_models: List[str] = []
+        for model_dir in args.models:
+            model_name = os.path.basename(os.path.abspath(model_dir))
+            print(f"\n{'='*60}")
+            print(f"Processing model: {model_name}")
+            print(f"{'='*60}")
+
+            try:
+                rc = run_repo(
+                    model_dir=model_dir,
+                    bpws=args.bpws,
+                    devices=devices_i,
+                    device_ratios=device_ratios_str,
+                    quant_args=args.quant_args,
+                    measure_args=args.measure_args,
+                    exllamav3_root=args.exllamav3_root,
+                    do_quant=(not args.no_quant),
+                    do_measure=(not args.no_measure),
+                    do_report=(not args.no_report),
+                    cleanup=args.cleanup,
+                    write_logs=(not args.no_logs),
+                )
+                if rc != 0:
+                    failed_models.append(model_dir)
+            except Exception as e:
+                print(f"Error processing {model_name}: {e}")
+                failed_models.append(model_dir)
+
+        # Summary
+        if failed_models:
+            print(f"\n{'='*60}")
+            print(f"Completed with {len(failed_models)} failure(s):")
+            for m in failed_models:
+                print(f"  - {m}")
+            print(f"{'='*60}")
+            return 1
+
+        if len(args.models) > 1:
+            print(f"\n{'='*60}")
+            print(f"All {len(args.models)} models processed successfully")
+            print(f"{'='*60}")
+
+        return 0
 
 
     if getattr(args, "cmd", None) == "quantize":
