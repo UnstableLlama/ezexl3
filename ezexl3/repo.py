@@ -57,6 +57,7 @@ def _worker_measure(
     csv_path: str,
     tasks: "Queue[str]",
     log_path: Optional[str],
+    exllamav3_root: Optional[str] = None,
 ) -> None:
     # Optional per-worker log file
     if log_path:
@@ -152,7 +153,7 @@ def run_repo(
 
         procs: List[Process] = []
         for d, csvp, logp in zip(devices, shard_csvs, log_paths):
-            p = Process(target=_worker_measure, args=(model_dir, d, csvp, tasks, logp))
+            p = Process(target=_worker_measure, args=(model_dir, d, csvp, tasks, logp, exllamav3_root))
             p.daemon = False
             p.start()
             procs.append(p)
