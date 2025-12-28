@@ -2,6 +2,8 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+ezexl3.egg-info/
 .env
 .venv
 venv/
