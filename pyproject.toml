@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ezexl3"
+version = "0.0.1"
+description = "Single-command EXL3 quantization + measurement + reporting pipeline"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+ezexl3 = "ezexl3.cli:main"
