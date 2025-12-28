@@ -7,3 +7,4 @@ ezexl3.egg-info/
 .env
 .venv
 venv/
+__disk_lru_cache__/
