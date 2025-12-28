@@ -59,6 +59,8 @@ def _worker_measure(
     log_path: Optional[str],
     exllamav3_root: Optional[str] = None,
 ) -> None:
+    import traceback
+
     # Optional per-worker log file
     if log_path:
         os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
@@ -69,20 +71,31 @@ def _worker_measure(
     # Make sure shard CSV exists early
     os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
 
+    failures = []
     while True:
         item = tasks.get()
         if item is None:
             break
 
         # Each item is a single quant label ("base" or "2" etc.)
-        run_measure(
-            base_dir=base_dir,
-            quants=[item],
-            device=device,
-            csv_path=csv_path,
-            exllamav3_root=exllamav3_root,
-            skip_done=True,
-        )
+        try:
+            run_measure(
+                base_dir=base_dir,
+                quants=[item],
+                device=device,
+                csv_path=csv_path,
+                exllamav3_root=exllamav3_root,
+                skip_done=True,
+            )
+        except Exception as e:
+            print(f"🔴 ERROR measuring '{item}': {e}")
+            traceback.print_exc()
+            failures.append(item)
+
+    if failures:
+        print(f"\n{'='*60}")
+        print(f"Worker GPU {device} finished with {len(failures)} failure(s): {failures}")
+        print(f"{'='*60}")
 
     if log_path:
         sys.stdout.flush()
