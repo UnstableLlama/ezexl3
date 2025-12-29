@@ -8,3 +8,4 @@ ezexl3.egg-info/
 .venv
 venv/
 __disk_lru_cache__/
+...
