@@ -41,7 +41,7 @@ def prompt_metadata(model_dir: str, bpws: List[str]) -> Dict[str, str]:
         "MODEL": model,
         "REPOLINK": repolink,
         "USER": user,
-        "QUANT_METHOD": "EXL3",
+        "QUANT_METHOD": "exl3",
         "QUANT_TOOL": "exllamav3",
     }
 

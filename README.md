@@ -4,10 +4,10 @@
 
 It wraps the EXL3 quantization and evaluation workflow into a tool that:
 - Runs batch quantization easily (resume / skip supported).
-- Measures quality (PPL + K/L) efficiently, recording data to CSV.
-- Automatically generates HuggingFace-ready `README.md` with your measurements using customizable templates.
+- Measures PPL + KL div, recording data to CSV.
+- Automatically generates HuggingFace-ready `README.md` with your measurements using customizable templates,
 
-All with one command.
+all with one command.
 
 ---
 
@@ -42,6 +42,39 @@ The system is flexible with naming. For example, `-t fire` will search for:
 - `templates/fireTemplate.md`
 
 If no template is specified, it defaults to `basicTemplateREADME.md`.
+
+**Easily generate your own custom template with AI assistance!**
+Copy and paste any TemplateREADME.md into your favorite LLM (Gemini, Claude, ChatGPT) along with this example prompt, followed by your own description:
+
+"Can you take this template, keep the main layout and variables, and modify it aesthetically based on my following prompts? Preserve all of the labels and title strings, only change the aesthetic, not the words or numbers:
+
+*Make it dark and understated, high contrast, professional, metallic.*"
+
+
+
+<p align="center">
+  <img src="templates/basicTemplate.png" width="45%" />
+  <img src="templates/fireTemplate.png" width="45%" />
+  <img src="templates/greenTemplate.png" width="45%" />
+  <img src="templates/forestTemplate.png" width="45%" />
+</p>
+
+### 4. Advanced: Passthrough Flags
+You can pass custom arguments directly to the underlying quantization (`multiConvert`) or measurement scripts using the `--quant-args` and `--measure-args` flags.
+
+**Important**: These flags require a double-dash `--` delimiter to separate the passthrough block from the rest of the arguments.
+
+```bash
+# Pass custom calibration dataset to quantization
+ezexl3 repo -m /path/to/model -b 4.0 --quant-args -- -pm
+
+# Pass custom rows/device settings to measurement
+ezexl3 repo -m /path/to/model -b 4.0 --measure-args -- -r 200 -d 0
+```
+
+Common Use Cases:
+- **Quantization**: `-pm` (MoE speedup), `-ss` (shard size), `-nr` (no-rope-scaling).
+- **Measurement**: `-r` (number of rows for PPL), `-d` (specific evaluation device).
 
 ## Key Features
 - **Quantization Queuing**: Run multiple quantizations at a time with one command.

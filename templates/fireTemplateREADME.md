@@ -155,7 +155,7 @@ tags:
   </div>
 
   <div class="content-panel">
-    <div class="panel-title">Quantization Matrix</div>
+    <div class="panel-title">Repo Data</div>
     <div class="panel-body">
       <div class="table-wrapper">
         <table class="data-table">
@@ -205,7 +205,7 @@ tags:
   </div>
 
   <div class="content-panel">
-    <div class="panel-title">CLI Access</div>
+    <div class="panel-title">CLI Download</div>
     <div class="panel-body">
       <div class="terminal-box">
         huggingface-cli download {{USER}}/{{MODEL}}-{{QUANT_METHOD}} --revision "{{DEFAULT_REVISION}}" --local-dir ./
