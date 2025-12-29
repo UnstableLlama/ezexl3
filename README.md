@@ -1,8 +1,8 @@
 # ezexl3
 
-**ezexl3** is a simple, single-command EXL3 repo generator.
+**ezexl3** is a simple, single-command [EXL3](https://github.com/turboderp/exllamav3) repo generator.
 
-It wraps the EXL3 quantization and evaluation workflow into a tool that:
+It wraps the exllamav3 quantization and evaluation workflow into a tool that:
 - Runs batch quantization easily (resume / skip supported).
 - Measures PPL + KL div, recording data to CSV.
 - Automatically generates HuggingFace-ready `README.md` with your measurements using customizable templates,
