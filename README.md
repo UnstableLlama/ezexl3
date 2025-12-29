@@ -16,9 +16,7 @@ all with one command.
 This tool requires a local installation of [exllamav3](https://github.com/turboderp/exllamav3).
 
 ```bash
-# 1. Clone and install exllamav3
-git clone https://github.com/turboderp/exllamav3
-pip install ./exllamav3
+# 1. Make sure you have exllamav3 installed.
 
 # 2. Clone and install ezexl3
 git clone https://github.com/UnstableLlama/ezexl3
