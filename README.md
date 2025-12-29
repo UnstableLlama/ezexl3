@@ -117,7 +117,6 @@ ezexl3 repo -m /path/to/model -b 4.0 --no-prompt
 - **Auto-Measure**: Automatically measure and record K/L div and PPL asynchronously.
 - **Resume Support**: Skip already-finished BPWs and resume partial jobs.
 - **Flexible README Templates**: Automated high-quality README generation for HuggingFace uploads.
-- **Headless Mode**: Optional `--no-prompt` flag for fully automated README generation.
 - **Automatic Cleanup**: Default cleanup of temporary working directories and logs.
 
 ## Development Status
