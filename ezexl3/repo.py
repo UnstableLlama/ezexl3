@@ -56,6 +56,7 @@ def _worker_measure(
     device: int,
     csv_path: str,
     tasks: "Queue[str]",
+    results: "Queue[Optional[dict]]",
     log_path: Optional[str],
     exllamav3_root: Optional[str] = None,
 ) -> None:
@@ -71,36 +72,146 @@ def _worker_measure(
     # Make sure shard CSV exists early
     os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
 
-    failures = []
     while True:
         item = tasks.get()
         if item is None:
+            results.put(None)  # Sentinel
             break
 
         # Each item is a single quant label ("base" or "2" etc.)
         try:
-            run_measure(
+            # We want to capture the result row. 
+            # run_measure currently doesn't return it, so we'll read the last row of the shard CSV 
+            # after it runs, or modify run_measure.
+            # Let's modify run_measure in measure.py to return the row.
+            
+            from ezexl3.measure import run_measure
+            row = run_measure(
                 base_dir=base_dir,
                 quants=[item],
                 device=device,
                 csv_path=csv_path,
                 exllamav3_root=exllamav3_root,
                 skip_done=True,
+                return_row=True,
             )
+            if row:
+                results.put(row)
         except Exception as e:
             print(f"🔴 ERROR measuring '{item}': {e}")
             traceback.print_exc()
-            failures.append(item)
-
-    if failures:
-        print(f"\n{'='*60}")
-        print(f"Worker GPU {device} finished with {len(failures)} failure(s): {failures}")
-        print(f"{'='*60}")
+            # Send an error placeholder?
+            results.put({"weights": item if item != "base" else "bf16", "error": str(e)})
 
     if log_path:
         sys.stdout.flush()
         sys.stderr.flush()
         log_f.close()
+
+
+def run_quant_stage(
+    model_dir: str,
+    bpws: List[str],
+    devices: List[int],
+    device_ratios: Optional[str],
+    quant_args: List[str],
+) -> int:
+    model_dir = os.path.abspath(model_dir)
+    bpws = [str(b) for b in bpws]
+    devices = list(devices)
+
+    models = [model_dir]
+    forwarded = list(quant_args)
+
+    # Inject devices if not already in quant_args
+    if devices and ("-d" not in forwarded and "--devices" not in forwarded):
+        devices_str = ",".join(str(d) for d in devices)
+        forwarded += ["-d", devices_str]
+
+    # If device ratios were supplied via main flags, and user didn't also pass -dr in quant_args,
+    # we can inject it (but keep it minimal and non-magical).
+    if device_ratios and ("-dr" not in forwarded and "--device-ratios" not in forwarded):
+        forwarded += ["-dr", device_ratios]
+
+    rc = quant_run(
+        models=models,
+        bpws=bpws,
+        forwarded=forwarded,
+        dry_run=False,
+        continue_on_error=False,
+    )
+    return rc
+
+
+def run_measure_stage(
+    model_dir: str,
+    bpws: List[str],
+    devices: List[int],
+    exllamav3_root: Optional[str] = None,
+    write_logs: bool = True,
+) -> int:
+    model_dir = os.path.abspath(model_dir)
+    bpws = [str(b) for b in bpws]
+    devices = list(devices)
+
+    # Shard CSVs
+    shard_csvs = []
+    log_paths = []
+    for d in devices:
+        shard_csvs.append(os.path.join(model_dir, f"{os.path.basename(model_dir)}Measured.gpu{d}.csv"))
+        log_paths.append(os.path.join(model_dir, "logs", f"measure_gpu{d}.log") if write_logs else None)
+
+    # Build task list: base once + all bpws
+    tasks = Queue()
+    results = Queue()
+    tasks_list = ["base"] + bpws
+
+    for t in tasks_list:
+        tasks.put(t)
+
+    # Termination sentinels
+    for _ in devices:
+        tasks.put(None)
+
+    procs: List[Process] = []
+    for d, csvp, logp in zip(devices, shard_csvs, log_paths):
+        p = Process(target=_worker_measure, args=(model_dir, d, csvp, tasks, results, logp, exllamav3_root))
+        p.daemon = False
+        p.start()
+        procs.append(p)
+        time.sleep(2.0)
+
+    # Result listener loop
+    out_csv = default_csv_path(model_dir)
+    active_workers = len(devices)
+    all_results = {}
+
+    print(f"\n🚀 Measuring {len(tasks_list)} items on {len(devices)} GPUs...")
+    
+    while active_workers > 0:
+        res = results.get()
+        if res is None:
+            active_workers -= 1
+            continue
+        
+        w = res.get("weights")
+        if not w: continue
+        
+        if "error" in res:
+            print(f"🔴 {w}: FAILED - {res['error']}")
+        else:
+            print(f"✅ {w}: PPL(r100)={res.get('PPL r-100', 'N/A')}")
+        
+        all_results[w] = res
+        
+        # Merge partially to keep the main CSV up to date
+        _merge_csvs(out_csv, shard_csvs)
+
+    for p in procs:
+        p.join()
+
+    print(f"✅ All measurements complete. Merged CSV: {out_csv}")
+    return 0
 
 
 def run_repo(
@@ -113,82 +224,39 @@ def run_repo(
     exllamav3_root=None,
     do_quant: bool = True,
     do_measure: bool = True,
-    do_report: bool = False,  # report stage stub for now
+    do_report: bool = True,
     cleanup: bool = False,
     write_logs: bool = True,
 ) -> int:
-    model_dir = os.path.abspath(model_dir)
-    bpws = [str(b) for b in bpws]
-    devices = list(devices)
-
     # --- Stage 1: quantize ---
     if do_quant:
-        models = [model_dir]
-        forwarded = list(quant_args)
-
-        # Inject devices if not already in quant_args
-        if devices and ("-d" not in forwarded and "--devices" not in forwarded):
-            devices_str = ",".join(str(d) for d in devices)
-            forwarded += ["-d", devices_str]
-
-        # If device ratios were supplied via main flags, and user didn't also pass -dr in quant_args,
-        # we can inject it (but keep it minimal and non-magical).
-        if device_ratios and ("-dr" not in forwarded and "--device-ratios" not in forwarded):
-            forwarded += ["-dr", device_ratios]
-
-        rc = quant_run(
-            models=models,
+        rc = run_quant_stage(
+            model_dir=model_dir,
             bpws=bpws,
-            forwarded=forwarded,
-            dry_run=False,
-            continue_on_error=False,
+            devices=devices,
+            device_ratios=device_ratios,
+            quant_args=quant_args,
         )
         if rc != 0:
             return rc
 
     # --- Stage 2: measure (sharded, dynamic queue) ---
     if do_measure:
-        # Shard CSVs
-        shard_csvs = []
-        log_paths = []
-        for d in devices:
-            shard_csvs.append(os.path.join(model_dir, f"{os.path.basename(model_dir)}Measured.gpu{d}.csv"))
-            log_paths.append(os.path.join(model_dir, "logs", f"measure_gpu{d}.log") if write_logs else None)
-
-        # Build task list: base once + all bpws
-        tasks = Queue()
-        tasks_list = ["base"] + bpws
-
-        # Enqueue only tasks not already measured in ANY shard? Keep it simple:
-        # each worker skips done based on its own shard CSV.
-        # We still enqueue everything; skip-done makes it cheap.
-        for t in tasks_list:
-            tasks.put(t)
-
-        # Termination sentinels
-        for _ in devices:
-            tasks.put(None)
-
-        procs: List[Process] = []
-        for d, csvp, logp in zip(devices, shard_csvs, log_paths):
-            p = Process(target=_worker_measure, args=(model_dir, d, csvp, tasks, logp, exllamav3_root))
-            p.daemon = False
-            p.start()
-            procs.append(p)
-            # Stagger worker starts to reduce simultaneous cache access during initialization
-            time.sleep(2.0)
-
-        for p in procs:
-            p.join()
-
-        # Merge into the canonical CSV name
-        out_csv = default_csv_path(model_dir)
-        _merge_csvs(out_csv, shard_csvs)
-        print(f"✅ merged CSV: {out_csv}")
+        rc = run_measure_stage(
+            model_dir=model_dir,
+            bpws=bpws,
+            devices=devices,
+            exllamav3_root=exllamav3_root,
+            write_logs=write_logs,
+        )
+        if rc != 0:
+            return rc
 
     # --- Stage 3: report (stub for now) ---
     if do_report:
-        print("🟡 report stage not implemented yet")
+        from ezexl3.report import run_report
+        print("Generating report...")
+        run_report(model_dir)
 
     # --- Stage 4: cleanup (later; keep as stub) ---
     if cleanup:

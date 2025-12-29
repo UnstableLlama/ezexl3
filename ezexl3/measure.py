@@ -279,7 +279,8 @@ def run_measure(
     csv_path: str | None = None,
     skip_done: bool = True,
     exllamav3_root: str | None = None,
-) -> int:
+    return_row: bool = False,
+) -> int | dict:
     base_dir = os.path.abspath(base_dir)
     if csv_path is None:
         csv_path = default_csv_path(base_dir)
@@ -287,15 +288,6 @@ def run_measure(
 
     ensure_csv_exists(csv_path)
     done = read_existing_weights(csv_path) if skip_done else set()
-
-    print(f"\n{'='*60}")
-    print("Quant Measurement")
-    print(f"{'='*60}")
-    print(f"Base   : {base_dir}")
-    print(f"Device : {device}")
-    print(f"CSV    : {csv_path}")
-    print(f"Items  : {quants}")
-    print("=" * 60)
 
     for q in quants:
         if q == "base":
@@ -306,20 +298,21 @@ def run_measure(
             label = str(q)
 
         if skip_done and label in done:
-            print(f"🟦 skipping: already measured ({label})")
+            # If return_row is True and we skip, we should probably still return the existing row?
+            # For simplicity, we'll return None if skipped.
+            if return_row and len(quants) == 1:
+                return {} # Or find the row in the CSV
             continue
 
         if not os.path.isdir(model_dir):
             raise FileNotFoundError(f"Quant dir not found: {model_dir}")
 
         if q == "base":
-            print(f"\n--- Measuring base (bf16) ---")
             ppl_r10 = ""
             kl_div = 0.0
             ppl_100 = run_ppl_layer(model_dir, device=device, r=100)
             size_gib = file_size_gib(model_dir)
         else:
-            print(f"\n--- Measuring quant {q} ---")
             ppl_r10, kl_div = run_model_diff(
                 base_dir,
                 model_dir,
@@ -339,13 +332,8 @@ def run_measure(
         }
 
         append_csv_row(csv_path, row)
-        print(f"✓ Wrote row for {label}")
-
-    print(f"\n{'='*60}")
-    print("Measurement Complete")
-    print(f"{'='*60}")
-    print(f"Results saved to: {csv_path}")
-    print("=" * 60)
+        if return_row and len(quants) == 1:
+            return row
 
     return 0
 

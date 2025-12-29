@@ -1,14 +1,8 @@
-#!/usr/bin/env python3
-from __future__ import annotations
-
 import argparse
 import sys
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
-
 from ezexl3 import __version__
-import json
-from pathlib import Path
 
 @dataclass
 class PassThrough:
@@ -17,6 +11,8 @@ class PassThrough:
     cleaned_argv: List[str]
 
 def save_exllamav3_root(path: str) -> None:
+    import json
+    from pathlib import Path
     cfg_dir = Path.home() / ".config" / "ezexl3"
     cfg_dir.mkdir(parents=True, exist_ok=True)
 
@@ -126,8 +122,6 @@ def build_parser() -> argparse.ArgumentParser:
         p_sub.add_argument("--schedule", choices=["queue", "static"], default="queue",
                            help="Measurement scheduling strategy (default: queue)")
         p_sub.add_argument("--cleanup", action="store_true", help="Remove w-* working dirs after success")
-        p_sub.add_argument("--no-quant", action="store_true", help="Skip quantization stage")
-        p_sub.add_argument("--no-measure", action="store_true", help="Skip measurement stage")
         p_sub.add_argument("--no-report", action="store_true", help="Skip report stage")
         p_sub.add_argument("--no-meta", action="store_true", help="Do not write run.json receipt")
         p_sub.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
@@ -137,11 +131,13 @@ def build_parser() -> argparse.ArgumentParser:
     add_repo_flags(repo)
 
     # --- quantize ---
-    q = sub.add_parser("quantize", help="Quantize only (vendored multiConvert)")
+    q = sub.add_parser("quantize", aliases=["quant"], help="Quantize only (vendored multiConvert)")
     q.add_argument("-m", "--models", nargs="+", required=True,
                    help="One or more input model directories (space or comma separated).")
     q.add_argument("-b", "--bpws", nargs="+", required=True,
                    help="Target BPWs (space or comma separated).")
+    q.add_argument("-d", "--devices", default="0", help="CUDA devices. Example: -d 0,1")
+    q.add_argument("-r", "--device-ratios", default=None, help="Device ratios. Example: -r 1,1")
     q.add_argument("--out-template", default="{model}/{bpw}",
                    help="Template for output directory. Fields: {model}, {model_name}, {bpw}")
     q.add_argument("--w-template", default="{model}/w-{bpw}",
@@ -151,11 +147,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     # --- measure ---
     m = sub.add_parser("measure", help="Measure only (vendored quantMeasure)")
-    m.add_argument("-m", "--model", required=True, help="Path to BF16/base model directory")
+    m.add_argument("-m", "--models", nargs="+", required=True, help="One or more model directories")
     m.add_argument("-b", "--bpws", nargs="+", required=True, help="BPWs to measure (space or comma separated)")
-    m.add_argument("-d", "--device", default="0", help="CUDA device index (default: 0)")
-    m.add_argument("--csv", default=None, help="Override CSV output path")
-    m.add_argument("--no-skip-done", action="store_true", help="Do not skip rows already in the CSV")
+    m.add_argument("-d", "--devices", default="0", help="CUDA devices for measurement. Example: -d 0,1")
+    m.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
     m.add_argument(
         "--exllamav3-root",
         help="Path to exllamav3 checkout (saved for future runs)",
@@ -177,34 +172,32 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(pt.cleaned_argv)
 
+    # Initialize common fields
+    cmd = getattr(args, "cmd", None)
+    if not cmd:
+        parser.print_help()
+        return 0
+
     # Normalize lists
-    if getattr(args, "cmd", None) == "repo":
+    if hasattr(args, "models"):
         args.models = _csv_or_space_list(args.models)
+    if hasattr(args, "bpws"):
         args.bpws = _csv_or_space_list(args.bpws)
-        # devices: "0,1" -> ["0","1"]
+    if hasattr(args, "devices"):
         args.devices = [d.strip() for d in str(args.devices).split(",") if d.strip()]
-        if args.exllamav3_root:
-            save_exllamav3_root(args.exllamav3_root)
+    if hasattr(args, "device_ratios") and args.device_ratios is not None:
+        args.device_ratios = [x.strip() for x in str(args.device_ratios).split(",") if x.strip()]
+    
+    if hasattr(args, "exllamav3_root") and args.exllamav3_root:
+        save_exllamav3_root(args.exllamav3_root)
 
-        if args.device_ratios is not None:
-            args.device_ratios = [x.strip() for x in str(args.device_ratios).split(",") if x.strip()]
-        else:
-            args.device_ratios = None
+    import os
+    from ezexl3.repo import run_repo, run_quant_stage, run_measure_stage
 
-        # Attach passthrough
-        args.quant_args = pt.quant_args
-        args.measure_args = pt.measure_args
+    devices_i = [int(d) for d in getattr(args, "devices", ["0"])]
+    device_ratios_str = ",".join(args.device_ratios) if getattr(args, "device_ratios", None) else None
 
-        from ezexl3.repo import run_repo
-        import os
-
-        # convert devices list[str] -> list[int]
-        devices_i = [int(d) for d in args.devices]
-
-        # device_ratios currently parsed into list[str] or None.
-        # run_repo expects a single string like "1,1" (or None) to pass through to converter.
-        device_ratios_str = ",".join(args.device_ratios) if args.device_ratios else None
-
+    if cmd == "repo":
         # Process each model, continuing on error
         failed_models: List[str] = []
         for model_dir in args.models:
@@ -219,11 +212,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                     bpws=args.bpws,
                     devices=devices_i,
                     device_ratios=device_ratios_str,
-                    quant_args=args.quant_args,
-                    measure_args=args.measure_args,
+                    quant_args=pt.quant_args,
+                    measure_args=pt.measure_args,
                     exllamav3_root=args.exllamav3_root,
-                    do_quant=(not args.no_quant),
-                    do_measure=(not args.no_measure),
+                    do_quant=True,
+                    do_measure=True,
                     do_report=(not args.no_report),
                     cleanup=args.cleanup,
                     write_logs=(not args.no_logs),
@@ -232,63 +225,55 @@ def main(argv: Optional[List[str]] = None) -> int:
                     failed_models.append(model_dir)
             except Exception as e:
                 print(f"Error processing {model_name}: {e}")
+                import traceback
+                traceback.print_exc()
                 failed_models.append(model_dir)
 
-        # Summary
         if failed_models:
             print(f"\n{'='*60}")
-            print(f"Completed with {len(failed_models)} failure(s):")
-            for m in failed_models:
-                print(f"  - {m}")
+            print(f"Completed with {len(failed_models)} failure(s): {failed_models}")
             print(f"{'='*60}")
             return 1
-
-        if len(args.models) > 1:
-            print(f"\n{'='*60}")
-            print(f"All {len(args.models)} models processed successfully")
-            print(f"{'='*60}")
-
         return 0
 
+    if cmd in ("quant", "quantize"):
+        failed_models: List[str] = []
+        for model_dir in args.models:
+            print(f"\nQuantizing model: {model_dir}")
+            try:
+                rc = run_quant_stage(
+                    model_dir=model_dir,
+                    bpws=args.bpws,
+                    devices=devices_i,
+                    device_ratios=device_ratios_str,
+                    quant_args=pt.quant_args,
+                )
+                if rc != 0:
+                    failed_models.append(model_dir)
+            except Exception as e:
+                print(f"Error quantizing {model_dir}: {e}")
+                failed_models.append(model_dir)
+        return 1 if failed_models else 0
 
-    if getattr(args, "cmd", None) == "quantize":
-        from ezexl3.quantize import run as quant_run
+    if cmd == "measure":
+        failed_models: List[str] = []
+        for model_dir in args.models:
+            print(f"\nMeasuring model: {model_dir}")
+            try:
+                rc = run_measure_stage(
+                    model_dir=model_dir,
+                    bpws=args.bpws,
+                    devices=devices_i,
+                    exllamav3_root=args.exllamav3_root,
+                    write_logs=(not args.no_logs),
+                )
+                if rc != 0:
+                    failed_models.append(model_dir)
+            except Exception as e:
+                print(f"Error measuring {model_dir}: {e}")
+                failed_models.append(model_dir)
+        return 1 if failed_models else 0
 
-        args.models = _csv_or_space_list(args.models)
-        args.bpws = _csv_or_space_list(args.bpws)
-
-        # Passthrough: use --quant-args -- ...
-        forwarded = pt.quant_args
-
-        rc = quant_run(
-            models=args.models,
-            bpws=args.bpws,
-            forwarded=forwarded,
-            out_template=args.out_template,
-            w_template=args.w_template,
-            dry_run=args.dry,
-            continue_on_error=args.continue_on_error,
-        )
-        return rc
-    if getattr(args, "cmd", None) == "measure":
-        from ezexl3.measure import run_measure
-
-        args.bpws = _csv_or_space_list(args.bpws)
-        quants = args.bpws
-
-        rc = run_measure(
-            base_dir=args.model,
-            quants=quants,
-            device=int(args.device),
-            csv_path=args.csv,
-            skip_done=(not args.no_skip_done),
-            exllamav3_root=args.exllamav3_root,   # ← SAME THING
-        )
-
-        return rc
-
-
-    # Other subcommands not wired yet
     print(f"Command '{args.cmd}' not implemented yet.")
     return 1
 

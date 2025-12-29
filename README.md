@@ -12,38 +12,34 @@ This is designed for people who *want the results of EXL3 quantization* without 
 
 ---
 
-## What ezexl3 does
+## Usage
 
-At a high level, `ezexl3 repo` performs:
-
-1. **Quantization**
-   - Batch quantizes a BF16 base model across multiple BPWs
-   - Uses EXL3 via exllamav3
-   - Safe to interrupt and resume
-   - Supports multi-GPU device ratios
-
-2. **Measurement**
-   - Measures each quant against the BF16 base
-   - Records:
-     - PPL (r=10)
-     - KL divergence vs base
-     - PPL (r=100)
-     - Model size (GiB)
-   - Uses per-GPU CSV shards to avoid concurrent-write issues
-   - Merges results into a single canonical CSV
-
-3. **(Coming soon) Reporting**
-   - README tables
-   - Graphs
-   - HF-ready repo layout
-
----
-
-## Installation
-
-Clone the repo and install in editable mode:
-
+### 1. Build a full repository
+Run the entire pipeline (quantize -> measure -> report):
 ```bash
-git clone https://github.com/UnstableLlama/ezexl3.git
-cd ezexl3
-pip install -e .
+ezexl3 repo -m /path/to/base_model -b 2,3,4,5,6 -d 0,1
+```
+
+### 2. Standalone subcommands
+If you only want to run specific stages:
+```bash
+# Quantize only
+ezexl3 quantize -m /path/to/base_model -b 2,3,4,5,6 -d 0,1
+
+# Measure only
+ezexl3 measure -m /path/to/base_model -b 2,3,4,5,6 -d 0,1
+```
+
+## Key Features
+
+- **Instant Startup**: CLI responds in ~0.05s by deferring heavy ML imports.
+- **Asynchronous Measurement**: GPU workers pull from a dynamic queue and report results in real-time.
+- **Auto-Merge**: Measurement results are merged into a canonical CSV as they arrive.
+- **Resume Support**: Quantization skips already-finished BPWs and resumes partial jobs.
+
+## Development Status
+
+- ✅ Quantization: Stable, supports resume and multi-GPU ratios.
+- ✅ Measurement: Stable, multi-GPU safe, asynchronous reporting.
+- 🟡 Reporting: Stub implemented; logic for automated README generation pending.
+- 🟡 Cleanup: Stub implemented; `--cleanup` flag logic pending.

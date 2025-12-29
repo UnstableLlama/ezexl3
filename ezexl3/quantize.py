@@ -5,9 +5,14 @@ import os
 import time
 from typing import List, Tuple, Optional
 
-from exllamav3.conversion.convert_model import parser as convert_parser
-from exllamav3.conversion.convert_model import main as convert_main
-from exllamav3.conversion.convert_model import prepare as convert_prepare
+# Defer exllamav3 imports to avoid slow startup
+def _get_exl3_convert():
+    from exllamav3.conversion.convert_model import (
+        parser as convert_parser,
+        main as convert_main,
+        prepare as convert_prepare
+    )
+    return convert_parser, convert_main, convert_prepare
 
 
 def _split_commas(items: List[str]) -> List[str]:
@@ -65,8 +70,12 @@ def run_one(
         print("🟡 dry-run: not executing")
         return True
 
+    convert_parser, convert_main, convert_prepare = _get_exl3_convert()
+
     # Parse using the real exllamav3 convert parser, then call prepare/main like convert.py does.
     args = convert_parser.parse_args(job_argv)
+    
+    print("\nPreparing quantization (tokenizing dataset, etc.). This may take a few minutes on CPU...")
     in_args, job_state, ok, err = convert_prepare(args)
     if not ok:
         print(f"🔴 prepare() failed: {err}")
