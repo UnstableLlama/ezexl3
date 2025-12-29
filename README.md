@@ -31,7 +31,7 @@ pip install -e .
 ### 1. Quantize a full repository
 Run the entire pipeline (quantize -> measure -> README):
 ```bash
-ezexl3 repo -m /path/to/base_model -b 2,3,4,5,6 -d 0,1
+ezexl3 repo -m /path/to/base_model -b 2,3,4,5,6 -d 0,1 -t basic
 ```
 *Then ezexl3 automatically:*
 
