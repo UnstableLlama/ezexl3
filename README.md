@@ -82,10 +82,10 @@ Use your template with
 ezexl3 repo -m /path/to/base_model -t mynew -b 2,3,4,5,6 -d 0,1
 ```
 <p align="center">
-  <img src="templates/basicTemplate.png" width="45%" />
-  <img src="templates/fireTemplate.png" width="45%" />
-  <img src="templates/greenTemplate.png" width="45%" />
-  <img src="templates/forestTemplate.png" width="45%" />
+  <img src="ezexl3/templates/basicTemplate.png" width="45%" />
+  <img src="ezexl3/templates/fireTemplate.png" width="45%" />
+  <img src="ezexl3/templates/greenTemplate.png" width="45%" />
+  <img src="ezexl3/templates/forestTemplate.png" width="45%" />
 </p>
 
 ### 4. Advanced: Passthrough Flags
