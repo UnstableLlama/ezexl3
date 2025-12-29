@@ -125,6 +125,7 @@ def build_parser() -> argparse.ArgumentParser:
         p_sub.add_argument("--no-readme", action="store_true", help="Skip README stage")
         p_sub.add_argument("--no-meta", action="store_true", help="Do not write run.json receipt")
         p_sub.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
+        p_sub.add_argument("--no-prompt", "-np", action="store_true", help="Use defaults for README instead of prompting")
         p_sub.add_argument("--template", "-t", help="README template name (e.g., 'fire', 'basic')")
 
     # --- repo (main command) ---
@@ -162,6 +163,7 @@ def build_parser() -> argparse.ArgumentParser:
     # --- readme ---
     r = sub.add_parser("readme", help="README only (CSV -> README)")
     r.add_argument("-m", "--models", nargs="+", required=True, help="One or more model directories")
+    r.add_argument("--no-prompt", "-np", action="store_true", help="Use defaults for README instead of prompting")
     r.add_argument("--template", "-t", help="README template name (e.g., 'fire', 'basic')")
 
     return p
@@ -221,6 +223,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     do_readme=(not args.no_readme),
                     cleanup=(not args.no_cleanup),
                     write_logs=(not args.no_logs),
+                    interactive=(not args.no_prompt),
                     template=args.template,
                 )
                 if rc != 0:
@@ -278,7 +281,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if cmd == "readme":
         from ezexl3.readme import run_readme
         for model_dir in args.models:
-            run_readme(model_dir, template_name=args.template)
+            run_readme(model_dir, template_name=args.template, interactive=(not args.no_prompt))
         return 0
 
     print(f"Command '{args.cmd}' not implemented yet.")

@@ -3,7 +3,7 @@ import os
 import sys
 import re
 from typing import List, Dict, Any, Optional
-
+ 
 def get_hf_username() -> str:
     """Try to get huggingface username from huggingface-cli."""
     try:
@@ -14,8 +14,8 @@ def get_hf_username() -> str:
     except Exception:
         pass
     return os.environ.get("USER", "USER")
-
-def prompt_metadata(model_dir: str, bpws: List[str]) -> Dict[str, str]:
+ 
+def prompt_metadata(model_dir: str, bpws: List[str], interactive: bool = True) -> Dict[str, str]:
     """Interactively prompt user for README metadata with smart defaults."""
     model_name = os.path.basename(os.path.abspath(model_dir))
     
@@ -25,15 +25,26 @@ def prompt_metadata(model_dir: str, bpws: List[str]) -> Dict[str, str]:
     default_author = parts[0] if len(parts) > 1 else "AUTHOR"
     default_model = parts[1] if len(parts) > 1 else model_name
     
+    default_user = get_hf_username()
+    default_repolink = f"https://huggingface.co/{default_author}/{default_model}"
+
+    if not interactive:
+        return {
+            "AUTHOR": default_author,
+            "MODEL": default_model,
+            "REPOLINK": default_repolink,
+            "USER": default_user,
+            "QUANT_METHOD": "exl3",
+            "QUANT_TOOL": "exllamav3",
+        }
+
     print(f"\n📝 Please provide metadata for the README (ENTER to use defaults):")
     
     author = input(f"Author [{default_author}]: ").strip() or default_author
     model = input(f"Model [{default_model}]: ").strip() or default_model
     
-    default_repolink = f"https://huggingface.co/{author}/{model}"
     repolink = input(f"Repo Link [{default_repolink}]: ").strip() or default_repolink
     
-    default_user = get_hf_username()
     user = input(f"Quantized By (HuggingFace Username) [{default_user}]: ").strip() or default_user
     
     return {
@@ -45,15 +56,14 @@ def prompt_metadata(model_dir: str, bpws: List[str]) -> Dict[str, str]:
         "QUANT_TOOL": "exllamav3",
     }
 
-def run_readme(model_dir: str, template_name: Optional[str] = None) -> None:
+def run_readme(model_dir: str, template_name: Optional[str] = None, interactive: bool = True) -> None:
     """
     Generate README.md for the model repository based on measurement CSV and template.
     """
     # Load template
-    # Templates are in /templates/ relative to the project root (one level up from ezexl3/ package)
+    # Templates are now inside the package ezexl3/templates/
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(pkg_dir)
-    templates_dir = os.path.join(project_root, "templates")
+    templates_dir = os.path.join(pkg_dir, "templates")
     
     if not template_name:
         template_name = "basic"
@@ -127,7 +137,7 @@ def run_readme(model_dir: str, template_name: Optional[str] = None) -> None:
     bpws = [r["weights"] for r in rows if r["weights"] != "bf16"]
     
     # Get metadata
-    meta = prompt_metadata(model_dir, bpws)
+    meta = prompt_metadata(model_dir, bpws, interactive=interactive)
     
     # Sort rows for the table: BPWs first (ascending), then bf16
     formatted_labels = {}
