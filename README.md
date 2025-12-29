@@ -13,16 +13,17 @@ all with one command.
 
 ## Installation
 
-Since `exllamav3` is not yet on PyPI, you should install it along with `ezexl3`:
+This tool requires a local installation of [exllamav3](https://github.com/turboderp/exllamav3).
 
 ```bash
 # 1. Clone and install exllamav3
 git clone https://github.com/turboderp/exllamav3
 pip install ./exllamav3
 
-# 2. Install ezexl3
+# 2. Clone and install ezexl3
 git clone https://github.com/UnstableLlama/ezexl3
-pip install ./ezexl3
+cd ezexl3
+pip install -e .
 ```
 
 ---
@@ -34,6 +35,13 @@ Run the entire pipeline (quantize -> measure -> README):
 ```bash
 ezexl3 repo -m /path/to/base_model -b 2,3,4,5,6 -d 0,1
 ```
+*Then ezexl3 automatically:*
+
+- Quantizes the model to all indicated bitrates, saved under subdirectories in the base model folder.
+
+- Measures PPL and KL div and saves to a modelMeasured.csv in the base model folder.
+
+- Generates a README.md for a HuggingFace exl3 Quantization repo in the base model folder. (with optional customizable templates)
 
 ### 2. Standalone subcommands
 If you only want to run specific stages:
