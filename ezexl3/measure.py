@@ -74,12 +74,13 @@ def append_csv_row(csv_path: str, row: Dict[str, object]) -> None:
 
 
 def file_size_gib(path: str) -> float:
-    """Total .safetensors size under path in GiB."""
+    """Total .safetensors size in the immediate path in GiB (non-recursive)."""
     total = 0
-    for root, _, files in os.walk(path):
-        for fn in files:
-            if fn.endswith(".safetensors"):
-                total += os.path.getsize(os.path.join(root, fn))
+    if not os.path.isdir(path):
+        return 0.0
+    for fn in os.listdir(path):
+        if fn.endswith(".safetensors"):
+            total += os.path.getsize(os.path.join(path, fn))
     return total / (1024 ** 3)
 
 

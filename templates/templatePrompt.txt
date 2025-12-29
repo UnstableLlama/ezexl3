@@ -1,0 +1,5 @@
+Copy any of the TemplateREADME.md files into Gemini, Claude, or ChatGPT, and give it this prompt, followed by your own aesthetic twist:
+
+Can you take this template, keep the main layout and variables, and modify it aesthetically based on my following prompts? Preserve all of the labels and title strings, only change the aesthetic, not the words or numbers:
+
+*Make it dark and understated, high contrast, professional, metallic.*

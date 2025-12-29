@@ -220,9 +220,10 @@ def run_repo(
     measure_args: List[str],  # reserved for later; keep but unused in v0
     do_quant: bool = True,
     do_measure: bool = True,
-    do_report: bool = True,
+    do_readme: bool = True,
     cleanup: bool = False,
     write_logs: bool = True,
+    template: Optional[str] = None,
 ) -> int:
     # --- Stage 1: quantize ---
     if do_quant:
@@ -247,14 +248,40 @@ def run_repo(
         if rc != 0:
             return rc
 
-    # --- Stage 3: report (stub for now) ---
-    if do_report:
-        from ezexl3.report import run_report
-        print("Generating report...")
-        run_report(model_dir)
+    # --- Stage 3: README generation ---
+    if do_readme:
+        from ezexl3.readme import run_readme
+        print("Generating README...")
+        run_readme(model_dir, template_name=template)
 
-    # --- Stage 4: cleanup (later; keep as stub) ---
+    # --- Stage 4: cleanup ---
     if cleanup:
-        print("🟡 cleanup stage not implemented yet")
+        import shutil
+        import glob
+        print("\n🧹 Cleaning up working directories and temporary files...")
+        
+        # 1. w-* dirs
+        w_dirs = glob.glob(os.path.join(model_dir, "w-*"))
+        for d in w_dirs:
+            if os.path.isdir(d):
+                print(f"  Removing workspace {os.path.basename(d)}...")
+                try: shutil.rmtree(d)
+                except Exception as e: print(f"  🔴 Failed to remove {d}: {e}")
+        
+        # 2. *.gpu*.csv
+        gpu_csvs = glob.glob(os.path.join(model_dir, "*.gpu*.csv"))
+        for f in gpu_csvs:
+            print(f"  Removing shard CSV {os.path.basename(f)}...")
+            try: os.remove(f)
+            except Exception as e: print(f"  🔴 Failed to remove {f}: {e}")
+            
+        # 3. logs/
+        logs_dir = os.path.join(model_dir, "logs")
+        if os.path.isdir(logs_dir):
+            print(f"  Removing logs directory...")
+            try: shutil.rmtree(logs_dir)
+            except Exception as e: print(f"  🔴 Failed to remove {logs_dir}: {e}")
+            
+        print("✅ Cleanup complete.")
 
     return 0

@@ -121,13 +121,14 @@ def build_parser() -> argparse.ArgumentParser:
         )
         p_sub.add_argument("--schedule", choices=["queue", "static"], default="queue",
                            help="Measurement scheduling strategy (default: queue)")
-        p_sub.add_argument("--cleanup", action="store_true", help="Remove w-* working dirs after success")
-        p_sub.add_argument("--no-report", action="store_true", help="Skip report stage")
+        p_sub.add_argument("--no-cleanup", "-nc", action="store_true", help="Keep w-* working dirs and logs")
+        p_sub.add_argument("--no-readme", action="store_true", help="Skip README stage")
         p_sub.add_argument("--no-meta", action="store_true", help="Do not write run.json receipt")
         p_sub.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
+        p_sub.add_argument("--template", "-t", help="README template name (e.g., 'fire', 'basic')")
 
     # --- repo (main command) ---
-    repo = sub.add_parser("repo", help="Generate an EXL3 repo (quantize -> measure -> report)")
+    repo = sub.add_parser("repo", help="Generate an EXL3 repo (quantize -> measure -> README)")
     add_repo_flags(repo)
 
     # --- quantize ---
@@ -151,14 +152,17 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("-b", "--bpws", nargs="+", required=True, help="BPWs to measure (space or comma separated)")
     m.add_argument("-d", "--devices", default="0", help="CUDA devices for measurement. Example: -d 0,1")
     m.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
+    m.add_argument("--no-cleanup", "-nc", action="store_true", help="Keep temporary shard CSVs and logs")
     m.add_argument(
         "--exllamav3-root",
         help="[DEPRECATED] No longer needed, bundled model_diff.py is used.",
     )
 
 
-    # Placeholders for later:
-    sub.add_parser("report", help="Report only (CSV -> README/plots)")
+    # --- readme ---
+    r = sub.add_parser("readme", help="README only (CSV -> README)")
+    r.add_argument("-m", "--models", nargs="+", required=True, help="One or more model directories")
+    r.add_argument("--template", "-t", help="README template name (e.g., 'fire', 'basic')")
 
     return p
 
@@ -214,9 +218,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                     measure_args=pt.measure_args,
                     do_quant=True,
                     do_measure=True,
-                    do_report=(not args.no_report),
-                    cleanup=args.cleanup,
+                    do_readme=(not args.no_readme),
+                    cleanup=(not args.no_cleanup),
                     write_logs=(not args.no_logs),
+                    template=args.template,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
@@ -269,6 +274,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(f"Error measuring {model_dir}: {e}")
                 failed_models.append(model_dir)
         return 1 if failed_models else 0
+
+    if cmd == "readme":
+        from ezexl3.readme import run_readme
+        for model_dir in args.models:
+            run_readme(model_dir, template_name=args.template)
+        return 0
 
     print(f"Command '{args.cmd}' not implemented yet.")
     return 1
