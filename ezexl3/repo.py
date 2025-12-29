@@ -43,7 +43,7 @@ def _merge_csvs(out_csv: str, shard_csvs: List[str]) -> None:
 
     # Write merged
     os.makedirs(os.path.dirname(out_csv) or ".", exist_ok=True)
-    fieldnames = ["weights", "PPL r-10", "K/L Div", "PPL r-100", "GiB"]
+    fieldnames = ["weights", "K/L Div", "PPL r-100", "GiB"]
     with open(out_csv, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
@@ -58,7 +58,6 @@ def _worker_measure(
     tasks: "Queue[str]",
     results: "Queue[Optional[dict]]",
     log_path: Optional[str],
-    exllamav3_root: Optional[str] = None,
 ) -> None:
     import traceback
 
@@ -91,7 +90,6 @@ def _worker_measure(
                 quants=[item],
                 device=device,
                 csv_path=csv_path,
-                exllamav3_root=exllamav3_root,
                 skip_done=True,
                 return_row=True,
             )
@@ -147,7 +145,6 @@ def run_measure_stage(
     model_dir: str,
     bpws: List[str],
     devices: List[int],
-    exllamav3_root: Optional[str] = None,
     write_logs: bool = True,
 ) -> int:
     model_dir = os.path.abspath(model_dir)
@@ -164,7 +161,7 @@ def run_measure_stage(
     # Build task list: base once + all bpws
     tasks = Queue()
     results = Queue()
-    tasks_list = ["base"] + bpws
+    tasks_list = bpws + ["base"]
 
     for t in tasks_list:
         tasks.put(t)
@@ -175,7 +172,7 @@ def run_measure_stage(
 
     procs: List[Process] = []
     for d, csvp, logp in zip(devices, shard_csvs, log_paths):
-        p = Process(target=_worker_measure, args=(model_dir, d, csvp, tasks, results, logp, exllamav3_root))
+        p = Process(target=_worker_measure, args=(model_dir, d, csvp, tasks, results, logp))
         p.daemon = False
         p.start()
         procs.append(p)
@@ -221,7 +218,6 @@ def run_repo(
     device_ratios: Optional[str],
     quant_args: List[str],
     measure_args: List[str],  # reserved for later; keep but unused in v0
-    exllamav3_root=None,
     do_quant: bool = True,
     do_measure: bool = True,
     do_report: bool = True,
@@ -246,7 +242,6 @@ def run_repo(
             model_dir=model_dir,
             bpws=bpws,
             devices=devices,
-            exllamav3_root=exllamav3_root,
             write_logs=write_logs,
         )
         if rc != 0:

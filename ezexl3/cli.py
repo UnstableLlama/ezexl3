@@ -101,7 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
                            help="One or more BF16/base model directories (space or comma separated)")
         p_sub.add_argument(
             "--exllamav3-root",
-            help="Path to exllamav3 checkout (saved for future runs)",
+            help="[DEPRECATED] No longer needed, bundled model_diff.py is used.",
         )
         p_sub.add_argument(
             "-b", "--bpws",
@@ -153,7 +153,7 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
     m.add_argument(
         "--exllamav3-root",
-        help="Path to exllamav3 checkout (saved for future runs)",
+        help="[DEPRECATED] No longer needed, bundled model_diff.py is used.",
     )
 
 
@@ -188,8 +188,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     if hasattr(args, "device_ratios") and args.device_ratios is not None:
         args.device_ratios = [x.strip() for x in str(args.device_ratios).split(",") if x.strip()]
     
-    if hasattr(args, "exllamav3_root") and args.exllamav3_root:
-        save_exllamav3_root(args.exllamav3_root)
 
     import os
     from ezexl3.repo import run_repo, run_quant_stage, run_measure_stage
@@ -214,7 +212,6 @@ def main(argv: Optional[List[str]] = None) -> int:
                     device_ratios=device_ratios_str,
                     quant_args=pt.quant_args,
                     measure_args=pt.measure_args,
-                    exllamav3_root=args.exllamav3_root,
                     do_quant=True,
                     do_measure=True,
                     do_report=(not args.no_report),
@@ -264,7 +261,6 @@ def main(argv: Optional[List[str]] = None) -> int:
                     model_dir=model_dir,
                     bpws=args.bpws,
                     devices=devices_i,
-                    exllamav3_root=args.exllamav3_root,
                     write_logs=(not args.no_logs),
                 )
                 if rc != 0:

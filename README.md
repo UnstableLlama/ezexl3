@@ -3,10 +3,9 @@
 **ezexl3** is a simple, single-command EXL3 repo generator.
 
 It wraps the EXL3 quantization and evaluation workflow into a tool that:
-- runs batch quantization safely (resume / skip supported),
-- measures quality (PPL + KL) reproducibly,
-- scales across multiple GPUs without CSV corruption,
-- and produces HF-ready artifacts with minimal effort.
+- runs batch quantization easily (resume / skip supported),
+- measures quality (PPL + K/L) efficiently, data recorded to .csv,
+- (todo) and produces HF-ready artifacts with minimal effort.
 
 This is designed for people who *want the results of EXL3 quantization* without having to wire everything together themselves.
 
@@ -14,7 +13,7 @@ This is designed for people who *want the results of EXL3 quantization* without 
 
 ## Usage
 
-### 1. Build a full repository
+### 1. Quantize a full repository
 Run the entire pipeline (quantize -> measure -> report):
 ```bash
 ezexl3 repo -m /path/to/base_model -b 2,3,4,5,6 -d 0,1
@@ -31,10 +30,8 @@ ezexl3 measure -m /path/to/base_model -b 2,3,4,5,6 -d 0,1
 ```
 
 ## Key Features
-
-- **Instant Startup**: CLI responds in ~0.05s by deferring heavy ML imports.
-- **Asynchronous Measurement**: GPU workers pull from a dynamic queue and report results in real-time.
-- **Auto-Merge**: Measurement results are merged into a canonical CSV as they arrive.
+- **Quantization Queuing**: Run multiple quantizations at a time with one command.
+- **Auto-Measure**: Autotmaitcally measure and record K/L div @ -r 10 and ppl -r 100, layer by layer, memory effiently.
 - **Resume Support**: Quantization skips already-finished BPWs and resumes partial jobs.
 
 ## Development Status

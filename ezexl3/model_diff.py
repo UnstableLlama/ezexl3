@@ -62,11 +62,12 @@ def get_test_tokens(tokenizer, rows, eval_len = 2048, eval_stride = 512):
 def ppl(input_ids_, logits_):
     logprob_sum_ = 0.0
     logprob_count_ = 0
-    chunksize = logits_.shape[1] * 10240 // logits_.shape[1]
+    seq_len = logits_.shape[0]
+    chunksize = 1024
     b_ = 0
-    while b_ < logits_.shape[1]:
+    while b_ < seq_len:
         a_ = b_
-        b_ = min(b_ + chunksize, logits_.shape[1])
+        b_ = min(b_ + chunksize, seq_len)
         logits_f = logits_[a_:b_, :].float() + 1e-10
         target_ids = input_ids_[a_ + 1:b_ + 1].to(logits_.device)
         log_probs = F.log_softmax(logits_f, dim = -1)
@@ -276,12 +277,11 @@ def main(args):
 
         # Unload modules
         module_a.unload()
-        config_a.stc.close()
-        free_mem()
-
         module_b.unload()
-        config_b.stc.close()
-        free_mem()
+
+    config_a.stc.close()
+    config_b.stc.close()
+    free_mem()
 
     # Perplexity for each model
     print(f" -- A perplexity: {perplexity[0]:11.8f}")

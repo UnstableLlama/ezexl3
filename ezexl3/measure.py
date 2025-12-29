@@ -20,55 +20,8 @@ import re
 import subprocess
 import sys
 from typing import Dict, List, Set, Tuple
-import importlib.util
-import json
-from pathlib import Path
 
-EZEXL3_CONFIG_DIR = Path.home() / ".config" / "ezexl3"
-EZEXL3_CONFIG_FILE = EZEXL3_CONFIG_DIR / "config.json"
-
-
-def load_ezexl3_config() -> dict:
-    if not EZEXL3_CONFIG_FILE.exists():
-        return {}
-    try:
-        with open(EZEXL3_CONFIG_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def save_ezexl3_config(cfg: dict) -> None:
-    EZEXL3_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(EZEXL3_CONFIG_FILE, "w") as f:
-        json.dump(cfg, f, indent=2)
-
-
-def resolve_exllamav3_root(cli_value: str | None = None) -> str | None:
-    """
-    Resolution order:
-      1) CLI flag
-      2) saved config
-      3) EXLLAMAV3_ROOT env var
-      4) None
-    """
-    if cli_value:
-        cfg = load_ezexl3_config()
-        cfg["exllamav3_root"] = cli_value
-        save_ezexl3_config(cfg)
-        return cli_value
-
-    cfg = load_ezexl3_config()
-    if "exllamav3_root" in cfg:
-        return cfg["exllamav3_root"]
-
-    env = os.environ.get("EXLLAMAV3_ROOT")
-    if env:
-        return env
-
-    return None
-
-CSV_FIELDS = ["weights", "PPL r-10", "K/L Div", "PPL r-100", "GiB"]
+CSV_FIELDS = ["weights", "K/L Div", "PPL r-100", "GiB"]
 
 
 # ----------------------------
@@ -157,58 +110,21 @@ def run_cmd_capture(cmd: List[str]) -> str:
         sys.stdout.write(line)
         out_lines.append(line)
     rc = proc.wait()
+    full_out = "".join(out_lines)
     if rc != 0:
-        raise RuntimeError(f"Command failed (rc={rc}): {' '.join(cmd)}")
-    return "".join(out_lines)
+        raise RuntimeError(f"Command failed (rc={rc}): {' '.join(cmd)}\n\nOutput:\n{full_out}")
+    return full_out
 
-def find_model_diff_script(exllamav3_root: str | None = None) -> str:
-    exllamav3_root = resolve_exllamav3_root(exllamav3_root)
+def find_model_diff_script() -> str:
     """
-    Find exllamav3 eval/model_diff.py across common layouts.
-
-    Search order:
-      1) explicit exllamav3_root/eval/model_diff.py (if provided)
-      2) $EXLLAMAV3_ROOT/eval/model_diff.py
-      3) dev checkout layout: (pkg_dir/..)/eval/model_diff.py
-      4) packaged layout: pkg_dir/eval/model_diff.py
+    Find internal model_diff.py script.
     """
-    script_name = "model_diff.py"
+    pkg_dir = os.path.dirname(os.path.abspath(__file__))
+    script_path = os.path.join(pkg_dir, "model_diff.py")
+    if os.path.exists(script_path):
+        return script_path
 
-    # 1) Explicit root
-    if exllamav3_root:
-        cand = os.path.join(os.path.abspath(exllamav3_root), "eval", script_name)
-        if os.path.exists(cand):
-            return cand
-
-    # 2) Env var root
-    env_root = os.environ.get("EXLLAMAV3_ROOT", "").strip()
-    if env_root:
-        cand = os.path.join(os.path.abspath(env_root), "eval", script_name)
-        if os.path.exists(cand):
-            return cand
-
-    # 3/4) Auto-detect from installed package location
-    spec = importlib.util.find_spec("exllamav3")
-    if spec and spec.submodule_search_locations:
-        pkg_dir = list(spec.submodule_search_locations)[0]  # .../exllamav3 OR .../site-packages/exllamav3
-
-        # Dev checkout usually has: repo_root/exllamav3 (pkg) and repo_root/eval (scripts)
-        repo_root = os.path.abspath(os.path.join(pkg_dir, os.pardir))
-        cand_repo = os.path.join(repo_root, "eval", script_name)
-        if os.path.exists(cand_repo):
-            return cand_repo
-
-        # Some installs might put eval scripts inside the package dir
-        cand_pkg = os.path.join(pkg_dir, "eval", script_name)
-        if os.path.exists(cand_pkg):
-            return cand_pkg
-
-    raise RuntimeError(
-        "Could not find exllamav3 eval script 'model_diff.py'.\n"
-        "Fix: set EXLLAMAV3_ROOT to your exllamav3 checkout directory.\n"
-        "Example:\n"
-        "  export EXLLAMAV3_ROOT=/home/you/path/to/exllamav3\n"
-    )
+    raise RuntimeError(f"Could not find local model_diff.py at {script_path}")
 
 
 def run_model_diff(
@@ -216,13 +132,11 @@ def run_model_diff(
     other_dir: str,
     device: int,
     r: int = 10,
-    exllamav3_root: str | None = None,
-) -> Tuple[float, float]:
+) -> float:
     """
-    Runs exllamav3's model_diff.py (wherever it lives) and returns:
-      (ppl_r10, kl_div)
+    Runs internal model_diff.py and returns K/L divergence.
     """
-    script_path = find_model_diff_script(exllamav3_root)
+    script_path = find_model_diff_script()
 
     cmd = [
         sys.executable,
@@ -236,15 +150,12 @@ def run_model_diff(
 
     # Use more robust regex that handles both "Perplexity" and "B perplexity"
     # and "K/L Divergence" vs "KL divergence (A, B)"
-    ppl_match = re.search(r"(?:B\s+)?Perplexity:\s+([\d.]+)", out, re.IGNORECASE)
     kl_match = re.search(r"(?:KL|K/L)\s+divergence(?:\s+\(A,\s+B\))?:\s+([\d.]+)", out, re.IGNORECASE)
 
-    if not ppl_match:
-        raise ValueError("Could not parse model_diff output (Perplexity pattern didn't match).")
     if not kl_match:
         raise ValueError("Could not parse model_diff output (K/L Divergence pattern didn't match).")
 
-    return float(ppl_match.group(1)), float(kl_match.group(1))
+    return float(kl_match.group(1))
 
 def run_ppl_layer(model_dir: str, device: int, r: int = 100) -> float:
     """
@@ -308,24 +219,21 @@ def run_measure(
             raise FileNotFoundError(f"Quant dir not found: {model_dir}")
 
         if q == "base":
-            ppl_r10 = ""
             kl_div = 0.0
             ppl_100 = run_ppl_layer(model_dir, device=device, r=100)
             size_gib = file_size_gib(model_dir)
         else:
-            ppl_r10, kl_div = run_model_diff(
+            kl_div = run_model_diff(
                 base_dir,
                 model_dir,
                 device=device,
                 r=10,
-                exllamav3_root=exllamav3_root,
             )
             ppl_100 = run_ppl_layer(model_dir, device=device, r=100)
             size_gib = file_size_gib(model_dir)
 
         row = {
             "weights": label,
-            "PPL r-10": ppl_r10,
             "K/L Div": kl_div,
             "PPL r-100": ppl_100,
             "GiB": size_gib,

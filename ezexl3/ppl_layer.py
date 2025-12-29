@@ -1,9 +1,9 @@
 import sys, os
 import argparse
 import math
+import torch
 
 def get_test_tokens(tokenizer, rows, eval_len=2048, eval_stride=512):
-    import torch
     from datasets import load_dataset
     from exllamav3.util.progress import ProgressBar
     
@@ -13,6 +13,11 @@ def get_test_tokens(tokenizer, rows, eval_len=2048, eval_stride=512):
     )
     
     eval_tokens = tokenizer.encode(dataset_text)
+    if not torch.is_tensor(eval_tokens):
+        eval_tokens = torch.tensor(eval_tokens)
+    if len(eval_tokens.shape) == 1:
+        eval_tokens = eval_tokens.unsqueeze(0)
+    
     num_tokens = eval_tokens.shape[-1]
     seqs = []
     
@@ -24,18 +29,24 @@ def get_test_tokens(tokenizer, rows, eval_len=2048, eval_stride=512):
             if len(seqs) >= rows:
                 break
     
+    if not seqs:
+        raise ValueError(f"Dataset too short for eval_len={eval_len}. Only {num_tokens} tokens found.")
+
     return torch.cat(seqs, dim=0)
 
 def ppl(input_ids_, logits_):
     import torch.nn.functional as F
     logprob_sum_ = 0.0
     logprob_count_ = 0
-    chunksize = logits_.shape[1] * 10240 // logits_.shape[1]
+    seq_len = logits_.shape[0]
+    # Chunk over sequence length to save memory if needed
+    chunksize = 1024 # Standard chunking
     b_ = 0
-    while b_ < logits_.shape[1]:
+    while b_ < seq_len:
         a_ = b_
-        b_ = min(b_ + chunksize, logits_.shape[1])
+        b_ = min(b_ + chunksize, seq_len)
         logits_f = logits_[a_:b_, :].float() + 1e-10
+        # Target IDs for the current chunk are shifted by 1
         target_ids = input_ids_[a_ + 1:b_ + 1].to(logits_.device)
         log_probs = F.log_softmax(logits_f, dim = -1)
         token_log_probs = log_probs.gather(-1, target_ids.unsqueeze(-1)).squeeze(-1)
@@ -44,8 +55,8 @@ def ppl(input_ids_, logits_):
     return logprob_sum_, logprob_count_
 
 
+@torch.inference_mode()
 def main(args):
-    import torch
     from exllamav3 import Config, Model, Tokenizer
     from exllamav3.loader import SafetensorsCollection, VariantSafetensorsCollection
     from exllamav3.util.memory import free_mem
@@ -124,11 +135,12 @@ def main(args):
 
         # Unload module
         module.unload()
-        config.stc.close()
-        free_mem()
         
         layer_time = time.time() - layer_start
         print(f" -- {module.key:40}   time: {layer_time:6.2f}s")
+
+    config.stc.close()
+    free_mem()
 
     # Final perplexity
     perplexity = math.exp(-logprob_sum / logprob_count)
