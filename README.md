@@ -128,3 +128,5 @@ ezexl3 repo -m /path/to/model -b 4.0 --no-prompt
 ## Todo
 - Jupyter Notebook
 - WebUI
+- Huggingface integration (dowwnload/upload)
+- Automated git branching for HF repo
