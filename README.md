@@ -130,3 +130,4 @@ ezexl3 repo -m /path/to/model -b 4.0 --no-prompt
 - WebUI
 - Huggingface integration (dowwnload/upload)
 - Automated git branching for HF repo
+- Graph generation from .csv data
