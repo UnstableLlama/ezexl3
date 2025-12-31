@@ -3,9 +3,9 @@
 **ezexl3** is a simple, single-command [EXL3](https://github.com/turboderp/exllamav3) repo generator.
 
 It wraps the exllamav3 quantization and evaluation workflow into a tool that:
-- Runs batch quantization easily (resume / skip supported).
-- Measures PPL + KL div, recording data to CSV.
-- Automatically generates HuggingFace-ready `README.md` with your measurements using customizable templates,
+- Runs batch quantization easily (resume / skip supported)
+- Measures PPL + KL div, recording data to CSV
+- Generates a HuggingFace-ready `README.md` with your measurements using customizable templates
 
 all with one command.
 
@@ -33,13 +33,13 @@ Run the entire pipeline (quantize -> measure -> README):
 ```bash
 ezexl3 repo -m /path/to/base_model -b 2,3,4,5,6 -d 0,1 -t basic
 ```
-*Then ezexl3 automatically:*
+Then ezexl3 automatically:
 
 - Quantizes the model to all indicated bitrates, saved under subdirectories in the base model folder.
 
 - Measures PPL and KL div and saves to a modelMeasured.csv in the base model folder.
 
-- Generates a README.md for a HuggingFace exl3 Quantization repo in the base model folder. (with optional customizable templates)
+- Generates a README.md for a HuggingFace exl3 quantization repo in the base model folder. (with optional customizable templates)
 
 ### 2. Standalone subcommands
 If you only want to run specific stages:
@@ -70,7 +70,7 @@ If no template is specified, it defaults to `basicTemplateREADME.md`.
 Copy and paste any TemplateREADME.md into your favorite LLM (Gemini, Claude, ChatGPT) along with this example prompt, followed by your own description:
 
 ```bash
-Take this template, keep the main layout and variables, and modify it aesthetically based on my following prompts? Preserve all of the labels and title strings, only change the aesthetic, not the words or numbers:
+Take this template, keep the main layout and variables, and modify it aesthetically based on my following prompts. Preserve all of the labels and title strings, only change the aesthetic, not the words or numbers:
 
 *Make it dark and understated, high contrast, professional, metallic.*
 ```
