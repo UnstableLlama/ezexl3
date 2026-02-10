@@ -119,11 +119,6 @@ ezexl3 repo -m /path/to/model -b 4.0 --no-prompt
 - **Flexible README Templates**: Automated high-quality README generation for HuggingFace uploads.
 - **Automatic Cleanup**: Default cleanup of temporary working directories and logs.
 
-## Development Status
-- ✅ Quantization: Stable, supports resume and multi-GPU ratios.
-- ✅ Measurement: Stable, sharded multi-GPU execution.
-- ✅ README Generation: Flexible template system with standalone subcommand.
-- ✅ Cleanup: Automatic cleanup (toggle with `--no-cleanup`).
 
 ## Todo
 - Jupyter Notebook
