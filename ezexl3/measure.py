@@ -149,9 +149,12 @@ def run_model_diff(
     ]
     out = run_cmd_capture(cmd)
 
-    # Use more robust regex that handles both "Perplexity" and "B perplexity"
-    # and "K/L Divergence" vs "KL divergence (A, B)"
-    kl_match = re.search(r"(?:KL|K/L)\s+divergence(?:\s+\(A,\s+B\))?:\s+([\d.]+)", out, re.IGNORECASE)
+    # Accept standard floats, scientific notation, and nan/inf.
+    kl_match = re.search(
+        r"(?:KL|K/L)\s+divergence(?:\s+\(A,\s+B\))?:\s+([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?|nan|inf|-inf)",
+        out,
+        re.IGNORECASE,
+    )
 
     if not kl_match:
         raise ValueError("Could not parse model_diff output (K/L Divergence pattern didn't match).")
@@ -172,7 +175,11 @@ def run_ppl_layer(model_dir: str, device: int, r: int = 100) -> float:
     ]
     out = run_cmd_capture(cmd)
 
-    ppl_match = re.search(r"Perplexity:\s+([\d.]+)", out)
+    ppl_match = re.search(
+        r"Perplexity:\s+([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?|nan|inf|-inf)",
+        out,
+        re.IGNORECASE,
+    )
     if not ppl_match:
         raise ValueError("Could not parse ppl_layer output (Perplexity pattern didn't match).")
 

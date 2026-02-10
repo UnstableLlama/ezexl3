@@ -183,6 +183,11 @@ def run_measure_stage(
     active_workers = len(devices)
     all_results = {}
 
+    # Seed merged output from any existing shard state.
+    # This is important for resume flows where workers may skip already-done rows
+    # and therefore not emit fresh result events for every quant.
+    _merge_csvs(out_csv, shard_csvs)
+
     print(f"\n🚀 Measuring {len(tasks_list)} items on {len(devices)} GPUs...")
     
     while active_workers > 0:
@@ -206,6 +211,11 @@ def run_measure_stage(
 
     for p in procs:
         p.join()
+
+    # Always do one final merge after workers exit to ensure every shard write is
+    # reflected in the main CSV, even when a worker skipped tasks (no result event)
+    # or when the last merge happened before another worker finished flushing rows.
+    _merge_csvs(out_csv, shard_csvs)
 
     print(f"✅ All measurements complete. Merged CSV: {out_csv}")
     return 0
