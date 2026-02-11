@@ -6,6 +6,7 @@ It wraps the exllamav3 quantization and evaluation workflow into a tool that:
 - Runs batch quantization easily (resume / skip supported)
 - Measures PPL + KL div, recording data to CSV
 - Generates a HuggingFace-ready `README.md` with your measurements using customizable templates
+- Auto-generates an SVG quality graph from the merged measurement CSV and embeds it in the README
 
 all with one command.
 

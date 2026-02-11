@@ -71,7 +71,7 @@ tags:
 
   .table-wrapper {
     display: inline-block;
-    border: 1px solid #666a73; 
+    border: 1px solid #666a73;
     border-radius: 4px;
     overflow: hidden;
   }
@@ -99,7 +99,7 @@ tags:
     border-right: 1px solid #4a4d53;
   }
 
-  .data-table tr td:last-child, 
+  .data-table tr td:last-child,
   .data-table tr th:last-child {
     border-right: none;
   }
@@ -143,12 +143,19 @@ tags:
   <div class="content-panel">
     <div class="panel-title">Information</div>
     <div class="panel-body">
-      {{QUANT_METHOD}} quantizations of <b><a class="link-style" href="{{REPOLINK}}">{{MODEL}}</a></b> via <b>{{QUANT_TOOL}}</b>.
+      {{QUANT_METHOD}} quantizations of <b><a class="link-style" href="{{REPOLINK}}">{{MODEL}}</a></b> via
+      <b><a class="link-style" href="https://github.com/turboderp-org/exllamav3">{{QUANT_TOOL}}</a></b>.
+      <br/>
+      repo generated automatically with
+      <a class="link-style" href="https://github.com/UnstableLlama/ezexl3">ezexl3</a>.
     </div>
   </div>
 
   <div class="content-panel">
     <div class="panel-title">Repo Data</div>
+    <p align="center">
+      <img src="{{GRAPH_FILE}}" alt="Quantization graph" width="900">
+    </p>
     <div class="panel-body">
       <div class="table-wrapper">
         <table class="data-table">
