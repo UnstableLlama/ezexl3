@@ -1,3 +1,10 @@
+# ppl_layer.py - Integrated from Turboderp/exllamav3
+# Source: https://github.com/turboderp-org/exllamav3/blob/master/eval/model_diff.py
+# Modified for integration into ezexl3
+
+# Measures PPL at high token count by running each layer sequentially.
+# Default 100 rows of 2048 tokens = 204.8k tokens.
+
 import sys, os
 import argparse
 import math
