@@ -113,6 +113,10 @@ def run_quant_stage(
     devices: List[int],
     device_ratios: Optional[str],
     quant_args: List[str],
+    out_template: str = "{model}/{bpw}",
+    w_template: str = "{model}/w-{bpw}",
+    dry_run: bool = False,
+    continue_on_error: bool = False,
 ) -> int:
     model_dir = os.path.abspath(model_dir)
     bpws = [str(b) for b in bpws]
@@ -135,8 +139,10 @@ def run_quant_stage(
         models=models,
         bpws=bpws,
         forwarded=forwarded,
-        dry_run=False,
-        continue_on_error=False,
+        out_template=out_template,
+        w_template=w_template,
+        dry_run=dry_run,
+        continue_on_error=continue_on_error,
     )
     return rc
 

@@ -252,6 +252,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                     devices=devices_i,
                     device_ratios=device_ratios_str,
                     quant_args=pt.quant_args,
+                    out_template=args.out_template,
+                    w_template=args.w_template,
+                    dry_run=args.dry,
+                    continue_on_error=args.continue_on_error,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
