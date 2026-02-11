@@ -115,7 +115,11 @@ def generate_iceblink_svg(csv_path: str, out_svg: str, title: str) -> str:
         )
 
     top_labels = []
-    for row in rows:
+    # Keep GiB labels aligned to interpolation points, but avoid a final right-edge
+    # label that tends to visually read as "tacked on".
+    for idx, row in enumerate(rows):
+        if idx == len(rows) - 1:
+            continue
         top_labels.append(
             f'<text x="{xmap(row.bpw):.2f}" y="{top - 20}" fill="#FFFFFF" '
             f'font-size="12" text-anchor="middle">{row.gib:.2f}</text>'
