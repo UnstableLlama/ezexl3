@@ -199,6 +199,7 @@ def run_measure(
     skip_done: bool = True,
     exllamav3_root: str | None = None,
     return_row: bool = False,
+    ppl_rows: int = 100,
 ) -> int | dict:
     base_dir = os.path.abspath(base_dir)
     if csv_path is None:
@@ -228,7 +229,7 @@ def run_measure(
 
         if q == "base":
             kl_div = 0.0
-            ppl_100 = run_ppl_layer(model_dir, device=device, r=100)
+            ppl_100 = run_ppl_layer(model_dir, device=device, r=ppl_rows)
             size_gib = file_size_gib(model_dir)
         else:
             kl_div = run_model_diff(
@@ -237,7 +238,7 @@ def run_measure(
                 device=device,
                 r=10,
             )
-            ppl_100 = run_ppl_layer(model_dir, device=device, r=100)
+            ppl_100 = run_ppl_layer(model_dir, device=device, r=ppl_rows)
             size_gib = file_size_gib(model_dir)
 
         row = {

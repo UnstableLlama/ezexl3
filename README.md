@@ -104,7 +104,9 @@ ezexl3 repo -m /path/to/model -b 4.0 --measure-args -- -r 200 -d 0
 
 Common Use Cases:
 - **Quantization**: `-pm` (MoE speedup), `-ss` (shard size), `-nr` (no-rope-scaling).
-- **Measurement**: `-r` (number of rows for PPL), `-d` (specific evaluation device).
+- **Measurement**: `-r` / `--rows` (number of rows for PPL), `-d` / `--device` / `--devices` (specific evaluation device list).
+
+Note: passthrough blocks consume remaining args until another passthrough block starts, so keep normal CLI flags (like `--no-readme`) before `--measure-args -- ...`.
 
 ### 5. Headless Mode
 For automated pipelines, use the `--no-prompt` (or `-np`) flag to skip interactive metadata collection for the README. It will use sensible defaults based on the model directory name and your environment.

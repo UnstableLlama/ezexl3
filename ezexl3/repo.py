@@ -58,6 +58,7 @@ def _worker_measure(
     tasks: "Queue[str]",
     results: "Queue[Optional[dict]]",
     log_path: Optional[str],
+    ppl_rows: int = 100,
 ) -> None:
     import traceback
 
@@ -92,6 +93,7 @@ def _worker_measure(
                 csv_path=csv_path,
                 skip_done=True,
                 return_row=True,
+                ppl_rows=ppl_rows,
             )
             if row:
                 results.put(row)
@@ -105,6 +107,53 @@ def _worker_measure(
         sys.stdout.flush()
         sys.stderr.flush()
         log_f.close()
+
+
+
+
+def _parse_measure_args(measure_args: List[str], default_devices: List[int]) -> tuple[int, List[int]]:
+    """Parse passthrough measure args supported by ezexl3.
+
+    Supported:
+      -r/--rows <int>         # PPL rows
+      -d/--device/--devices   # CUDA device list (comma-separated)
+    """
+    ppl_rows = 100
+    devices = list(default_devices)
+
+    i = 0
+    while i < len(measure_args):
+        tok = measure_args[i]
+
+        if tok in ("-r", "--rows"):
+            if i + 1 >= len(measure_args):
+                raise ValueError("Missing value for --measure-args -r/--rows")
+            try:
+                ppl_rows = int(measure_args[i + 1])
+            except ValueError as e:
+                raise ValueError(f"Invalid rows value for --measure-args: {measure_args[i + 1]}") from e
+            i += 2
+            continue
+
+        if tok in ("-d", "--device", "--devices"):
+            if i + 1 >= len(measure_args):
+                raise ValueError("Missing value for --measure-args -d/--device")
+            val = measure_args[i + 1]
+            parsed = [x.strip() for x in str(val).split(",") if x.strip()]
+            if not parsed:
+                raise ValueError("Empty device list in --measure-args -d/--device")
+            try:
+                devices = [int(x) for x in parsed]
+            except ValueError as e:
+                raise ValueError(f"Invalid device list for --measure-args: {val}") from e
+            i += 2
+            continue
+
+        raise ValueError(
+            f"Unsupported --measure-args token: {tok}. Supported flags: -r/--rows, -d/--device/--devices"
+        )
+
+    return ppl_rows, devices
 
 
 def run_quant_stage(
@@ -121,6 +170,7 @@ def run_quant_stage(
     model_dir = os.path.abspath(model_dir)
     bpws = [str(b) for b in bpws]
     devices = list(devices)
+
 
     models = [model_dir]
     forwarded = list(quant_args)
@@ -152,10 +202,12 @@ def run_measure_stage(
     bpws: List[str],
     devices: List[int],
     write_logs: bool = True,
+    measure_args: Optional[List[str]] = None,
 ) -> int:
     model_dir = os.path.abspath(model_dir)
     bpws = [str(b) for b in bpws]
     devices = list(devices)
+    ppl_rows, devices = _parse_measure_args(measure_args or [], devices)
 
     # Shard CSVs
     shard_csvs = []
@@ -178,7 +230,7 @@ def run_measure_stage(
 
     procs: List[Process] = []
     for d, csvp, logp in zip(devices, shard_csvs, log_paths):
-        p = Process(target=_worker_measure, args=(model_dir, d, csvp, tasks, results, logp))
+        p = Process(target=_worker_measure, args=(model_dir, d, csvp, tasks, results, logp, ppl_rows))
         p.daemon = False
         p.start()
         procs.append(p)
@@ -261,6 +313,7 @@ def run_repo(
             bpws=bpws,
             devices=devices,
             write_logs=write_logs,
+            measure_args=measure_args,
         )
         if rc != 0:
             return rc

@@ -274,6 +274,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     bpws=args.bpws,
                     devices=devices_i,
                     write_logs=(not args.no_logs),
+                    measure_args=pt.measure_args,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
