@@ -19,9 +19,9 @@ import os
 import re
 import subprocess
 import sys
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Set
 
-CSV_FIELDS = ["weights", "K/L Div", "PPL r-100", "GiB"]
+CSV_FIELDS = ["weights", "KL Div", "PPL r-100", "GiB"]
 
 
 # ----------------------------
@@ -135,7 +135,7 @@ def run_model_diff(
     r: int = 10,
 ) -> float:
     """
-    Runs internal model_diff.py and returns K/L divergence.
+    Runs internal model_diff.py and returns KL divergence.
     """
     script_path = find_model_diff_script()
 
@@ -157,7 +157,7 @@ def run_model_diff(
     )
 
     if not kl_match:
-        raise ValueError("Could not parse model_diff output (K/L Divergence pattern didn't match).")
+        raise ValueError("Could not parse model_diff output (KL Divergence pattern did not match).")
 
     return float(kl_match.group(1))
 
@@ -243,7 +243,7 @@ def run_measure(
 
         row = {
             "weights": label,
-            "K/L Div": kl_div,
+            "KL Div": kl_div,
             "PPL r-100": ppl_100,
             "GiB": size_gib,
         }

@@ -5,16 +5,11 @@ import csv
 import os
 import sys
 import time
-from dataclasses import dataclass
 from multiprocessing import Process, Queue
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from ezexl3.quantize import run as quant_run
-from ezexl3.measure import run_measure, default_csv_path, read_existing_weights
-
-
-def _parse_csv_list(s: str) -> List[str]:
-    return [x.strip() for x in s.split(",") if x.strip()]
+from ezexl3.measure import default_csv_path
 
 
 def _bpw_sort_key(w: str):
@@ -43,7 +38,7 @@ def _merge_csvs(out_csv: str, shard_csvs: List[str]) -> None:
 
     # Write merged
     os.makedirs(os.path.dirname(out_csv) or ".", exist_ok=True)
-    fieldnames = ["weights", "K/L Div", "PPL r-100", "GiB"]
+    fieldnames = ["weights", "KL Div", "PPL r-100", "GiB"]
     with open(out_csv, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()

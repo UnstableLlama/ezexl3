@@ -164,7 +164,7 @@ def run_readme(model_dir: str, template_name: Optional[str] = None, interactive:
         except Exception:
             pass
 
-        kl = r.get("K/L Div", r.get("KL Div", "x"))
+        kl = r.get("KL Div", "x")
         try:
             kl = f"{float(kl):.4f}"
         except Exception:

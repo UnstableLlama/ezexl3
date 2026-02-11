@@ -30,11 +30,7 @@ def _pad(lo: float, hi: float, frac: float = 0.10) -> tuple[float, float]:
 
 
 def _kld_value(row: dict) -> float:
-    if "K/L Div" in row:
-        return _as_float(row.get("K/L Div"), 0.0)
-    if "KL Div" in row:
-        return _as_float(row.get("KL Div"), 0.0)
-    return 0.0
+    return _as_float(row.get("KL Div"), 0.0)
 
 
 def load_plot_rows(csv_path: str) -> List[PlotRow]:

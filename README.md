@@ -109,6 +109,11 @@ Common Use Cases:
 
 Note: passthrough blocks consume remaining args until another passthrough block starts, so keep normal CLI flags (like `--no-readme`) before `--measure-args -- ...`.
 
+Deprecated/legacy flags:
+- `--exllamav3-root` is deprecated and ignored.
+- `repo --schedule` currently supports queue behavior only (`--schedule static` is accepted but ignored).
+- `repo --no-meta` is accepted but currently ignored.
+
 ### 5. Headless Mode
 For automated pipelines, use the `--no-prompt` (or `-np`) flag to skip interactive metadata collection for the README. It will use sensible defaults based on the model directory name and your environment.
 
@@ -118,7 +123,7 @@ ezexl3 repo -m /path/to/model -b 4.0 --no-prompt
 
 ## Key Features
 - **Quantization Queuing**: Run multiple quantizations at a time with one command.
-- **Auto-Measure**: Automatically measure and record K/L div and PPL asynchronously.
+- **Auto-Measure**: Automatically measure and record KL div and PPL asynchronously.
 - **Resume Support**: Skip already-finished BPWs and resume partial jobs.
 - **Flexible README Templates**: Automated high-quality README generation for HuggingFace uploads.
 - **Automatic Cleanup**: Default cleanup of temporary working directories and logs.

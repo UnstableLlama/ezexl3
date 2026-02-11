@@ -10,16 +10,6 @@ class PassThrough:
     measure_args: List[str]
     cleaned_argv: List[str]
 
-def save_exllamav3_root(path: str) -> None:
-    import json
-    from pathlib import Path
-    cfg_dir = Path.home() / ".config" / "ezexl3"
-    cfg_dir.mkdir(parents=True, exist_ok=True)
-
-    cfg_path = cfg_dir / "config.json"
-    with cfg_path.open("w") as f:
-        json.dump({"exllamav3_root": path}, f, indent=2)
-
 def _split_passthrough(argv: List[str]) -> PassThrough:
     """
     Extract two passthrough blocks:
@@ -127,6 +117,16 @@ def _parse_device_ratios(values: Optional[List[str]], devices: List[int]) -> Opt
     return parsed
 
 
+def _warn_deprecated_or_unused(args: argparse.Namespace, cmd: str) -> None:
+    if getattr(args, "exllamav3_root", None):
+        print("⚠️ --exllamav3-root is deprecated and ignored.")
+
+    if cmd == "repo":
+        if getattr(args, "schedule", "queue") != "queue":
+            print("⚠️ --schedule is currently ignored; only queue scheduling is implemented.")
+        if getattr(args, "no_meta", False):
+            print("⚠️ --no-meta is currently ignored; run metadata receipts are not implemented.")
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="ezexl3",
@@ -223,6 +223,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not cmd:
         parser.print_help()
         return 0
+
+    _warn_deprecated_or_unused(args, cmd)
 
     # Normalize lists
     if hasattr(args, "models"):
