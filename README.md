@@ -104,6 +104,7 @@ ezexl3 repo -m /path/to/model -b 4.0 --measure-args -- -r 200 -d 0
 
 Common Use Cases:
 - **Quantization**: `-pm` (MoE speedup), `-ss` (shard size), `-nr` (no-rope-scaling).
+  If using `-r/--device-ratios`, provide one positive ratio per device in `-d/--devices`.
 - **Measurement**: `-r` / `--rows` (number of rows for PPL), `-d` / `--device` / `--devices` (specific evaluation device list).
 
 Note: passthrough blocks consume remaining args until another passthrough block starts, so keep normal CLI flags (like `--no-readme`) before `--measure-args -- ...`.

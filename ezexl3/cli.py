@@ -87,6 +87,46 @@ def _csv_or_space_list(values: List[str]) -> List[str]:
     return out
 
 
+
+
+def _parse_devices(values: List[str]) -> List[int]:
+    if not values:
+        raise SystemExit("At least one CUDA device must be provided (e.g. -d 0)")
+    out: List[int] = []
+    for raw in values:
+        try:
+            out.append(int(raw))
+        except ValueError as e:
+            raise SystemExit(f"Invalid CUDA device '{raw}'. Expected integer device ids like: -d 0,1") from e
+    if not out:
+        raise SystemExit("At least one CUDA device must be provided (e.g. -d 0)")
+    return out
+
+
+def _parse_device_ratios(values: Optional[List[str]], devices: List[int]) -> Optional[List[str]]:
+    if values is None:
+        return None
+    if not values:
+        raise SystemExit("--device-ratios cannot be empty. Example: -r 1,1")
+
+    parsed: List[str] = []
+    for raw in values:
+        try:
+            ratio = float(raw)
+        except ValueError as e:
+            raise SystemExit(f"Invalid device ratio '{raw}'. Expected numeric values like: -r 1,1") from e
+        if ratio <= 0:
+            raise SystemExit(f"Invalid device ratio '{raw}'. Ratios must be > 0")
+        parsed.append(raw)
+
+    if len(parsed) != len(devices):
+        raise SystemExit(
+            f"--device-ratios length ({len(parsed)}) must match --devices length ({len(devices)})."
+        )
+
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="ezexl3",
@@ -198,8 +238,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     import os
     from ezexl3.repo import run_repo, run_quant_stage, run_measure_stage
 
-    devices_i = [int(d) for d in getattr(args, "devices", ["0"])]
-    device_ratios_str = ",".join(args.device_ratios) if getattr(args, "device_ratios", None) else None
+    devices_i = _parse_devices(getattr(args, "devices", ["0"]))
+    device_ratios = _parse_device_ratios(getattr(args, "device_ratios", None), devices_i)
+    device_ratios_str = ",".join(device_ratios) if device_ratios else None
 
     if cmd == "repo":
         # Process each model, continuing on error

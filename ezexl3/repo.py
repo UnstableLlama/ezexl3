@@ -130,6 +130,8 @@ def _parse_measure_args(measure_args: List[str], default_devices: List[int]) -> 
                 raise ValueError("Missing value for --measure-args -r/--rows")
             try:
                 ppl_rows = int(measure_args[i + 1])
+                if ppl_rows <= 0:
+                    raise ValueError("--measure-args rows must be > 0")
             except ValueError as e:
                 raise ValueError(f"Invalid rows value for --measure-args: {measure_args[i + 1]}") from e
             i += 2
@@ -208,6 +210,8 @@ def run_measure_stage(
     bpws = [str(b) for b in bpws]
     devices = list(devices)
     ppl_rows, devices = _parse_measure_args(measure_args or [], devices)
+    if not devices:
+        raise ValueError("No CUDA devices available for measure stage. Provide -d/--devices.")
 
     # Shard CSVs
     shard_csvs = []
