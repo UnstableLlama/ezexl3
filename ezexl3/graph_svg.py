@@ -1,163 +1,213 @@
 from __future__ import annotations
 
-import csv
-import html
+import argparse
+import math
 import os
-from dataclasses import dataclass
-from typing import List
+from typing import Any, Sequence, Tuple
 
 
-@dataclass
-class PlotRow:
-    bpw: float
-    kld: float
-    ppl: float
-    gib: float
 
-
-def _as_float(value: object, default: float = 0.0) -> float:
+def _load_plot_libs() -> tuple[Any, Any, Any]:
     try:
-        return float(value)
-    except Exception:
-        return default
+        import matplotlib.pyplot as plt  # type: ignore
+        import numpy as np  # type: ignore
+        import pandas as pd  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError(
+            "Graph generation requires matplotlib, numpy, and pandas to be installed."
+        ) from exc
+    return plt, np, pd
 
 
-def _pad(lo: float, hi: float, frac: float = 0.10) -> tuple[float, float]:
+def load_series(
+    csv_path: str,
+    weights_col: str = "weights",
+    kld_col: str = "KL Div",
+    ppl_prefix: str = "PPL",
+    gib_col: str = "GiB",
+    drop_bf16: bool = True,
+) -> Tuple[Any, Any, Any, Any, str]:
+    _, _, pd = _load_plot_libs()
+    df = pd.read_csv(csv_path)
+
+    if drop_bf16 and weights_col in df.columns:
+        df = df[df[weights_col].astype(str).str.lower() != "bf16"].copy()
+
+    df["BPW"] = pd.to_numeric(df[weights_col], errors="coerce")
+    df = df.dropna(subset=["BPW"]).sort_values("BPW")
+
+    ppl_cols = [c for c in df.columns if c.strip().lower().startswith(ppl_prefix.lower())]
+    if not ppl_cols:
+        raise ValueError(f"No PPL column found (expected a column starting with '{ppl_prefix}').")
+    ppl_col = ppl_cols[0]
+
+    bpw = df["BPW"].to_numpy()
+    kld = pd.to_numeric(df[kld_col], errors="coerce").to_numpy()
+    ppl = pd.to_numeric(df[ppl_col], errors="coerce").to_numpy()
+    gib = pd.to_numeric(df[gib_col], errors="coerce").to_numpy()
+
+    return bpw, kld, ppl, gib, ppl_col
+
+
+def pad(lo: float, hi: float, frac: float = 0.06) -> tuple[float, float]:
     if hi == lo:
-        return lo - 1.0, hi + 1.0
-    delta = (hi - lo) * frac
-    return lo - delta, hi + delta
+        return lo - 1, hi + 1
+    d = (hi - lo) * frac
+    return lo - d, hi + d
 
 
-def _kld_value(row: dict) -> float:
-    return _as_float(row.get("KL Div"), 0.0)
+def _top_axis_ticks_and_labels(gib_s: Sequence[float]) -> tuple[list[int], list[str]]:
+    gmin, gmax = float(min(gib_s)), float(max(gib_s))
+    start = math.floor(gmin)
+    end = math.ceil(gmax)
+    ticks = list(range(start, end + 1))
+    if len(ticks) < 2:
+        return ticks, [str(t) for t in ticks]
+
+    # Hide the rightmost label due to uneven final spacing after interpolation.
+    labels = [str(t) for t in ticks]
+    labels[-1] = ""
+    return ticks, labels
 
 
-def load_plot_rows(csv_path: str) -> List[PlotRow]:
-    out: List[PlotRow] = []
-    with open(csv_path, "r", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            weights = str(row.get("weights", "")).strip().lower()
-            if weights == "bf16":
-                continue
+def make_plot(bpw, kld, ppl, gib, title, outfile, add_checks=True):
+    plt, np, _ = _load_plot_libs()
+    cyan = "#00E5FF"
+    magenta = "#FF00FF"
+    white = "#FFFFFF"
+    bg = "#000000"
 
-            bpw = _as_float(row.get("weights"), float("nan"))
-            if bpw != bpw:
-                continue
+    fig, ax = plt.subplots(figsize=(13.65, 7.68), dpi=150)
+    fig.patch.set_facecolor(bg)
+    ax.set_facecolor(bg)
 
-            out.append(
-                PlotRow(
-                    bpw=bpw,
-                    kld=_kld_value(row),
-                    ppl=_as_float(row.get("PPL r-100"), 0.0),
-                    gib=_as_float(row.get("GiB"), 0.0),
-                )
+    l1, = ax.plot(
+        bpw,
+        kld,
+        color=cyan,
+        linewidth=3.0,
+        marker="o",
+        markersize=8,
+        markerfacecolor=cyan,
+        markeredgecolor=cyan,
+        label="KL Div",
+    )
+
+    ax.set_xlabel("Bits per Weight (BPW)", color=white, fontsize=16, labelpad=12)
+    ax.set_ylabel("KL Div", color=cyan, fontsize=16, labelpad=14)
+    ax.tick_params(axis="x", colors=white, labelsize=13, length=6, width=1.2)
+    ax.tick_params(axis="y", colors=cyan, labelsize=13, length=6, width=1.2)
+
+    ax.minorticks_on()
+    ax.grid(True, which="major", linestyle="--", linewidth=1.0, alpha=0.45, color=white)
+    ax.grid(True, which="minor", linestyle="--", linewidth=0.7, alpha=0.25, color=white)
+
+    for s in ax.spines.values():
+        s.set_color(white)
+        s.set_linewidth(1.2)
+
+    axr = ax.twinx()
+    axr.set_facecolor("none")
+    l2, = axr.plot(
+        bpw,
+        ppl,
+        color=magenta,
+        linewidth=3.0,
+        marker="s",
+        markersize=8,
+        markerfacecolor=magenta,
+        markeredgecolor=magenta,
+        label="PPL",
+    )
+    axr.set_ylabel("PPL", color=magenta, fontsize=16, labelpad=14)
+    axr.tick_params(axis="y", colors=magenta, labelsize=13, length=6, width=1.2)
+    for s in axr.spines.values():
+        s.set_color(white)
+        s.set_linewidth(1.2)
+
+    ax.set_xlim(float(np.min(bpw)) - 0.1, float(np.max(bpw)) + 0.1)
+    ax.set_ylim(*pad(float(np.min(kld)), float(np.max(kld)), 0.10))
+    axr.set_ylim(*pad(float(np.min(ppl)), float(np.max(ppl)), 0.10))
+
+    ax.text(
+        0.5,
+        0.90,
+        title,
+        transform=ax.transAxes,
+        ha="center",
+        va="center",
+        color=cyan,
+        fontsize=22,
+        fontweight="bold",
+    )
+
+    handles = [l1, l2]
+    labels = [h.get_label() for h in handles]
+    leg = ax.legend(handles, labels, loc="upper right", frameon=False, fontsize=14, handlelength=2.6)
+    for text in leg.get_texts():
+        text.set_color(white)
+
+    order = np.argsort(bpw)
+    bpw_s = bpw[order]
+    gib_s = gib[order]
+
+    def bpw_to_gib(x):
+        return np.interp(x, bpw_s, gib_s)
+
+    def gib_to_bpw(x):
+        return np.interp(x, gib_s, bpw_s)
+
+    secax = ax.secondary_xaxis("top", functions=(bpw_to_gib, gib_to_bpw))
+    secax.set_xlabel("Model Size (GiB)", color=white, fontsize=16, labelpad=12)
+    secax.tick_params(axis="x", colors=white, labelsize=13, length=6, width=1.2)
+
+    ticks, labels = _top_axis_ticks_and_labels(gib_s)
+    if len(ticks) >= 2:
+        secax.set_xticks(ticks, labels=labels)
+
+    if add_checks:
+        for x, y in zip(bpw, kld):
+            ax.text(
+                x - 0.06,
+                y + (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.02,
+                "✓",
+                color=white,
+                fontsize=32,
+                fontweight="bold",
+                ha="center",
+                va="center",
             )
 
-    out.sort(key=lambda r: r.bpw)
-    return out
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(outfile) or ".", exist_ok=True)
+    fig.savefig(outfile, facecolor=bg, bbox_inches="tight")
+    plt.close(fig)
 
 
 def generate_iceblink_svg(csv_path: str, out_svg: str, title: str) -> str:
-    rows = load_plot_rows(csv_path)
-    if len(rows) < 2:
+    bpw, kld, ppl, gib, _ = load_series(csv_path, drop_bf16=True)
+    if len(bpw) < 2:
         raise ValueError("Need at least 2 non-bf16 rows to draw graph")
-
-    width, height = 1365, 768
-    left, right = 105, width - 95
-    top, bottom = 90, height - 105
-
-    bpw_vals = [r.bpw for r in rows]
-    kld_vals = [r.kld for r in rows]
-    ppl_vals = [r.ppl for r in rows]
-    gib_vals = [r.gib for r in rows]
-
-    xmin, xmax = min(bpw_vals), max(bpw_vals)
-    kmin, kmax = _pad(min(kld_vals), max(kld_vals), 0.10)
-    pmin, pmax = _pad(min(ppl_vals), max(ppl_vals), 0.10)
-
-    def xmap(x: float) -> float:
-        if xmax == xmin:
-            return (left + right) / 2.0
-        return left + (x - xmin) * (right - left) / (xmax - xmin)
-
-    def ymap_left(y: float) -> float:
-        if kmax == kmin:
-            return (top + bottom) / 2.0
-        return bottom - (y - kmin) * (bottom - top) / (kmax - kmin)
-
-    def ymap_right(y: float) -> float:
-        if pmax == pmin:
-            return (top + bottom) / 2.0
-        return bottom - (y - pmin) * (bottom - top) / (pmax - pmin)
-
-    def points_str(xs: list[float], ys: list[float], yfn) -> str:
-        return " ".join(f"{xmap(x):.2f},{yfn(y):.2f}" for x, y in zip(xs, ys))
-
-    k_points = points_str(bpw_vals, kld_vals, ymap_left)
-    p_points = points_str(bpw_vals, ppl_vals, ymap_right)
-
-    grid_lines = []
-    n_h = 6
-    n_v = max(3, len(rows))
-    for i in range(n_h + 1):
-        y = top + (bottom - top) * i / n_h
-        grid_lines.append(
-            f'<line x1="{left}" y1="{y:.2f}" x2="{right}" y2="{y:.2f}" '
-            'stroke="#FFFFFF" stroke-opacity="0.25" stroke-dasharray="5 6"/>'
-        )
-    for i in range(n_v + 1):
-        x = left + (right - left) * i / n_v
-        grid_lines.append(
-            f'<line x1="{x:.2f}" y1="{top}" x2="{x:.2f}" y2="{bottom}" '
-            'stroke="#FFFFFF" stroke-opacity="0.18" stroke-dasharray="5 6"/>'
-        )
-
-    top_labels = []
-    # Keep GiB labels aligned to interpolation points, but avoid a final right-edge
-    # label that tends to visually read as "tacked on".
-    for idx, row in enumerate(rows):
-        if idx == len(rows) - 1:
-            continue
-        top_labels.append(
-            f'<text x="{xmap(row.bpw):.2f}" y="{top - 20}" fill="#FFFFFF" '
-            f'font-size="12" text-anchor="middle">{row.gib:.2f}</text>'
-        )
-
-    markers = []
-    for row in rows:
-        x = xmap(row.bpw)
-        yk = ymap_left(row.kld)
-        yp = ymap_right(row.ppl)
-        markers.append(f'<circle cx="{x:.2f}" cy="{yk:.2f}" r="6" fill="#00E5FF"/>')
-        markers.append(
-            f'<rect x="{x-5:.2f}" y="{yp-5:.2f}" width="10" height="10" fill="#FF00FF"/>'
-        )
-        markers.append(
-            f'<text x="{x:.2f}" y="{yk-16:.2f}" fill="#FFFFFF" font-size="24" text-anchor="middle">✓</text>'
-        )
-
-    escaped_title = html.escape(title)
-    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
-  <rect x="0" y="0" width="{width}" height="{height}" fill="#000000"/>
-  {''.join(grid_lines)}
-  <rect x="{left}" y="{top}" width="{right-left}" height="{bottom-top}" fill="none" stroke="#FFFFFF" stroke-width="1.2"/>
-  <polyline points="{k_points}" fill="none" stroke="#00E5FF" stroke-width="3"/>
-  <polyline points="{p_points}" fill="none" stroke="#FF00FF" stroke-width="3"/>
-  {''.join(markers)}
-  {''.join(top_labels)}
-
-  <text x="{(left+right)/2:.2f}" y="52" fill="#00E5FF" font-size="34" font-weight="700" text-anchor="middle">{escaped_title}</text>
-  <text x="{(left+right)/2:.2f}" y="{height-38}" fill="#FFFFFF" font-size="22" text-anchor="middle">Bits per Weight (BPW)</text>
-  <text x="{(left+right)/2:.2f}" y="32" fill="#FFFFFF" font-size="22" text-anchor="middle">Model Size (GiB)</text>
-  <text x="26" y="{(top+bottom)/2:.2f}" fill="#00E5FF" font-size="22" transform="rotate(-90, 26, {(top+bottom)/2:.2f})" text-anchor="middle">KL Div</text>
-  <text x="{width-26}" y="{(top+bottom)/2:.2f}" fill="#FF00FF" font-size="22" transform="rotate(90, {width-26}, {(top+bottom)/2:.2f})" text-anchor="middle">PPL</text>
-</svg>
-'''
-
-    os.makedirs(os.path.dirname(out_svg) or ".", exist_ok=True)
-    with open(out_svg, "w", encoding="utf-8") as f:
-        f.write(svg)
+    make_plot(bpw, kld, ppl, gib, title=title, outfile=out_svg, add_checks=True)
     return out_svg
 
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--csv", required=True, help="Input CSV path")
+    p.add_argument(
+        "--out",
+        default="iceblink_style.svg",
+        help="Output image path (e.g., .svg or .png)",
+    )
+    p.add_argument("--title", default="Iceblink-v2-exl3", help="Title text inside plot")
+    p.add_argument("--no-checks", action="store_true", help="Disable checkmark annotations")
+    p.add_argument("--keep-bf16", action="store_true", help="Keep bf16 row (otherwise dropped)")
+    args = p.parse_args()
+
+    bpw, kld, ppl, gib, _ = load_series(args.csv, drop_bf16=not args.keep_bf16)
+    make_plot(bpw, kld, ppl, gib, title=args.title, outfile=args.out, add_checks=not args.no_checks)
+
+
+if __name__ == "__main__":
+    main()

@@ -86,6 +86,7 @@ tags:
 
   .table-wrapper {
     display: inline-block;
+    margin: 0 auto;
     border: 1px solid #444;
     background: #000;
   }

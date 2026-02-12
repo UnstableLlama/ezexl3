@@ -80,6 +80,7 @@ tags:
 
   .table-wrapper {
     display: inline-block;
+    margin: 0 auto;
     border: 1px solid #2d362d;
     background: #0d110d;
   }
