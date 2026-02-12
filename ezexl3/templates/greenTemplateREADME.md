@@ -80,9 +80,32 @@ tags:
     padding: 20px;
   }
 
+  /* Geometry contract: keep repo-data layout parity with basic template */
+  .repo-data-panel {
+    padding: 14px 10px;
+  }
+
+  .repo-data-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    width: 100%;
+    --edge-gap: 8px;
+  }
+
+  .repo-graph {
+    display: block;
+    width: min(1440px, calc(100% - (var(--edge-gap) * 2)));
+    height: auto;
+    margin: 0 auto;
+  }
+
   .table-wrapper {
     display: inline-block;
     margin: 0 auto;
+    overflow: hidden;
+    max-width: calc(100% - (var(--edge-gap) * 2));
     border: 1px solid #004d00; 
   }
 
@@ -114,6 +137,16 @@ tags:
     background-color: rgba(0, 255, 65, 0.05);
     color: #ffffff;
     text-shadow: 0 0 8px #00ff41;
+  }
+
+
+  .data-table tr td:last-child,
+  .data-table tr th:last-child {
+    border-right: none;
+  }
+
+  .data-table tr:last-child td {
+    border-bottom: none;
   }
 
   .link-style {
@@ -162,7 +195,8 @@ tags:
 
   <div class="content-panel">
     <div class="panel-title">Repo Data</div>
-    <div class="panel-body">
+    <div class="panel-body repo-data-body repo-data-panel">
+      <img class="repo-graph" src="{{GRAPH_FILE}}" alt="Quantization graph">
       <div class="table-wrapper">
         <table class="data-table">
           <thead>
