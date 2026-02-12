@@ -84,8 +84,32 @@ tags:
     padding: 20px;
   }
 
+  /* Geometry contract: keep repo-data layout parity with basic template */
+  .repo-data-panel {
+    padding: 14px 10px;
+  }
+
+  .repo-data-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    width: 100%;
+    --edge-gap: 8px;
+  }
+
+  .repo-graph {
+    display: block;
+    width: min(1440px, calc(100% - (var(--edge-gap) * 2)));
+    height: auto;
+    margin: 0 auto;
+  }
+
   .table-wrapper {
     display: inline-block;
+    margin: 0 auto;
+    overflow: hidden;
+    max-width: calc(100% - (var(--edge-gap) * 2));
     border: 1px solid #444;
     background: #000;
   }
@@ -95,6 +119,7 @@ tags:
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.85em;
     width: auto;
+    margin: 0;
   }
 
   .data-table th {
@@ -114,6 +139,16 @@ tags:
   .data-table tr:hover td {
     background-color: rgba(255, 69, 0, 0.08);
     color: #ffffff;
+  }
+
+
+  .data-table tr td:last-child,
+  .data-table tr th:last-child {
+    border-right: none;
+  }
+
+  .data-table tr:last-child td {
+    border-bottom: none;
   }
 
   .link-style {
@@ -150,19 +185,24 @@ tags:
   <div class="content-panel">
     <div class="panel-title">Information</div>
     <div class="panel-body">
-      {{QUANT_METHOD}} quantizations of <b><a class="link-style" href="{{REPOLINK}}">{{MODEL}}</a></b> via <b>{{QUANT_TOOL}}</b>.
+      {{QUANT_METHOD}} quantizations of <b><a class="link-style" href="{{REPOLINK}}">{{MODEL}}</a></b> via
+      <b><a class="link-style" href="https://github.com/turboderp-org/exllamav3">{{QUANT_TOOL}}</a></b>.
+      <br/>
+      repo generated automatically with
+      <a class="link-style" href="https://github.com/UnstableLlama/ezexl3">ezexl3</a>.
     </div>
   </div>
 
   <div class="content-panel">
     <div class="panel-title">Repo Data</div>
-    <div class="panel-body">
+    <div class="panel-body repo-data-body repo-data-panel">
+      <img class="repo-graph" src="{{GRAPH_FILE}}" alt="Quantization graph">
       <div class="table-wrapper">
         <table class="data-table">
           <thead>
             <tr>
               <th>REVISION</th>
-              <th>SIZE (GiB)</th>
+              <th>GiB</th>
               <th>KL DIV</th>
               <th>PPL</th>
             </tr>

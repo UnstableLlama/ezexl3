@@ -1,31 +1,23 @@
-import csv
-import tempfile
 import unittest
-from pathlib import Path
 
-from ezexl3.graph_svg import generate_iceblink_svg
+from ezexl3.graph_svg import _top_axis_ticks_and_labels
 
 
 class GraphSvgTopAxisLabelTests(unittest.TestCase):
-    def test_omits_rightmost_top_axis_gib_label(self):
-        with tempfile.TemporaryDirectory() as td:
-            td_path = Path(td)
-            csv_path = td_path / "Measured.csv"
-            out_svg = td_path / "plot.svg"
+    def test_creates_six_inset_top_axis_gib_labels(self):
+        ticks, labels = _top_axis_ticks_and_labels([2.0, 3.2, 4.8], tick_count=6, inset_ratio=0.07)
 
-            with csv_path.open("w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=["weights", "KL Div", "PPL r-100", "GiB"])
-                w.writeheader()
-                w.writerow({"weights": "2", "KL Div": "0.2", "PPL r-100": "12.0", "GiB": "2.0"})
-                w.writerow({"weights": "3", "KL Div": "0.1", "PPL r-100": "11.0", "GiB": "3.0"})
-                w.writerow({"weights": "4", "KL Div": "0.05", "PPL r-100": "10.5", "GiB": "4.0"})
+        self.assertEqual(len(ticks), 6)
+        self.assertEqual(len(labels), 6)
+        self.assertGreater(ticks[0], 2.0)
+        self.assertLess(ticks[-1], 4.8)
 
-            generate_iceblink_svg(str(csv_path), str(out_svg), "test")
-            svg = out_svg.read_text()
+    def test_clamps_tick_count_between_five_and_six(self):
+        ticks_low, _ = _top_axis_ticks_and_labels([10.0, 16.0], tick_count=3)
+        ticks_high, _ = _top_axis_ticks_and_labels([10.0, 16.0], tick_count=10)
 
-            self.assertIn(">2.00</text>", svg)
-            self.assertIn(">3.00</text>", svg)
-            self.assertNotIn(">4.00</text>", svg)
+        self.assertEqual(len(ticks_low), 5)
+        self.assertEqual(len(ticks_high), 6)
 
 
 if __name__ == "__main__":

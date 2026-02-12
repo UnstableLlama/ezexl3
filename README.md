@@ -6,7 +6,7 @@ It wraps the exllamav3 quantization and evaluation workflow into a tool that:
 - Runs batch quantization easily (resume / skip supported)
 - Measures PPL + KL div, recording data to CSV
 - Generates a HuggingFace-ready `README.md` with your measurements using customizable templates
-- Auto-generates an SVG quality graph from the merged measurement CSV and embeds it in the README
+- Embeds an SVG graph from the merged measurement CSV in the README
 
 all with one command.
 
@@ -38,7 +38,7 @@ Then ezexl3 automatically:
 
 - Quantizes the model to all indicated bitrates, saved under subdirectories in the base model folder.
 
-- Measures PPL and KL div and saves to a modelMeasured.csv in the base model folder.
+- Measures PPL and KL div and saves to a modelMeasured.csv in the base model folder, and makes a stylish dark mode SVG graph with the data.
 
 - Generates a README.md for a HuggingFace exl3 quantization repo in the base model folder. (with optional customizable templates)
 
@@ -120,18 +120,3 @@ For automated pipelines, use the `--no-prompt` (or `-np`) flag to skip interacti
 ```bash
 ezexl3 repo -m /path/to/model -b 4.0 --no-prompt
 ```
-
-## Key Features
-- **Quantization Queuing**: Run multiple quantizations at a time with one command.
-- **Auto-Measure**: Automatically measure and record KL div and PPL asynchronously.
-- **Resume Support**: Skip already-finished BPWs and resume partial jobs.
-- **Flexible README Templates**: Automated high-quality README generation for HuggingFace uploads.
-- **Automatic Cleanup**: Default cleanup of temporary working directories and logs.
-
-
-## Todo
-- Jupyter Notebook
-- WebUI
-- Huggingface integration (dowwnload/upload)
-- Automated git branching for HF repo
-- Graph generation from .csv data
