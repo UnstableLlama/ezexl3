@@ -56,17 +56,33 @@ def pad(lo: float, hi: float, frac: float = 0.06) -> tuple[float, float]:
     return lo - d, hi + d
 
 
-def _top_axis_ticks_and_labels(gib_s: Sequence[float]) -> tuple[list[int], list[str]]:
-    gmin, gmax = float(min(gib_s)), float(max(gib_s))
-    start = math.floor(gmin)
-    end = math.ceil(gmax)
-    ticks = list(range(start, end + 1))
-    if len(ticks) < 2:
-        return ticks, [str(t) for t in ticks]
+def _format_gib_tick_label(value: float) -> str:
+    rounded_int = round(value)
+    if abs(value - rounded_int) < 0.05:
+        return str(int(rounded_int))
+    return f"{value:.1f}"
 
-    # Hide the rightmost label due to uneven final spacing after interpolation.
-    labels = [str(t) for t in ticks]
-    labels[-1] = ""
+
+def _top_axis_ticks_and_labels(
+    gib_s: Sequence[float],
+    tick_count: int = 6,
+    inset_ratio: float = 0.07,
+) -> tuple[list[float], list[str]]:
+    gmin, gmax = float(min(gib_s)), float(max(gib_s))
+    if math.isclose(gmin, gmax):
+        return [gmin], [_format_gib_tick_label(gmin)]
+
+    span = gmax - gmin
+    inset = span * inset_ratio
+    start = gmin + inset
+    end = gmax - inset
+    if end <= start:
+        start, end = gmin, gmax
+
+    count = max(5, min(6, int(tick_count)))
+    step = (end - start) / (count - 1)
+    ticks = [start + (idx * step) for idx in range(count)]
+    labels = [_format_gib_tick_label(tick) for tick in ticks]
     return ticks, labels
 
 
@@ -188,7 +204,7 @@ def generate_iceblink_svg(csv_path: str, out_svg: str, title: str) -> str:
     bpw, kld, ppl, gib, _ = load_series(csv_path, drop_bf16=True)
     if len(bpw) < 2:
         raise ValueError("Need at least 2 non-bf16 rows to draw graph")
-    make_plot(bpw, kld, ppl, gib, title=title, outfile=out_svg, add_checks=True)
+    make_plot(bpw, kld, ppl, gib, title=title, outfile=out_svg, add_checks=False)
     return out_svg
 
 
