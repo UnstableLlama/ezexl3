@@ -82,6 +82,7 @@ tags:
 
   .table-wrapper {
     display: inline-block;
+    margin: 0 auto;
     border: 1px solid #004d00; 
   }
 

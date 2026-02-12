@@ -12,6 +12,10 @@ tags:
 
   .dashboard-container {
     font-family: 'Inter', sans-serif;
+    width: min(1500px, calc(100vw - 32px));
+    max-width: 100%;
+    margin: 0 auto;
+    box-sizing: border-box;
     background-color: #1a1b1e;
     background-image: radial-gradient(#2d2f34 1px, transparent 1px);
     background-size: 20px 20px;
@@ -69,11 +73,29 @@ tags:
     padding: 20px;
   }
 
+  .repo-data-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    width: 100%;
+    --edge-gap: 20px;
+  }
+
+  .repo-graph {
+    display: block;
+    width: min(1365px, calc(100% - (var(--edge-gap) * 2)));
+    height: auto;
+    margin: 0 auto;
+  }
+
   .table-wrapper {
     display: inline-block;
+    margin: 0 auto;
     border: 1px solid #666a73;
     border-radius: 4px;
     overflow: hidden;
+    max-width: calc(100% - (var(--edge-gap) * 2));
   }
 
   .data-table {
@@ -153,10 +175,8 @@ tags:
 
   <div class="content-panel">
     <div class="panel-title">Repo Data</div>
-    <p align="center">
-      <img src="{{GRAPH_FILE}}" alt="Quantization graph" width="900">
-    </p>
-    <div class="panel-body">
+    <div class="panel-body repo-data-body">
+      <img class="repo-graph" src="{{GRAPH_FILE}}" alt="Quantization graph">
       <div class="table-wrapper">
         <table class="data-table">
           <thead>
