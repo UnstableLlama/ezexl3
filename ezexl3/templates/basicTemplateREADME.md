@@ -12,6 +12,10 @@ tags:
 
   .dashboard-container {
     font-family: 'Inter', sans-serif;
+    width: min(1500px, calc(100vw - 32px));
+    max-width: 100%;
+    margin: 0 auto;
+    box-sizing: border-box;
     background-color: #1a1b1e;
     background-image: radial-gradient(#2d2f34 1px, transparent 1px);
     background-size: 20px 20px;
@@ -74,13 +78,23 @@ tags:
     flex-direction: column;
     align-items: center;
     gap: 20px;
+    width: 100%;
     --edge-gap: 20px;
   }
 
   .repo-graph {
     display: block;
-    width: calc(100% - (var(--edge-gap) * 2));
-    max-width: 1365px;
+    width: min(1365px, calc(100% - (var(--edge-gap) * 2)));
+    height: auto;
+    margin: 0 auto;
+  }
+
+  .table-wrapper {
+    display: inline-block;
+    margin: 0 auto;
+    border: 1px solid #666a73;
+    border-radius: 4px;
+
     height: auto;
     margin: 0 auto;
   }
