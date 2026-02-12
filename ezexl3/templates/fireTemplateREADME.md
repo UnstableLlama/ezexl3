@@ -163,7 +163,7 @@ tags:
           <thead>
             <tr>
               <th>REVISION</th>
-              <th>SIZE (GiB)</th>
+              <th>GiB</th>
               <th>KL DIV</th>
               <th>PPL</th>
             </tr>
