@@ -10,16 +10,6 @@ class PassThrough:
     measure_args: List[str]
     cleaned_argv: List[str]
 
-def save_exllamav3_root(path: str) -> None:
-    import json
-    from pathlib import Path
-    cfg_dir = Path.home() / ".config" / "ezexl3"
-    cfg_dir.mkdir(parents=True, exist_ok=True)
-
-    cfg_path = cfg_dir / "config.json"
-    with cfg_path.open("w") as f:
-        json.dump({"exllamav3_root": path}, f, indent=2)
-
 def _split_passthrough(argv: List[str]) -> PassThrough:
     """
     Extract two passthrough blocks:
@@ -86,6 +76,56 @@ def _csv_or_space_list(values: List[str]) -> List[str]:
         out.extend(parts)
     return out
 
+
+
+
+def _parse_devices(values: List[str]) -> List[int]:
+    if not values:
+        raise SystemExit("At least one CUDA device must be provided (e.g. -d 0)")
+    out: List[int] = []
+    for raw in values:
+        try:
+            out.append(int(raw))
+        except ValueError as e:
+            raise SystemExit(f"Invalid CUDA device '{raw}'. Expected integer device ids like: -d 0,1") from e
+    if not out:
+        raise SystemExit("At least one CUDA device must be provided (e.g. -d 0)")
+    return out
+
+
+def _parse_device_ratios(values: Optional[List[str]], devices: List[int]) -> Optional[List[str]]:
+    if values is None:
+        return None
+    if not values:
+        raise SystemExit("--device-ratios cannot be empty. Example: -r 1,1")
+
+    parsed: List[str] = []
+    for raw in values:
+        try:
+            ratio = float(raw)
+        except ValueError as e:
+            raise SystemExit(f"Invalid device ratio '{raw}'. Expected numeric values like: -r 1,1") from e
+        if ratio <= 0:
+            raise SystemExit(f"Invalid device ratio '{raw}'. Ratios must be > 0")
+        parsed.append(raw)
+
+    if len(parsed) != len(devices):
+        raise SystemExit(
+            f"--device-ratios length ({len(parsed)}) must match --devices length ({len(devices)})."
+        )
+
+    return parsed
+
+
+def _warn_deprecated_or_unused(args: argparse.Namespace, cmd: str) -> None:
+    if getattr(args, "exllamav3_root", None):
+        print("⚠️ --exllamav3-root is deprecated and ignored.")
+
+    if cmd == "repo":
+        if getattr(args, "schedule", "queue") != "queue":
+            print("⚠️ --schedule is currently ignored; only queue scheduling is implemented.")
+        if getattr(args, "no_meta", False):
+            print("⚠️ --no-meta is currently ignored; run metadata receipts are not implemented.")
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -184,6 +224,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.print_help()
         return 0
 
+    _warn_deprecated_or_unused(args, cmd)
+
     # Normalize lists
     if hasattr(args, "models"):
         args.models = _csv_or_space_list(args.models)
@@ -198,8 +240,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     import os
     from ezexl3.repo import run_repo, run_quant_stage, run_measure_stage
 
-    devices_i = [int(d) for d in getattr(args, "devices", ["0"])]
-    device_ratios_str = ",".join(args.device_ratios) if getattr(args, "device_ratios", None) else None
+    devices_i = _parse_devices(getattr(args, "devices", ["0"]))
+    device_ratios = _parse_device_ratios(getattr(args, "device_ratios", None), devices_i)
+    device_ratios_str = ",".join(device_ratios) if device_ratios else None
 
     if cmd == "repo":
         # Process each model, continuing on error
@@ -252,6 +295,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                     devices=devices_i,
                     device_ratios=device_ratios_str,
                     quant_args=pt.quant_args,
+                    out_template=args.out_template,
+                    w_template=args.w_template,
+                    dry_run=args.dry,
+                    continue_on_error=args.continue_on_error,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
@@ -270,6 +317,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     bpws=args.bpws,
                     devices=devices_i,
                     write_logs=(not args.no_logs),
+                    measure_args=pt.measure_args,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
