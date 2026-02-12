@@ -12,8 +12,9 @@ tags:
 
   .dashboard-container {
     font-family: 'Inter', sans-serif;
-    width: min(1500px, calc(100vw - 32px));
-    max-width: 100%;
+    width: fit-content;
+    min-width: 1365px;
+    max-width: none;
     margin: 0 auto;
     box-sizing: border-box;
     background-color: #1a1b1e;
@@ -56,7 +57,12 @@ tags:
     border: 1px solid #4a4d53;
     border-radius: 8px;
     margin-bottom: 25px;
-    overflow: hidden;
+    overflow: visible;
+  }
+
+  .dashboard-scroll-wrap {
+    width: 100%;
+    overflow-x: auto;
   }
 
   .panel-title {
@@ -79,12 +85,21 @@ tags:
     align-items: center;
     gap: 20px;
     width: 100%;
+    overflow-x: visible;
     --edge-gap: 20px;
+  }
+
+  .repo-graph-wrap {
+    width: 100%;
+    overflow-x: auto;
+    display: flex;
+    justify-content: center;
   }
 
   .repo-graph {
     display: block;
-    width: min(1365px, calc(100% - (var(--edge-gap) * 2)));
+    width: 1365px;
+    max-width: none;
     height: auto;
     margin: 0 auto;
   }
@@ -165,6 +180,7 @@ tags:
   }
 </style>
 
+<div class="dashboard-scroll-wrap">
 <div class="dashboard-container">
 
   <div class="dashboard-header">
@@ -186,7 +202,9 @@ tags:
   <div class="content-panel">
     <div class="panel-title">Repo Data</div>
     <div class="panel-body repo-data-body">
-      <img class="repo-graph" src="{{GRAPH_FILE}}" alt="Quantization graph">
+      <div class="repo-graph-wrap">
+        <img class="repo-graph" src="{{GRAPH_FILE}}" alt="Quantization graph">
+      </div>
       <div class="table-wrapper">
         <table class="data-table">
           <thead>
@@ -243,4 +261,5 @@ tags:
     </div>
   </div>
 
+</div>
 </div>
