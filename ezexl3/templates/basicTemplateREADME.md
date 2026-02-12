@@ -94,6 +94,16 @@ tags:
     margin: 0 auto;
     border: 1px solid #666a73;
     border-radius: 4px;
+
+    height: auto;
+    margin: 0 auto;
+  }
+
+  .table-wrapper {
+    display: inline-block;
+    margin: 0 auto;
+    border: 1px solid #666a73;
+    border-radius: 4px;
     overflow: hidden;
     max-width: calc(100% - (var(--edge-gap) * 2));
   }
