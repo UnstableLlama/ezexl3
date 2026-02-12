@@ -189,7 +189,11 @@ tags:
   <div class="content-panel">
     <div class="panel-title">Information</div>
     <div class="panel-body">
-      {{QUANT_METHOD}} quantizations of <b><a class="link-style" href="{{REPOLINK}}">{{MODEL}}</a></b> via <b>{{QUANT_TOOL}}</b>.
+      {{QUANT_METHOD}} quantizations of <b><a class="link-style" href="{{REPOLINK}}">{{MODEL}}</a></b> via
+      <b><a class="link-style" href="https://github.com/turboderp-org/exllamav3">{{QUANT_TOOL}}</a></b>.
+      <br/>
+      repo generated automatically with
+      <a class="link-style" href="https://github.com/UnstableLlama/ezexl3">ezexl3</a>.
     </div>
   </div>
 
