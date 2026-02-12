@@ -13,6 +13,9 @@ dependencies = [
     "torch",
     "datasets",
     "safetensors",
+    "numpy",
+    "pandas",
+    "matplotlib",
 ]
 
 [project.scripts]
