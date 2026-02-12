@@ -163,8 +163,7 @@ def make_plot(bpw, kld, ppl, gib, title, outfile, add_checks=True):
 
     ticks, labels = _top_axis_ticks_and_labels(gib_s)
     if len(ticks) >= 2:
-        secax.set_xticks(ticks)
-        secax.set_xticklabels(labels)
+        secax.set_xticks(ticks, labels=labels)
 
     if add_checks:
         for x, y in zip(bpw, kld):
