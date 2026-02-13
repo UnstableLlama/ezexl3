@@ -181,7 +181,7 @@ def run_readme(model_dir: str, template_name: Optional[str] = None, interactive:
         except Exception:
             pass
 
-        revision_link = f"{quant_repo_link.rstrip('/')}/tree/{label}"
+
 
         row_html = f"""            <tr>
               <td><a class=\"link-style\" href=\"{revision_link}\">{label}</a></td>
