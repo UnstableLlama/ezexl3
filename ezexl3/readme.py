@@ -152,7 +152,7 @@ def run_readme(model_dir: str, template_name: Optional[str] = None, interactive:
                     first_bpw = label
             except Exception:
                 formatted_labels[w] = w
-
+                
     quant_repo_link = f"https://huggingface.co/{meta['USER']}/{meta['MODEL']}-{meta['QUANT_METHOD']}"
 
     table_rows = []
@@ -177,8 +177,11 @@ def run_readme(model_dir: str, template_name: Optional[str] = None, interactive:
             ppl = f"{float(ppl):.4f}"
         except Exception:
             pass
-
-        revision_link = f"{quant_repo_link.rstrip('/')}/tree/{label}"
+          
+        if w == "bf16":
+            revision_link = meta["REPOLINK"].rstrip("/")
+        else:
+            revision_link = f"{quant_repo_link.rstrip('/')}/tree/{label}"
 
         row_html = f"""            <tr>
               <td><a class=\"link-style\" href=\"{revision_link}\">{label}</a></td>
