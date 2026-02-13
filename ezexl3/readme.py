@@ -153,6 +153,11 @@ def run_readme(model_dir: str, template_name: Optional[str] = None, interactive:
             except Exception:
                 formatted_labels[w] = w
 
+    quant_repo_name = meta["MODEL"]
+    if not quant_repo_name.lower().endswith(f"-{meta['QUANT_METHOD'].lower()}"):
+        quant_repo_name = f"{quant_repo_name}-{meta['QUANT_METHOD']}"
+    quant_repo_link = f"https://huggingface.co/{meta['USER']}/{quant_repo_name}"
+
     table_rows = []
     for r in rows:
         w = r["weights"]
@@ -176,8 +181,10 @@ def run_readme(model_dir: str, template_name: Optional[str] = None, interactive:
         except Exception:
             pass
 
+        revision_link = f"{quant_repo_link.rstrip('/')}/tree/{label}"
+
         row_html = f"""            <tr>
-              <td><a class=\"link-style\" href=\"#\">{label}</a></td>
+              <td><a class=\"link-style\" href=\"{revision_link}\">{label}</a></td>
               <td>{gib}</td>
               <td>{kl}</td>
               <td>{ppl}</td>
@@ -207,4 +214,3 @@ def run_readme(model_dir: str, template_name: Optional[str] = None, interactive:
         f.write(template)
 
     print(f"✅ Generated {readme_path}")
-
