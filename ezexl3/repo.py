@@ -292,6 +292,8 @@ def run_repo(
     write_logs: bool = True,
     interactive: bool = True,
     template: Optional[str] = None,
+    include_graph: bool = True,
+    include_measurements: bool = True,
 ) -> int:
     # --- Stage 1: quantize ---
     if do_quant:
@@ -321,7 +323,14 @@ def run_repo(
     if do_readme:
         from ezexl3.readme import run_readme
         print("Generating README...")
-        run_readme(model_dir, template_name=template, interactive=interactive)
+        run_readme(
+            model_dir,
+            template_name=template,
+            interactive=interactive,
+            include_graph=include_graph,
+            include_measurements=include_measurements,
+            bpws_hint=bpws,
+        )
 
     # --- Stage 4: cleanup ---
     if cleanup:
