@@ -58,7 +58,55 @@ def prompt_metadata(model_dir: str, bpws: List[str], interactive: bool = True) -
     }
 
 
-def run_readme(model_dir: str, template_name: Optional[str] = None, interactive: bool = True) -> None:
+def _discover_rows_without_measurements(model_dir: str, bpws_hint: Optional[List[str]] = None) -> List[Dict[str, str]]:
+    rows: List[Dict[str, str]] = []
+
+    bpws: List[str] = []
+    if bpws_hint:
+        bpws.extend([str(x) for x in bpws_hint])
+
+    if os.path.isdir(model_dir):
+        for item in os.listdir(model_dir):
+            path = os.path.join(model_dir, item)
+            if not os.path.isdir(path):
+                continue
+            if item.startswith("w-"):
+                continue
+            try:
+                float(item)
+                bpws.append(item)
+            except Exception:
+                continue
+
+    seen = set()
+    ordered_bpws: List[str] = []
+    for b in bpws:
+        if b in seen:
+            continue
+        seen.add(b)
+        ordered_bpws.append(b)
+
+    def _bpw_order(v: str) -> float:
+        try:
+            return float(v)
+        except Exception:
+            return 9999.0
+
+    for b in sorted(ordered_bpws, key=_bpw_order):
+        rows.append({"weights": b, "GiB": "x", "KL Div": "x", "PPL r-100": "x"})
+
+    rows.append({"weights": "bf16", "GiB": "x", "KL Div": "x", "PPL r-100": "x"})
+    return rows
+
+
+def run_readme(
+    model_dir: str,
+    template_name: Optional[str] = None,
+    interactive: bool = True,
+    include_graph: bool = True,
+    include_measurements: bool = True,
+    bpws_hint: Optional[List[str]] = None,
+) -> None:
     """
     Generate README.md for the model repository based on measurement CSV and template.
     """
@@ -104,22 +152,25 @@ def run_readme(model_dir: str, template_name: Optional[str] = None, interactive:
     with open(template_path, "r") as f:
         template = f.read()
 
-    from ezexl3.measure import default_csv_path
-
-    csv_path = default_csv_path(model_dir)
-    if not os.path.exists(csv_path):
-        print(f"🔴 CSV not found: {csv_path}. Cannot generate README.")
-        return
-
     rows: List[Dict[str, str]] = []
-    with open(csv_path, "r", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            rows.append(row)
+    if include_measurements:
+        from ezexl3.measure import default_csv_path
 
-    if not rows:
-        print(f"🔴 CSV is empty: {csv_path}. Cannot generate README.")
-        return
+        csv_path = default_csv_path(model_dir)
+        if not os.path.exists(csv_path):
+            print(f"🔴 CSV not found: {csv_path}. Cannot generate README.")
+            return
+
+        with open(csv_path, "r", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                rows.append(row)
+
+        if not rows:
+            print(f"🔴 CSV is empty: {csv_path}. Cannot generate README.")
+            return
+    else:
+        rows = _discover_rows_without_measurements(model_dir, bpws_hint=bpws_hint)
 
     def sort_key(r):
         w = r["weights"]
@@ -152,7 +203,7 @@ def run_readme(model_dir: str, template_name: Optional[str] = None, interactive:
                     first_bpw = label
             except Exception:
                 formatted_labels[w] = w
-                
+
     quant_repo_link = f"https://huggingface.co/{meta['USER']}/{meta['MODEL']}-{meta['QUANT_METHOD']}"
 
     table_rows = []
@@ -177,31 +228,59 @@ def run_readme(model_dir: str, template_name: Optional[str] = None, interactive:
             ppl = f"{float(ppl):.4f}"
         except Exception:
             pass
-          
+
         if w == "bf16":
             revision_link = meta["REPOLINK"].rstrip("/")
         else:
             revision_link = f"{quant_repo_link.rstrip('/')}/tree/{label}"
 
-        row_html = f"""            <tr>
+        if include_measurements:
+            row_html = f"""            <tr>
               <td><a class=\"link-style\" href=\"{revision_link}\">{label}</a></td>
               <td>{gib}</td>
               <td>{kl}</td>
               <td>{ppl}</td>
+            </tr>"""
+        else:
+            row_html = f"""            <tr>
+              <td><a class=\"link-style\" href=\"{revision_link}\">{label}</a></td>
+              <td>{gib}</td>
             </tr>"""
         table_rows.append(row_html)
 
     table_body = "\n".join(table_rows)
     template = re.sub(r"<tbody>.*?</tbody>", f"<tbody>\n{table_body}\n          </tbody>", template, flags=re.DOTALL)
 
-    graph_filename = f"{os.path.basename(os.path.abspath(model_dir)).lower()}.svg"
-    graph_path = os.path.join(model_dir, graph_filename)
-    try:
-        generate_iceblink_svg(csv_path=csv_path, out_svg=graph_path, title=f"{meta['MODEL']}-{meta['QUANT_METHOD']}")
-    except Exception as e:
-        print(f"⚠️ Graph generation skipped: {e}")
+    if include_measurements:
+        table_head = """          <thead>
+            <tr>
+              <th>REVISION</th>
+              <th>GiB</th>
+              <th>KL DIV</th>
+              <th>PPL</th>
+            </tr>
+          </thead>"""
+    else:
+        table_head = """          <thead>
+            <tr>
+              <th>REVISION</th>
+              <th>GiB</th>
+            </tr>
+          </thead>"""
+    template = re.sub(r"<thead>.*?</thead>", table_head, template, flags=re.DOTALL)
 
-    meta["GRAPH_FILE"] = graph_filename
+    if include_graph:
+        graph_filename = f"{os.path.basename(os.path.abspath(model_dir)).lower()}.svg"
+        graph_path = os.path.join(model_dir, graph_filename)
+        try:
+            from ezexl3.measure import default_csv_path
+            generate_iceblink_svg(csv_path=default_csv_path(model_dir), out_svg=graph_path, title=f"{meta['MODEL']}-{meta['QUANT_METHOD']}")
+        except Exception as e:
+            print(f"⚠️ Graph generation skipped: {e}")
+        meta["GRAPH_FILE"] = graph_filename
+    else:
+        template = re.sub(r"\s*<img class=\"repo-graph\"[^>]*>\s*", "\n", template)
+        meta["GRAPH_FILE"] = ""
 
     for k, v in meta.items():
         template = template.replace(f"{{{{{k}}}}}", str(v))

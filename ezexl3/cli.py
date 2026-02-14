@@ -166,6 +166,8 @@ def build_parser() -> argparse.ArgumentParser:
         p_sub.add_argument("--no-meta", action="store_true", help="Do not write run.json receipt")
         p_sub.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
         p_sub.add_argument("--no-prompt", "-np", action="store_true", help="Use defaults for README instead of prompting")
+        p_sub.add_argument("--no-graph", "-ng", action="store_true", help="Do not generate or embed the README SVG graph")
+        p_sub.add_argument("--no-measurement", "-nm", action="store_true", help="Skip KL/PPL measurements (also disables README graph and KL/PPL table columns)")
         p_sub.add_argument("--template", "-t", help="README template name (e.g., 'fire', 'basic')")
 
     # --- repo (main command) ---
@@ -204,6 +206,8 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("readme", help="README only (CSV -> README)")
     r.add_argument("-m", "--models", nargs="+", required=True, help="One or more model directories")
     r.add_argument("--no-prompt", "-np", action="store_true", help="Use defaults for README instead of prompting")
+    r.add_argument("--no-graph", "-ng", action="store_true", help="Do not generate or embed the README SVG graph")
+    r.add_argument("--no-measurement", "-nm", action="store_true", help="Remove KL/PPL columns from README and skip graph embedding")
     r.add_argument("--template", "-t", help="README template name (e.g., 'fire', 'basic')")
 
     return p
@@ -262,11 +266,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                     quant_args=pt.quant_args,
                     measure_args=pt.measure_args,
                     do_quant=True,
-                    do_measure=True,
+                    do_measure=(not args.no_measurement),
                     do_readme=(not args.no_readme),
                     cleanup=(not args.no_cleanup),
                     write_logs=(not args.no_logs),
                     interactive=(not args.no_prompt),
+                    include_graph=(not args.no_graph and not args.no_measurement),
+                    include_measurements=(not args.no_measurement),
                     template=args.template,
                 )
                 if rc != 0:
@@ -329,7 +335,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     if cmd == "readme":
         from ezexl3.readme import run_readme
         for model_dir in args.models:
-            run_readme(model_dir, template_name=args.template, interactive=(not args.no_prompt))
+            run_readme(
+                model_dir,
+                template_name=args.template,
+                interactive=(not args.no_prompt),
+                include_graph=(not args.no_graph and not args.no_measurement),
+                include_measurements=(not args.no_measurement),
+            )
         return 0
 
     print(f"Command '{args.cmd}' not implemented yet.")
