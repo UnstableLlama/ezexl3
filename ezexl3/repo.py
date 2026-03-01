@@ -41,9 +41,9 @@ def _normalize_bpw_str(raw: str) -> str:
     return trimmed
 
 
-def _split_integer_fractional_bpws(bpws: List[str]) -> Tuple[List[str], List[str]]:
+def _split_integer_optimized_bpws(bpws: List[str]) -> Tuple[List[str], List[str]]:
     integer_bpws: List[str] = []
-    fractional_bpws: List[str] = []
+    optimized_bpws: List[str] = []
 
     for raw in bpws:
         normalized = _normalize_bpw_str(raw)
@@ -51,8 +51,8 @@ def _split_integer_fractional_bpws(bpws: List[str]) -> Tuple[List[str], List[str
         if math.isclose(value, round(value), abs_tol=1e-9):
             integer_bpws.append(str(int(round(value))))
         else:
-            fractional_bpws.append(normalized)
-    return integer_bpws, fractional_bpws
+            optimized_bpws.append(normalized)
+    return integer_bpws, optimized_bpws
 
 
 def _dedupe_preserve_order(items: List[str]) -> List[str]:
@@ -67,7 +67,7 @@ def _dedupe_preserve_order(items: List[str]) -> List[str]:
 
 
 def _plan_repo_bpws(bpws: List[str]) -> Dict[str, List[str]]:
-    ints, fracs = _split_integer_fractional_bpws(bpws)
+    ints, fracs = _split_integer_optimized_bpws(bpws)
     required_neighbors: List[str] = []
     for frac in fracs:
         frac_val = float(frac)
@@ -82,7 +82,7 @@ def _plan_repo_bpws(bpws: List[str]) -> Dict[str, List[str]]:
 
     return {
         "requested_integers": requested_ints,
-        "requested_fractionals": requested_fracs,
+        "requested_optimizeds": requested_fracs,
         "quant_integer_queue": quant_ints,
         "measure_queue": measure_targets,
     }
@@ -323,14 +323,14 @@ def _print_above_progress(
     sys.stdout.flush()
 
 
-def _build_fractional_jobs(model_dir: str, fractional_bpws: List[str]) -> Tuple[List[dict], List[dict]]:
+def _build_optimized_jobs(model_dir: str, optimized_bpws: List[str]) -> Tuple[List[dict], List[dict]]:
     measurements_dir = os.path.join(model_dir, "measurements")
     os.makedirs(measurements_dir, exist_ok=True)
 
     compare_jobs_by_pair: Dict[Tuple[str, str], dict] = {}
     optimize_jobs: List[dict] = []
 
-    for frac in fractional_bpws:
+    for frac in optimized_bpws:
         frac_value = float(frac)
         low = str(math.floor(frac_value))
         high = str(math.ceil(frac_value))
@@ -359,7 +359,7 @@ def _build_fractional_jobs(model_dir: str, fractional_bpws: List[str]) -> Tuple[
 
         optimize_jobs.append(
             {
-                "fractional": frac,
+                "optimized": frac,
                 "out_dir": out_dir,
                 "measure_json": measure_json,
                 "low": low,
@@ -370,7 +370,7 @@ def _build_fractional_jobs(model_dir: str, fractional_bpws: List[str]) -> Tuple[
     return list(compare_jobs_by_pair.values()), optimize_jobs
 
 
-def _worker_fractional_compare(
+def _worker_optimized_compare(
     measure_script: str,
     model_dir: str,
     device: int,
@@ -421,7 +421,7 @@ def _worker_fractional_compare(
         log_f.close()
 
 
-def _run_fractional_compare_queue(
+def _run_optimized_compare_queue(
     model_dir: str,
     compare_jobs: List[dict],
     devices: List[int],
@@ -431,7 +431,7 @@ def _run_fractional_compare_queue(
     if not compare_jobs:
         return
     if not devices:
-        raise ValueError("No CUDA devices available for fractional comparative measure stage")
+        raise ValueError("No CUDA devices available for optimized comparative measure stage")
 
     tasks: Queue = Queue()
     results: Queue = Queue()
@@ -443,16 +443,16 @@ def _run_fractional_compare_queue(
 
     procs: List[Process] = []
     for device in devices:
-        log_path = os.path.join(model_dir, "logs", f"fractional_compare_gpu{device}.log") if write_logs else None
+        log_path = os.path.join(model_dir, "logs", f"optimized_compare_gpu{device}.log") if write_logs else None
         p = Process(
-            target=_worker_fractional_compare,
+            target=_worker_optimized_compare,
             args=(measure_script, model_dir, device, tasks, results, log_path),
         )
         p.daemon = False
         p.start()
         procs.append(p)
 
-    print(f"\n🚀 Fractional comparative measure: {len(compare_jobs)} jobs on {len(devices)} GPUs...")
+    print(f"\n🚀 Optimized comparative measure: {len(compare_jobs)} jobs on {len(devices)} GPUs...")
 
     use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     gpu_status: Dict[int, str] = {d: "idle" for d in devices}
@@ -513,20 +513,20 @@ def _run_fractional_compare_queue(
     for p in procs:
         p.join()
     if failures:
-        raise RuntimeError(f"Fractional comparative measure stage failed for {failures} job(s)")
+        raise RuntimeError(f"Optimized comparative measure stage failed for {failures} job(s)")
 
 
-def _run_fractional_opt_stage(
+def _run_optimized_opt_stage(
     model_dir: str,
-    fractional_bpws: List[str],
+    optimized_bpws: List[str],
     devices: List[int],
     write_logs: bool = True,
 ) -> None:
-    if not fractional_bpws:
+    if not optimized_bpws:
         return
 
     measure_script, optimize_script = _resolve_exllamav3_util_scripts()
-    compare_jobs, optimize_jobs = _build_fractional_jobs(model_dir, fractional_bpws)
+    compare_jobs, optimize_jobs = _build_optimized_jobs(model_dir, optimized_bpws)
 
     queued_jobs: List[dict] = []
     for job in compare_jobs:
@@ -538,7 +538,7 @@ def _run_fractional_opt_stage(
             continue
         queued_jobs.append(job)
 
-    _run_fractional_compare_queue(
+    _run_optimized_compare_queue(
         model_dir=model_dir,
         compare_jobs=queued_jobs,
         devices=devices,
@@ -547,10 +547,10 @@ def _run_fractional_opt_stage(
     )
 
     for job in optimize_jobs:
-        frac = job["fractional"]
+        frac = job["optimized"]
         out_dir = job["out_dir"]
         if os.path.isdir(out_dir) and os.path.isfile(os.path.join(out_dir, "config.json")):
-            print(f"🟦 skipping fractional optimize {frac}: output already exists")
+            print(f"🟦 skipping optimized optimize {frac}: output already exists")
             continue
         optimize_cmd = [
             sys.executable,
@@ -562,7 +562,7 @@ def _run_fractional_opt_stage(
             "-b",
             frac,
         ]
-        print(f"\n⚙️ Optimizing fractional quant {frac}")
+        print(f"\n⚙️ Optimizing optimized quant {frac}")
         _run_cmd(optimize_cmd)
 
 
@@ -851,13 +851,13 @@ def run_repo(
 ) -> int:
     bpw_plan = _plan_repo_bpws(bpws)
     quant_bpws = bpw_plan["quant_integer_queue"]
-    fractional_bpws = bpw_plan["requested_fractionals"]
+    optimized_bpws = bpw_plan["requested_optimizeds"]
     measure_bpws = bpw_plan["measure_queue"]
 
     auto_added = [b for b in quant_bpws if b not in bpw_plan["requested_integers"]]
     if auto_added:
         print(
-            "ℹ️ Added required integer quants for fractional targets: "
+            "ℹ️ Added required integer quants for optimized targets: "
             + ", ".join(auto_added)
         )
 
@@ -873,11 +873,11 @@ def run_repo(
         if rc != 0:
             return rc
 
-    # --- Stage 2: fractional optimize ---
-    if do_quant and fractional_bpws:
-        _run_fractional_opt_stage(
+    # --- Stage 2: optimized optimize ---
+    if do_quant and optimized_bpws:
+        _run_optimized_opt_stage(
             model_dir=model_dir,
-            fractional_bpws=fractional_bpws,
+            optimized_bpws=optimized_bpws,
             devices=devices,
             write_logs=write_logs,
         )

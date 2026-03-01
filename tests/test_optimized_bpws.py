@@ -8,12 +8,12 @@ from unittest.mock import patch
 from ezexl3 import repo
 
 
-class FractionalBpwPlanningTests(unittest.TestCase):
+class OptimizedBpwPlanningTests(unittest.TestCase):
     def test_plan_repo_bpws_adds_integer_neighbors(self):
         plan = repo._plan_repo_bpws(["4", "4.07", "6.25"])
 
         self.assertEqual(plan["requested_integers"], ["4"])
-        self.assertEqual(plan["requested_fractionals"], ["4.07", "6.25"])
+        self.assertEqual(plan["requested_optimizeds"], ["4.07", "6.25"])
         self.assertEqual(plan["quant_integer_queue"], ["4", "5", "6", "7"])
         self.assertEqual(plan["measure_queue"], ["4", "5", "6", "7", "4.07", "6.25"])
 
@@ -21,17 +21,17 @@ class FractionalBpwPlanningTests(unittest.TestCase):
         plan = repo._plan_repo_bpws(["4.0", "5.00", "4.10"])
 
         self.assertEqual(plan["requested_integers"], ["4", "5"])
-        self.assertEqual(plan["requested_fractionals"], ["4.1"])
+        self.assertEqual(plan["requested_optimizeds"], ["4.1"])
 
 
-class FractionalStageTests(unittest.TestCase):
-    def test_build_fractional_jobs_dedupes_shared_pairs(self):
+class OptimizedStageTests(unittest.TestCase):
+    def test_build_optimized_jobs_dedupes_shared_pairs(self):
         with tempfile.TemporaryDirectory() as tmp:
             model_dir = Path(tmp)
             for d in ["2", "3", "4", "5"]:
                 (model_dir / d).mkdir()
 
-            compare_jobs, optimize_jobs = repo._build_fractional_jobs(str(model_dir), ["2.3", "2.7", "4.1"])
+            compare_jobs, optimize_jobs = repo._build_optimized_jobs(str(model_dir), ["2.3", "2.7", "4.1"])
 
             self.assertEqual(len(compare_jobs), 2)
             labels = {(j["low"], j["high"]): j for j in compare_jobs}
@@ -39,7 +39,7 @@ class FractionalStageTests(unittest.TestCase):
             self.assertEqual(labels[("4", "5")]["targets"], ["4.1"])
             self.assertEqual(len(optimize_jobs), 3)
 
-    def test_fractional_stage_skips_existing_measurement_json(self):
+    def test_optimized_stage_skips_existing_measurement_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             model_dir = Path(tmp)
             (model_dir / "4").mkdir()
@@ -51,10 +51,10 @@ class FractionalStageTests(unittest.TestCase):
             with patch(
                 "ezexl3.repo._resolve_exllamav3_util_scripts",
                 return_value=("/opt/exl3/util/measure.py", "/opt/exl3/util/optimize.py"),
-            ), patch("ezexl3.repo._run_fractional_compare_queue") as mock_queue, patch(
+            ), patch("ezexl3.repo._run_optimized_compare_queue") as mock_queue, patch(
                 "ezexl3.repo._run_cmd"
             ) as mock_run:
-                repo._run_fractional_opt_stage(str(model_dir), ["4.07"], devices=[0, 1], write_logs=False)
+                repo._run_optimized_opt_stage(str(model_dir), ["4.07"], devices=[0, 1], write_logs=False)
 
             mock_queue.assert_called_once()
             queued_jobs = mock_queue.call_args.kwargs["compare_jobs"]
@@ -90,7 +90,7 @@ class FractionalStageTests(unittest.TestCase):
                 return None
 
         with patch("ezexl3.repo.Process", DummyProcess), patch("builtins.print") as mock_print:
-            repo._run_fractional_compare_queue(
+            repo._run_optimized_compare_queue(
                 model_dir="/tmp/model",
                 compare_jobs=jobs,
                 devices=[1],
@@ -104,7 +104,7 @@ class FractionalStageTests(unittest.TestCase):
 
     def test_run_repo_uses_planned_queues(self):
         with patch("ezexl3.repo.run_quant_stage", return_value=0) as mock_quant, patch(
-            "ezexl3.repo._run_fractional_opt_stage"
+            "ezexl3.repo._run_optimized_opt_stage"
         ) as mock_frac, patch("ezexl3.repo.run_measure_stage", return_value=0) as mock_measure:
             rc = repo.run_repo(
                 model_dir="/tmp/model",
@@ -120,7 +120,7 @@ class FractionalStageTests(unittest.TestCase):
         self.assertEqual(mock_quant.call_args.kwargs["bpws"], ["4", "5"])
         self.assertEqual(mock_measure.call_args.kwargs["bpws"], ["4", "5", "4.07"])
         mock_frac.assert_called_once_with(
-            model_dir="/tmp/model", fractional_bpws=["4.07"], devices=[0, 1], write_logs=True
+            model_dir="/tmp/model", optimized_bpws=["4.07"], devices=[0, 1], write_logs=True
         )
 
 
@@ -161,7 +161,7 @@ class ProgressDisplayTests(unittest.TestCase):
                 return None
 
         with patch("ezexl3.repo.Process", DummyProcess), patch("builtins.print") as mock_print:
-            repo._run_fractional_compare_queue(
+            repo._run_optimized_compare_queue(
                 model_dir="/tmp/model",
                 compare_jobs=jobs,
                 devices=[0],
@@ -205,7 +205,7 @@ class ProgressDisplayTests(unittest.TestCase):
         buf = io.StringIO()
         with patch("ezexl3.repo.Process", DummyProcess), \
              patch("sys.stdout", buf):
-            repo._run_fractional_compare_queue(
+            repo._run_optimized_compare_queue(
                 model_dir="/tmp/model",
                 compare_jobs=jobs,
                 devices=[0],
