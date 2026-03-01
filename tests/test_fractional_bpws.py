@@ -1,3 +1,5 @@
+import io
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -120,6 +122,120 @@ class FractionalStageTests(unittest.TestCase):
         mock_frac.assert_called_once_with(
             model_dir="/tmp/model", fractional_bpws=["4.07"], devices=[0, 1], write_logs=True
         )
+
+
+class ProgressDisplayTests(unittest.TestCase):
+    def test_strip_ansi_removes_escape_sequences(self):
+        self.assertEqual(repo._strip_ansi("\x1b[32mhello\x1b[0m"), "hello")
+        self.assertEqual(repo._strip_ansi("no escapes"), "no escapes")
+        self.assertEqual(repo._strip_ansi(""), "")
+        self.assertEqual(repo._strip_ansi("\x1b[1;31mred bold\x1b[0m"), "red bold")
+
+    def test_compare_queue_handles_progress_events(self):
+        """Progress events should not crash and should not appear in print() output."""
+        jobs = [
+            {
+                "low": "3",
+                "high": "4",
+                "targets": ["3.5"],
+                "measure_json": "/tmp/m.json",
+                "low_dir": "/tmp/3",
+                "high_dir": "/tmp/4",
+            }
+        ]
+
+        class DummyProcess:
+            def __init__(self, target, args):
+                self.target = target
+                self.args = args
+
+            def start(self):
+                q = self.args[4]
+                q.put({"event": "start", "device": 0, "job": jobs[0]})
+                q.put({"event": "progress", "device": 0, "text": "Measuring 45%"})
+                q.put({"event": "progress", "device": 0, "text": "Measuring 90%"})
+                q.put({"event": "done", "device": 0, "job": jobs[0], "label": "3-4"})
+                q.put(None)
+
+            def join(self):
+                return None
+
+        with patch("ezexl3.repo.Process", DummyProcess), patch("builtins.print") as mock_print:
+            repo._run_fractional_compare_queue(
+                model_dir="/tmp/model",
+                compare_jobs=jobs,
+                devices=[0],
+                measure_script="/opt/exl3/util/measure.py",
+                write_logs=False,
+            )
+
+        printed = "\n".join(" ".join(str(x) for x in call.args) for call in mock_print.call_args_list)
+        self.assertIn("[GPU 0] START compare 3-4", printed)
+        self.assertIn("[GPU 0] DONE compare 3-4", printed)
+        # Progress events should not generate print() calls in non-TTY mode
+        self.assertNotIn("Measuring 45%", printed)
+
+    def test_non_tty_skips_ansi_codes(self):
+        """When stdout is not a TTY, no ANSI escape codes should appear in output."""
+        jobs = [
+            {
+                "low": "2",
+                "high": "3",
+                "targets": ["2.5"],
+                "measure_json": "/tmp/m2.json",
+                "low_dir": "/tmp/2",
+                "high_dir": "/tmp/3",
+            }
+        ]
+
+        class DummyProcess:
+            def __init__(self, target, args):
+                self.args = args
+
+            def start(self):
+                q = self.args[4]
+                q.put({"event": "start", "device": 0, "job": jobs[0]})
+                q.put({"event": "progress", "device": 0, "text": "working..."})
+                q.put({"event": "done", "device": 0, "job": jobs[0], "label": "2-3"})
+                q.put(None)
+
+            def join(self):
+                return None
+
+        buf = io.StringIO()
+        with patch("ezexl3.repo.Process", DummyProcess), \
+             patch("sys.stdout", buf):
+            repo._run_fractional_compare_queue(
+                model_dir="/tmp/model",
+                compare_jobs=jobs,
+                devices=[0],
+                measure_script="/opt/exl3/util/measure.py",
+                write_logs=False,
+            )
+
+        output = buf.getvalue()
+        self.assertNotIn("\x1b[", output)
+        self.assertIn("START compare 2-3", output)
+        self.assertIn("DONE compare 2-3", output)
+
+    def test_run_cmd_with_progress_captures_output(self):
+        """_run_cmd_with_progress should capture output and call results queue."""
+        from multiprocessing import Queue
+        results: Queue = Queue()
+        log_buf = io.StringIO()
+        cmd = [sys.executable, "-c", "print('hello from subprocess')"]
+        repo._run_cmd_with_progress(cmd, device=0, results=results, log_f=log_buf)
+
+        log_content = log_buf.getvalue()
+        self.assertIn("hello from subprocess", log_content)
+
+    def test_run_cmd_with_progress_raises_on_failure(self):
+        """_run_cmd_with_progress should raise RuntimeError on non-zero exit."""
+        from multiprocessing import Queue
+        results: Queue = Queue()
+        cmd = [sys.executable, "-c", "import sys; sys.exit(1)"]
+        with self.assertRaises(RuntimeError):
+            repo._run_cmd_with_progress(cmd, device=0, results=results)
 
 
 if __name__ == "__main__":

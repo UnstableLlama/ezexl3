@@ -5,11 +5,14 @@ import csv
 import importlib.util
 import math
 import os
+import pty
+import re
+import select
 import subprocess
 import sys
 import time
 from multiprocessing import Process, Queue
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, IO, List, Optional, Tuple
 
 from ezexl3.quantize import run as quant_run
 from ezexl3.measure import default_csv_path
@@ -131,6 +134,164 @@ def _run_cmd(cmd: List[str]) -> None:
         raise RuntimeError(f"Command failed with exit code {proc.returncode}: {' '.join(cmd)}")
 
 
+# ---------------------------------------------------------------------------
+# Progress capture helpers
+# ---------------------------------------------------------------------------
+
+_ANSI_STRIP_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences from *text*."""
+    return _ANSI_STRIP_RE.sub("", text)
+
+
+def _run_cmd_with_progress(
+    cmd: List[str],
+    device: int,
+    results: "Queue[Optional[dict]]",
+    log_f: Optional[IO] = None,
+) -> None:
+    """Run *cmd* in a PTY, stream output to *log_f*, and send throttled
+    ``{"event": "progress", "device": …, "text": …}`` dicts through *results*.
+
+    Falls back to a plain pipe if the PTY cannot be created.
+    """
+    if log_f:
+        log_f.write(f"$ {' '.join(cmd)}\n")
+        log_f.flush()
+
+    # --- try PTY first so the child thinks it has a real terminal ----------
+    master_fd: Optional[int] = None
+    try:
+        master_fd, slave_fd = pty.openpty()
+        proc = subprocess.Popen(
+            cmd, stdout=slave_fd, stderr=slave_fd, close_fds=True,
+        )
+        os.close(slave_fd)
+    except Exception:
+        # PTY unavailable – fall back to a pipe
+        if master_fd is not None:
+            os.close(master_fd)
+            master_fd = None
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        )
+
+    last_send: float = 0.0
+    buf = ""
+
+    def _drain_fd(fd: int) -> bool:
+        """Read available data from *fd*.  Returns False on EOF / error."""
+        nonlocal buf, last_send
+        try:
+            data = os.read(fd, 4096)
+        except OSError:
+            return False
+        if not data:
+            return False
+        text = data.decode("utf-8", errors="replace")
+        if log_f:
+            log_f.write(text)
+            log_f.flush()
+        buf += text
+        _maybe_send_progress()
+        return True
+
+    def _drain_pipe() -> bool:
+        """Read a line from the pipe stdout. Returns False on EOF."""
+        nonlocal buf, last_send
+        assert proc.stdout is not None
+        line = proc.stdout.readline()
+        if not line:
+            return False
+        text = line.decode("utf-8", errors="replace") if isinstance(line, bytes) else line
+        if log_f:
+            log_f.write(text)
+            log_f.flush()
+        buf += text
+        _maybe_send_progress()
+        return True
+
+    def _maybe_send_progress() -> None:
+        nonlocal buf, last_send
+        now = time.monotonic()
+        if now - last_send < 0.5:
+            return
+        # Extract the latest progress-bar segment: the last \r-separated
+        # piece that has not been terminated by \n.
+        lines = buf.split("\n")
+        tail = lines[-1]  # incomplete line (no trailing \n)
+        if "\r" in tail:
+            segments = tail.split("\r")
+            candidate = segments[-1].strip()
+        else:
+            candidate = tail.strip()
+        if candidate:
+            results.put({"event": "progress", "device": device, "text": _strip_ansi(candidate)})
+            last_send = now
+
+    # --- read loop ---------------------------------------------------------
+    if master_fd is not None:
+        while True:
+            ready, _, _ = select.select([master_fd], [], [], 0.5)
+            if ready:
+                if not _drain_fd(master_fd):
+                    break
+            elif proc.poll() is not None:
+                # Process exited – drain anything left
+                while _drain_fd(master_fd):
+                    pass
+                break
+        os.close(master_fd)
+    else:
+        # Pipe fallback
+        assert proc.stdout is not None
+        while _drain_pipe():
+            pass
+
+    proc.wait()
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"Command failed with exit code {proc.returncode}: {' '.join(cmd)}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# ANSI progress-area rendering
+# ---------------------------------------------------------------------------
+
+def _clear_and_redraw_progress(gpu_status: Dict[int, str], num_lines: int) -> None:
+    """Overwrite the last *num_lines* in-place with the current *gpu_status*."""
+    # Move cursor up
+    sys.stdout.write(f"\033[{num_lines}A")
+    for gpu_id in sorted(gpu_status):
+        text = gpu_status[gpu_id]
+        sys.stdout.write(f"\033[2K  GPU {gpu_id} | {text}\n")
+    sys.stdout.flush()
+
+
+def _print_above_progress(
+    message: str,
+    gpu_status: Dict[int, str],
+    num_lines: int,
+) -> None:
+    """Print *message* above the fixed progress area, then redraw it."""
+    # Move up into the progress area and clear it
+    sys.stdout.write(f"\033[{num_lines}A")
+    for _ in range(num_lines):
+        sys.stdout.write("\033[2K\n")
+    # Move back up
+    sys.stdout.write(f"\033[{num_lines}A")
+    # Print the message (scrolls the terminal)
+    sys.stdout.write(f"{message}\n")
+    # Redraw the progress area
+    for gpu_id in sorted(gpu_status):
+        text = gpu_status[gpu_id]
+        sys.stdout.write(f"\033[2K  GPU {gpu_id} | {text}\n")
+    sys.stdout.flush()
+
+
 def _build_fractional_jobs(model_dir: str, fractional_bpws: List[str]) -> Tuple[List[dict], List[dict]]:
     measurements_dir = os.path.join(model_dir, "measurements")
     os.makedirs(measurements_dir, exist_ok=True)
@@ -188,11 +349,10 @@ def _worker_fractional_compare(
 ) -> None:
     import traceback
 
+    log_f: Optional[IO] = None
     if log_path:
         os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
         log_f = open(log_path, "w")
-        sys.stdout = log_f  # type: ignore
-        sys.stderr = log_f  # type: ignore
 
     while True:
         job = tasks.get()
@@ -218,15 +378,15 @@ def _worker_fractional_compare(
                 "-l",
                 "3",
             ]
-            _run_cmd(cmd)
+            _run_cmd_with_progress(cmd, device, results, log_f)
             results.put({"event": "done", "device": device, "job": job, "label": label})
         except Exception as e:
-            traceback.print_exc()
+            if log_f:
+                traceback.print_exc(file=log_f)
             results.put({"event": "error", "device": device, "job": job, "label": label, "error": str(e)})
 
-    if log_path:
-        sys.stdout.flush()
-        sys.stderr.flush()
+    if log_f:
+        log_f.flush()
         log_f.close()
 
 
@@ -262,6 +422,17 @@ def _run_fractional_compare_queue(
         procs.append(p)
 
     print(f"\n🚀 Fractional comparative measure: {len(compare_jobs)} jobs on {len(devices)} GPUs...")
+
+    use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+    gpu_status: Dict[int, str] = {d: "idle" for d in devices}
+    num_lines = len(devices)
+
+    # Print initial progress area (one line per GPU)
+    if use_ansi:
+        for d in sorted(gpu_status):
+            sys.stdout.write(f"\033[2K  GPU {d} | idle\n")
+        sys.stdout.flush()
+
     active_workers = len(devices)
     failures = 0
     while active_workers > 0:
@@ -269,17 +440,44 @@ def _run_fractional_compare_queue(
         if res is None:
             active_workers -= 1
             continue
-        job = res["job"]
         gpu = res["device"]
+        event = res["event"]
+
+        if event == "progress":
+            gpu_status[gpu] = res["text"]
+            if use_ansi:
+                _clear_and_redraw_progress(gpu_status, num_lines)
+            continue
+
+        job = res["job"]
         label = f"{job['low']}-{job['high']}"
         targets = ",".join(job["targets"])
-        if res["event"] == "start":
-            print(f"🧪 [GPU {gpu}] START compare {label} for target(s): {targets}")
-        elif res["event"] == "done":
-            print(f"✅ [GPU {gpu}] DONE compare {label} for target(s): {targets} -> {job['measure_json']}")
-        elif res["event"] == "error":
+
+        if event == "start":
+            msg = f"🧪 [GPU {gpu}] START compare {label} for target(s): {targets}"
+            gpu_status[gpu] = f"{label} | starting..."
+        elif event == "done":
+            msg = f"✅ [GPU {gpu}] DONE compare {label} for target(s): {targets} -> {job['measure_json']}"
+            gpu_status[gpu] = "idle"
+        elif event == "error":
             failures += 1
-            print(f"🔴 [GPU {gpu}] FAIL compare {label} for target(s): {targets} - {res['error']}")
+            msg = f"🔴 [GPU {gpu}] FAIL compare {label} for target(s): {targets} - {res['error']}"
+            gpu_status[gpu] = "idle"
+        else:
+            continue
+
+        if use_ansi:
+            _print_above_progress(msg, gpu_status, num_lines)
+        else:
+            print(msg)
+
+    # Clear the progress area
+    if use_ansi:
+        sys.stdout.write(f"\033[{num_lines}A")
+        for _ in range(num_lines):
+            sys.stdout.write("\033[2K\n")
+        sys.stdout.write(f"\033[{num_lines}A")
+        sys.stdout.flush()
 
     for p in procs:
         p.join()
