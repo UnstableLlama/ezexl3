@@ -80,5 +80,32 @@ class MeasureArgsPassthroughTests(unittest.TestCase):
         self.assertEqual(kwargs["measure_args"], ["-r", "180", "-d", "2"])
 
 
+class MeasureCheckpointingTests(unittest.TestCase):
+    def test_task_to_csv_label_maps_base_to_bf16(self):
+        self.assertEqual(repo._task_to_csv_label("base"), "bf16")
+        self.assertEqual(repo._task_to_csv_label("4"), "4")
+
+    def test_filter_measure_tasks_for_checkpoint_skips_existing_rows(self):
+        requested = ["2", "3", "base"]
+        existing = {"3", "bf16"}
+        self.assertEqual(repo._filter_measure_tasks_for_checkpoint(requested, existing), ["2"])
+
+    def test_run_measure_stage_returns_early_when_all_rows_measured(self):
+        with patch("ezexl3.repo.read_existing_weights", return_value={"2", "bf16"}), \
+             patch("ezexl3.repo._merge_csvs") as mock_merge, \
+             patch("ezexl3.repo.Process") as mock_process:
+            rc = repo.run_measure_stage(
+                model_dir="/tmp/model",
+                bpws=["2"],
+                devices=[0],
+                write_logs=False,
+                measure_args=[],
+            )
+
+        self.assertEqual(rc, 0)
+        mock_merge.assert_called_once()
+        mock_process.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
