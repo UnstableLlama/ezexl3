@@ -48,6 +48,26 @@ class MeasureArgsPassthroughTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         kwargs = mock_run_repo.call_args.kwargs
         self.assertEqual(kwargs["measure_args"], ["-r", "150", "-d", "1"])
+        self.assertEqual(kwargs["optimized_measure_layers"], 2)
+
+    def test_repo_command_passes_layers_to_run_repo(self):
+        argv = [
+            "repo",
+            "-m",
+            "/tmp/model",
+            "-b",
+            "2",
+            "--no-readme",
+            "-l",
+            "1",
+        ]
+
+        with patch("ezexl3.repo.run_repo", return_value=0) as mock_run_repo:
+            rc = cli.main(argv)
+
+        self.assertEqual(rc, 0)
+        kwargs = mock_run_repo.call_args.kwargs
+        self.assertEqual(kwargs["optimized_measure_layers"], 1)
 
     def test_run_measure_stage_rejects_empty_devices_after_passthrough(self):
         with self.assertRaises(ValueError):

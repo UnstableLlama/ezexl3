@@ -374,6 +374,7 @@ def _worker_optimized_compare(
     measure_script: str,
     model_dir: str,
     device: int,
+    layers: int,
     tasks: "Queue[Optional[dict]]",
     results: "Queue[Optional[dict]]",
     log_path: Optional[str],
@@ -407,7 +408,7 @@ def _worker_optimized_compare(
                 "-d",
                 str(device),
                 "-l",
-                "3",
+                str(layers),
             ]
             _run_cmd_with_progress(cmd, device, results, log_f)
             results.put({"event": "done", "device": device, "job": job, "label": label})
@@ -426,6 +427,7 @@ def _run_optimized_compare_queue(
     compare_jobs: List[dict],
     devices: List[int],
     measure_script: str,
+    layers: int,
     write_logs: bool = True,
 ) -> None:
     if not compare_jobs:
@@ -446,7 +448,7 @@ def _run_optimized_compare_queue(
         log_path = os.path.join(model_dir, "logs", f"optimized_compare_gpu{device}.log") if write_logs else None
         p = Process(
             target=_worker_optimized_compare,
-            args=(measure_script, model_dir, device, tasks, results, log_path),
+            args=(measure_script, model_dir, device, layers, tasks, results, log_path),
         )
         p.daemon = False
         p.start()
@@ -520,6 +522,7 @@ def _run_optimized_opt_stage(
     model_dir: str,
     optimized_bpws: List[str],
     devices: List[int],
+    layers: int = 2,
     write_logs: bool = True,
 ) -> None:
     if not optimized_bpws:
@@ -543,6 +546,7 @@ def _run_optimized_opt_stage(
         compare_jobs=queued_jobs,
         devices=devices,
         measure_script=measure_script,
+        layers=layers,
         write_logs=write_logs,
     )
 
@@ -733,7 +737,11 @@ def run_quant_stage(
     w_template: str = "{model}/w-{bpw}",
     dry_run: bool = False,
     continue_on_error: bool = False,
+    optimized_measure_layers: int = 2,
 ) -> int:
+    if optimized_measure_layers not in (1, 2, 3):
+        raise ValueError("optimized_measure_layers must be one of: 1, 2, 3")
+
     model_dir = os.path.abspath(model_dir)
     bpws = [str(b) for b in bpws]
     devices = list(devices)
@@ -879,6 +887,7 @@ def run_repo(
     template: Optional[str] = None,
     include_graph: bool = True,
     include_measurements: bool = True,
+    optimized_measure_layers: int = 2,
 ) -> int:
     bpw_plan = _plan_repo_bpws(bpws)
     quant_bpws = bpw_plan["quant_integer_queue"]
@@ -910,6 +919,7 @@ def run_repo(
             model_dir=model_dir,
             optimized_bpws=optimized_bpws,
             devices=devices,
+            layers=optimized_measure_layers,
             write_logs=write_logs,
         )
 
