@@ -586,19 +586,25 @@ def _filter_measure_tasks_for_checkpoint(requested_tasks: List[str], existing_la
 
 
 def _merge_csvs(out_csv: str, shard_csvs: List[str]) -> None:
-    # Merge by unique weights, keeping first occurrence (should be deterministic if bf16 is in shard0)
+    """Merge existing output CSV plus shard CSVs into *out_csv*.
+
+    Existing rows in *out_csv* are used as checkpoint baseline, then shard rows
+    are applied on top so newly measured rows (or retries) win for duplicate
+    weights.
+    """
     rows = {}
-    for p in shard_csvs:
-        if not os.path.exists(p):
+    sources = [out_csv, *shard_csvs]
+
+    for path in sources:
+        if not os.path.exists(path):
             continue
-        with open(p, "r", newline="") as f:
+        with open(path, "r", newline="") as f:
             r = csv.DictReader(f)
             for row in r:
                 w = (row.get("weights") or "").strip()
                 if not w:
                     continue
-                if w not in rows:
-                    rows[w] = row
+                rows[w] = row
 
     # Write merged
     os.makedirs(os.path.dirname(out_csv) or ".", exist_ok=True)
