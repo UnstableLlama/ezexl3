@@ -18,6 +18,7 @@ class QuantizeFlagWiringTests(unittest.TestCase):
                 w_template="{model}/work-{bpw}",
                 dry_run=True,
                 continue_on_error=True,
+                optimized_measure_layers=3,
             )
 
         self.assertEqual(rc, 0)
@@ -49,6 +50,8 @@ class QuantizeFlagWiringTests(unittest.TestCase):
             "{model}/custom-work-{bpw}",
             "--dry",
             "--continue-on-error",
+            "-l",
+            "1",
             "--quant-args",
             "--",
             "--foo",
@@ -69,6 +72,7 @@ class QuantizeFlagWiringTests(unittest.TestCase):
             w_template="{model}/custom-work-{bpw}",
             dry_run=True,
             continue_on_error=True,
+            optimized_measure_layers=1,
         )
 
 

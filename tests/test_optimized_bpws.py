@@ -82,9 +82,9 @@ class OptimizedStageTests(unittest.TestCase):
                 self.args = args
 
             def start(self):
-                self.args[4].put({"event": "start", "device": 1, "job": jobs[0]})
-                self.args[4].put({"event": "done", "device": 1, "job": jobs[0], "label": "3-4"})
-                self.args[4].put(None)
+                self.args[5].put({"event": "start", "device": 1, "job": jobs[0]})
+                self.args[5].put({"event": "done", "device": 1, "job": jobs[0], "label": "3-4"})
+                self.args[5].put(None)
 
             def join(self):
                 return None
@@ -95,6 +95,7 @@ class OptimizedStageTests(unittest.TestCase):
                 compare_jobs=jobs,
                 devices=[1],
                 measure_script="/opt/exl3/util/measure.py",
+                layers=2,
                 write_logs=False,
             )
 
@@ -120,7 +121,7 @@ class OptimizedStageTests(unittest.TestCase):
         self.assertEqual(mock_quant.call_args.kwargs["bpws"], ["4", "5"])
         self.assertEqual(mock_measure.call_args.kwargs["bpws"], ["4", "5", "4.07"])
         mock_frac.assert_called_once_with(
-            model_dir="/tmp/model", optimized_bpws=["4.07"], devices=[0, 1], write_logs=True
+            model_dir="/tmp/model", optimized_bpws=["4.07"], devices=[0, 1], layers=2, write_logs=True
         )
 
 
@@ -150,7 +151,7 @@ class ProgressDisplayTests(unittest.TestCase):
                 self.args = args
 
             def start(self):
-                q = self.args[4]
+                q = self.args[5]
                 q.put({"event": "start", "device": 0, "job": jobs[0]})
                 q.put({"event": "progress", "device": 0, "text": "Measuring 45%"})
                 q.put({"event": "progress", "device": 0, "text": "Measuring 90%"})
@@ -166,6 +167,7 @@ class ProgressDisplayTests(unittest.TestCase):
                 compare_jobs=jobs,
                 devices=[0],
                 measure_script="/opt/exl3/util/measure.py",
+                layers=2,
                 write_logs=False,
             )
 
@@ -193,7 +195,7 @@ class ProgressDisplayTests(unittest.TestCase):
                 self.args = args
 
             def start(self):
-                q = self.args[4]
+                q = self.args[5]
                 q.put({"event": "start", "device": 0, "job": jobs[0]})
                 q.put({"event": "progress", "device": 0, "text": "working..."})
                 q.put({"event": "done", "device": 0, "job": jobs[0], "label": "2-3"})
@@ -210,6 +212,7 @@ class ProgressDisplayTests(unittest.TestCase):
                 compare_jobs=jobs,
                 devices=[0],
                 measure_script="/opt/exl3/util/measure.py",
+                layers=2,
                 write_logs=False,
             )
 

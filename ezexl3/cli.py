@@ -127,6 +127,12 @@ def _warn_deprecated_or_unused(args: argparse.Namespace, cmd: str) -> None:
         if getattr(args, "no_meta", False):
             print("⚠️ --no-meta is currently ignored; run metadata receipts are not implemented.")
 
+
+def _parse_layers(value: int) -> int:
+    if value not in (1, 2, 3):
+        raise SystemExit("--layers must be one of: 1, 2, 3")
+    return value
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="ezexl3",
@@ -169,6 +175,7 @@ def build_parser() -> argparse.ArgumentParser:
         p_sub.add_argument("--no-graph", "-ng", action="store_true", help="Do not generate or embed the README SVG graph")
         p_sub.add_argument("--no-measurement", "-nm", action="store_true", help="Skip KL/PPL measurements (also disables README graph and KL/PPL table columns)")
         p_sub.add_argument("--template", "-t", help="README template name (e.g., 'fire', 'basic')")
+        p_sub.add_argument("-l", "--layers", type=int, default=2, choices=[1, 2, 3], help="Layers used by optimized comparative measure stage (1-3, default: 2)")
 
     # --- repo (main command) ---
     repo = sub.add_parser("repo", help="Generate an EXL3 repo (quantize -> measure -> README)")
@@ -188,6 +195,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Template for working directory. Fields: {model}, {model_name}, {bpw}")
     q.add_argument("--dry", action="store_true", help="Print what would run, but do not execute.")
     q.add_argument("--continue-on-error", action="store_true", help="Keep going after failures.")
+    q.add_argument("-l", "--layers", type=int, default=2, choices=[1, 2, 3], help="Layers used by optimized comparative measure stage (1-3, default: 2)")
 
     # --- measure ---
     m = sub.add_parser("measure", help="Measure only (vendored quantMeasure)")
@@ -247,6 +255,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     devices_i = _parse_devices(getattr(args, "devices", ["0"]))
     device_ratios = _parse_device_ratios(getattr(args, "device_ratios", None), devices_i)
     device_ratios_str = ",".join(device_ratios) if device_ratios else None
+    layers = _parse_layers(getattr(args, "layers", 2)) if hasattr(args, "layers") else 2
 
     if cmd == "repo":
         # Process each model, continuing on error
@@ -274,6 +283,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     include_graph=(not args.no_graph and not args.no_measurement),
                     include_measurements=(not args.no_measurement),
                     template=args.template,
+                    optimized_measure_layers=layers,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
@@ -305,6 +315,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     w_template=args.w_template,
                     dry_run=args.dry,
                     continue_on_error=args.continue_on_error,
+                    optimized_measure_layers=layers,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)

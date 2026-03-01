@@ -24,6 +24,15 @@ class CliValidationTests(unittest.TestCase):
         out = cli._parse_device_ratios(["1", "1.5"], [0, 1])
         self.assertEqual(out, ["1", "1.5"])
 
+    def test_parse_layers_accepts_valid(self):
+        self.assertEqual(cli._parse_layers(1), 1)
+        self.assertEqual(cli._parse_layers(2), 2)
+        self.assertEqual(cli._parse_layers(3), 3)
+
+    def test_parse_layers_rejects_invalid(self):
+        with self.assertRaises(SystemExit):
+            cli._parse_layers(4)
+
 
 if __name__ == "__main__":
     unittest.main()
