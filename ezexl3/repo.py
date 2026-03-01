@@ -262,11 +262,33 @@ def _run_cmd_with_progress(
 # ANSI progress-area rendering
 # ---------------------------------------------------------------------------
 
+_BOX_DRAWING_RE = re.compile(r"[\u2500-\u257f]{10,}")
+
+
 def _gpu_status_line(gpu_id: int, text: str, cols: int) -> str:
-    """Build a single GPU status line, truncated to *cols* to prevent wrapping."""
+    """Build a single GPU status line, fitted to *cols* to prevent wrapping.
+
+    If the text contains a progress bar (long run of box-drawing characters),
+    the bar is shrunk proportionally so the label and time info at the ends
+    are preserved.  Falls back to right-truncation otherwise.
+    """
     prefix = f"  GPU {gpu_id} | "
     max_text = cols - len(prefix) - 1  # -1 for safety margin
-    if max_text > 0 and len(text) > max_text:
+    if max_text <= 0 or len(text) <= max_text:
+        return f"\033[2K{prefix}{text}"
+
+    # Try to shrink a progress bar rather than chopping the tail
+    m = _BOX_DRAWING_RE.search(text)
+    if m:
+        bar = m.group()
+        excess = len(text) - max_text
+        new_len = max(4, len(bar) - excess)
+        step = len(bar) / new_len
+        shrunken = "".join(bar[int(i * step)] for i in range(new_len))
+        text = text[: m.start()] + shrunken + text[m.end() :]
+
+    # Final safety clamp
+    if len(text) > max_text:
         text = text[: max_text - 1] + "…"
     return f"\033[2K{prefix}{text}"
 
