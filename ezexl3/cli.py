@@ -127,6 +127,12 @@ def _warn_deprecated_or_unused(args: argparse.Namespace, cmd: str) -> None:
         if getattr(args, "no_meta", False):
             print("⚠️ --no-meta is currently ignored; run metadata receipts are not implemented.")
 
+
+def _parse_layers(value: int) -> int:
+    if value not in (1, 2, 3):
+        raise SystemExit("--layers must be one of: 1, 2, 3")
+    return value
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="ezexl3",
@@ -166,7 +172,10 @@ def build_parser() -> argparse.ArgumentParser:
         p_sub.add_argument("--no-meta", action="store_true", help="Do not write run.json receipt")
         p_sub.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
         p_sub.add_argument("--no-prompt", "-np", action="store_true", help="Use defaults for README instead of prompting")
+        p_sub.add_argument("--no-graph", "-ng", action="store_true", help="Do not generate or embed the README SVG graph")
+        p_sub.add_argument("--no-measurement", "-nm", action="store_true", help="Skip KL/PPL measurements (also disables README graph and KL/PPL table columns)")
         p_sub.add_argument("--template", "-t", help="README template name (e.g., 'fire', 'basic')")
+        p_sub.add_argument("-l", "--layers", type=int, default=2, choices=[1, 2, 3], help="Layers used by optimized comparative measure stage (1-3, default: 2)")
 
     # --- repo (main command) ---
     repo = sub.add_parser("repo", help="Generate an EXL3 repo (quantize -> measure -> README)")
@@ -186,6 +195,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Template for working directory. Fields: {model}, {model_name}, {bpw}")
     q.add_argument("--dry", action="store_true", help="Print what would run, but do not execute.")
     q.add_argument("--continue-on-error", action="store_true", help="Keep going after failures.")
+    q.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
+    q.add_argument("-l", "--layers", type=int, default=2, choices=[1, 2, 3], help="Layers used by optimized comparative measure stage (1-3, default: 2)")
 
     # --- measure ---
     m = sub.add_parser("measure", help="Measure only (vendored quantMeasure)")
@@ -204,6 +215,8 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("readme", help="README only (CSV -> README)")
     r.add_argument("-m", "--models", nargs="+", required=True, help="One or more model directories")
     r.add_argument("--no-prompt", "-np", action="store_true", help="Use defaults for README instead of prompting")
+    r.add_argument("--no-graph", "-ng", action="store_true", help="Do not generate or embed the README SVG graph")
+    r.add_argument("--no-measurement", "-nm", action="store_true", help="Remove KL/PPL columns from README and skip graph embedding")
     r.add_argument("--template", "-t", help="README template name (e.g., 'fire', 'basic')")
 
     return p
@@ -243,6 +256,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     devices_i = _parse_devices(getattr(args, "devices", ["0"]))
     device_ratios = _parse_device_ratios(getattr(args, "device_ratios", None), devices_i)
     device_ratios_str = ",".join(device_ratios) if device_ratios else None
+    layers = _parse_layers(getattr(args, "layers", 2)) if hasattr(args, "layers") else 2
 
     if cmd == "repo":
         # Process each model, continuing on error
@@ -262,12 +276,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                     quant_args=pt.quant_args,
                     measure_args=pt.measure_args,
                     do_quant=True,
-                    do_measure=True,
+                    do_measure=(not args.no_measurement),
                     do_readme=(not args.no_readme),
                     cleanup=(not args.no_cleanup),
                     write_logs=(not args.no_logs),
                     interactive=(not args.no_prompt),
+                    include_graph=(not args.no_graph and not args.no_measurement),
+                    include_measurements=(not args.no_measurement),
                     template=args.template,
+                    optimized_measure_layers=layers,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
@@ -285,13 +302,31 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     if cmd in ("quant", "quantize"):
+        from ezexl3.repo import _plan_repo_bpws, _run_optimized_opt_stage
+
+        bpw_plan = _plan_repo_bpws(args.bpws)
+        quant_bpws = bpw_plan["quant_integer_queue"]
+        optimized_bpws = bpw_plan["requested_optimizeds"]
+
+        if optimized_bpws and args.out_template != "{model}/{bpw}":
+            print("Error: --out-template cannot be customized when using decimal BPWs.")
+            print("The optimized quantization stage requires outputs at {model}/{bpw}.")
+            return 1
+
+        auto_added = [b for b in quant_bpws if b not in bpw_plan["requested_integers"]]
+        if auto_added:
+            print(
+                "ℹ️ Added required integer quants for optimized targets: "
+                + ", ".join(auto_added)
+            )
+
         failed_models: List[str] = []
         for model_dir in args.models:
             print(f"\nQuantizing model: {model_dir}")
             try:
                 rc = run_quant_stage(
                     model_dir=model_dir,
-                    bpws=args.bpws,
+                    bpws=quant_bpws,
                     devices=devices_i,
                     device_ratios=device_ratios_str,
                     quant_args=pt.quant_args,
@@ -299,9 +334,20 @@ def main(argv: Optional[List[str]] = None) -> int:
                     w_template=args.w_template,
                     dry_run=args.dry,
                     continue_on_error=args.continue_on_error,
+                    optimized_measure_layers=layers,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
+                    continue
+
+                if optimized_bpws and not args.dry:
+                    _run_optimized_opt_stage(
+                        model_dir=os.path.abspath(model_dir),
+                        optimized_bpws=optimized_bpws,
+                        devices=devices_i,
+                        layers=layers,
+                        write_logs=not args.no_logs,
+                    )
             except Exception as e:
                 print(f"Error quantizing {model_dir}: {e}")
                 failed_models.append(model_dir)
@@ -329,7 +375,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     if cmd == "readme":
         from ezexl3.readme import run_readme
         for model_dir in args.models:
-            run_readme(model_dir, template_name=args.template, interactive=(not args.no_prompt))
+            run_readme(
+                model_dir,
+                template_name=args.template,
+                interactive=(not args.no_prompt),
+                include_graph=(not args.no_graph and not args.no_measurement),
+                include_measurements=(not args.no_measurement),
+            )
         return 0
 
     print(f"Command '{args.cmd}' not implemented yet.")

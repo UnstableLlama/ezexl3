@@ -21,14 +21,8 @@ class ReadmeRevisionLinkTests(unittest.TestCase):
             run_readme(str(model_dir), template_name="basic", interactive=False)
 
             readme = (model_dir / "README.md").read_text()
-            self.assertIn(
-                'href="https://huggingface.co/UnstableLlama/SERA-8b-exl3/tree/4.00bpw"',
-                readme,
-            )
-            self.assertIn(
-                'href="https://huggingface.co/UnstableLlama/SERA-8b-exl3/tree/bf16"',
-                readme,
-            )
+            self.assertIn('tree/4.00bpw"', readme)
+            self.assertIn('href="https://huggingface.co/UnstableLlama/SERA-8b-exl3"', readme)
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@
 
 It wraps the exllamav3 quantization and evaluation workflow into a tool that:
 - Runs batch quantization easily (resume / skip supported)
+- Supports optimized BPWs by auto-building neighboring integer quants, then running exllamav3 comparative measure + optimize
 - Measures PPL + KL div, recording data to CSV
 - Generates a HuggingFace-ready `README.md` with your measurements using customizable templates
 - Embeds an SVG graph from the merged measurement CSV in the README
@@ -47,6 +48,9 @@ If you only want to run specific stages:
 ```bash
 # Quantize only
 ezexl3 quantize -m /path/to/base_model -b 2,3,4,5,6 -d 0,1
+
+# Quantize with optimized target (automatically ensures integer neighbors)
+ezexl3 repo -m /path/to/base_model -b 4.07 -d 0
 
 # Measure only
 ezexl3 measure -m /path/to/base_model -b 2,3,4,5,6 -d 0,1
@@ -113,6 +117,23 @@ Deprecated/legacy flags:
 - `--exllamav3-root` is deprecated and ignored.
 - `repo --schedule` currently supports queue behavior only (`--schedule static` is accepted but ignored).
 - `repo --no-meta` is accepted but currently ignored.
+
+### Optimized BPW workflow
+
+If you request a optimized BPW (for example `4.07`), ezexl3 now executes the following order:
+
+1. Detect optimized targets and remove them from the initial integer quant queue.
+2. Ensure required neighboring integers exist in the quant queue (`4` and `5` for `4.07`).
+3. Run normal integer quantization.
+4. Run exllamav3 `util/measure.py` in a dynamic multi-GPU queue for required integer pairs (resume-safe: skips if `measurements/<low>-<high>_measurement.json` exists), with terminal logs when jobs are assigned and completed per GPU.
+5. Run exllamav3 `util/optimize.py` to build the optimized output directory.
+6. Run normal ezexl3 KL/PPL measurement over all produced targets (integers + optimizeds).
+
+To locate exllamav3 utility scripts robustly, ezexl3 attempts runtime package discovery and supports overriding with:
+
+```bash
+EXLLAMAV3_ROOT=/path/to/exllamav3 ezexl3 repo -m /path/to/model -b 4.07
+```
 
 ### 5. Headless Mode
 For automated pipelines, use the `--no-prompt` (or `-np`) flag to skip interactive metadata collection for the README. It will use sensible defaults based on the model directory name and your environment.
