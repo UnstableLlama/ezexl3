@@ -131,13 +131,12 @@ def _run_cmd(cmd: List[str]) -> None:
         raise RuntimeError(f"Command failed with exit code {proc.returncode}: {' '.join(cmd)}")
 
 
-def _run_fractional_opt_stage(model_dir: str, fractional_bpws: List[str], device: int = 0) -> None:
-    if not fractional_bpws:
-        return
-
-    measure_script, optimize_script = _resolve_exllamav3_util_scripts()
+def _build_fractional_jobs(model_dir: str, fractional_bpws: List[str]) -> Tuple[List[dict], List[dict]]:
     measurements_dir = os.path.join(model_dir, "measurements")
     os.makedirs(measurements_dir, exist_ok=True)
+
+    compare_jobs_by_pair: Dict[Tuple[str, str], dict] = {}
+    optimize_jobs: List[dict] = []
 
     for frac in fractional_bpws:
         frac_value = float(frac)
@@ -153,36 +152,182 @@ def _run_fractional_opt_stage(model_dir: str, fractional_bpws: List[str], device
         if not os.path.isdir(high_dir):
             raise FileNotFoundError(f"Required upper integer quant not found for {frac}: {high_dir}")
 
-        if os.path.isdir(out_dir) and os.path.isfile(os.path.join(out_dir, "config.json")):
-            print(f"🟦 skipping fractional optimize {frac}: output already exists")
-            continue
+        compare_jobs_by_pair.setdefault(
+            (low, high),
+            {
+                "low": low,
+                "high": high,
+                "low_dir": low_dir,
+                "high_dir": high_dir,
+                "measure_json": measure_json,
+                "targets": [],
+            },
+        )
+        compare_jobs_by_pair[(low, high)]["targets"].append(frac)
 
-        if os.path.exists(measure_json):
-            print(f"🟦 skipping comparative measure for {frac}: {os.path.basename(measure_json)} already exists")
-        else:
-            measure_cmd = [
+        optimize_jobs.append(
+            {
+                "fractional": frac,
+                "out_dir": out_dir,
+                "measure_json": measure_json,
+                "low": low,
+                "high": high,
+            }
+        )
+
+    return list(compare_jobs_by_pair.values()), optimize_jobs
+
+
+def _worker_fractional_compare(
+    measure_script: str,
+    model_dir: str,
+    device: int,
+    tasks: "Queue[Optional[dict]]",
+    results: "Queue[Optional[dict]]",
+    log_path: Optional[str],
+) -> None:
+    import traceback
+
+    if log_path:
+        os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
+        log_f = open(log_path, "w")
+        sys.stdout = log_f  # type: ignore
+        sys.stderr = log_f  # type: ignore
+
+    while True:
+        job = tasks.get()
+        if job is None:
+            results.put(None)
+            break
+
+        label = f"{job['low']}-{job['high']}"
+        results.put({"event": "start", "device": device, "job": job})
+        try:
+            cmd = [
                 sys.executable,
                 measure_script,
                 "-i",
-                low_dir,
-                high_dir,
+                job["low_dir"],
+                job["high_dir"],
                 "-r",
                 model_dir,
                 "-o",
-                measure_json,
+                job["measure_json"],
                 "-d",
                 str(device),
                 "-l",
                 "3",
             ]
-            print(f"\n🧪 Fractional comparative measure for {frac} using {low}/{high}")
-            _run_cmd(measure_cmd)
+            _run_cmd(cmd)
+            results.put({"event": "done", "device": device, "job": job, "label": label})
+        except Exception as e:
+            traceback.print_exc()
+            results.put({"event": "error", "device": device, "job": job, "label": label, "error": str(e)})
 
+    if log_path:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        log_f.close()
+
+
+def _run_fractional_compare_queue(
+    model_dir: str,
+    compare_jobs: List[dict],
+    devices: List[int],
+    measure_script: str,
+    write_logs: bool = True,
+) -> None:
+    if not compare_jobs:
+        return
+    if not devices:
+        raise ValueError("No CUDA devices available for fractional comparative measure stage")
+
+    tasks: Queue = Queue()
+    results: Queue = Queue()
+
+    for job in compare_jobs:
+        tasks.put(job)
+    for _ in devices:
+        tasks.put(None)
+
+    procs: List[Process] = []
+    for device in devices:
+        log_path = os.path.join(model_dir, "logs", f"fractional_compare_gpu{device}.log") if write_logs else None
+        p = Process(
+            target=_worker_fractional_compare,
+            args=(measure_script, model_dir, device, tasks, results, log_path),
+        )
+        p.daemon = False
+        p.start()
+        procs.append(p)
+
+    print(f"\n🚀 Fractional comparative measure: {len(compare_jobs)} jobs on {len(devices)} GPUs...")
+    active_workers = len(devices)
+    failures = 0
+    while active_workers > 0:
+        res = results.get()
+        if res is None:
+            active_workers -= 1
+            continue
+        job = res["job"]
+        gpu = res["device"]
+        label = f"{job['low']}-{job['high']}"
+        targets = ",".join(job["targets"])
+        if res["event"] == "start":
+            print(f"🧪 [GPU {gpu}] START compare {label} for target(s): {targets}")
+        elif res["event"] == "done":
+            print(f"✅ [GPU {gpu}] DONE compare {label} for target(s): {targets} -> {job['measure_json']}")
+        elif res["event"] == "error":
+            failures += 1
+            print(f"🔴 [GPU {gpu}] FAIL compare {label} for target(s): {targets} - {res['error']}")
+
+    for p in procs:
+        p.join()
+    if failures:
+        raise RuntimeError(f"Fractional comparative measure stage failed for {failures} job(s)")
+
+
+def _run_fractional_opt_stage(
+    model_dir: str,
+    fractional_bpws: List[str],
+    devices: List[int],
+    write_logs: bool = True,
+) -> None:
+    if not fractional_bpws:
+        return
+
+    measure_script, optimize_script = _resolve_exllamav3_util_scripts()
+    compare_jobs, optimize_jobs = _build_fractional_jobs(model_dir, fractional_bpws)
+
+    queued_jobs: List[dict] = []
+    for job in compare_jobs:
+        label = f"{job['low']}-{job['high']}"
+        if os.path.exists(job["measure_json"]):
+            print(
+                f"🟦 skipping comparative measure {label}: {os.path.basename(job['measure_json'])} already exists"
+            )
+            continue
+        queued_jobs.append(job)
+
+    _run_fractional_compare_queue(
+        model_dir=model_dir,
+        compare_jobs=queued_jobs,
+        devices=devices,
+        measure_script=measure_script,
+        write_logs=write_logs,
+    )
+
+    for job in optimize_jobs:
+        frac = job["fractional"]
+        out_dir = job["out_dir"]
+        if os.path.isdir(out_dir) and os.path.isfile(os.path.join(out_dir, "config.json")):
+            print(f"🟦 skipping fractional optimize {frac}: output already exists")
+            continue
         optimize_cmd = [
             sys.executable,
             optimize_script,
             "-m",
-            measure_json,
+            job["measure_json"],
             "-o",
             out_dir,
             "-b",
@@ -501,7 +646,12 @@ def run_repo(
 
     # --- Stage 2: fractional optimize ---
     if do_quant and fractional_bpws:
-        _run_fractional_opt_stage(model_dir=model_dir, fractional_bpws=fractional_bpws, device=devices[0])
+        _run_fractional_opt_stage(
+            model_dir=model_dir,
+            fractional_bpws=fractional_bpws,
+            devices=devices,
+            write_logs=write_logs,
+        )
 
     # --- Stage 3: measure (sharded, dynamic queue) ---
     if do_measure:

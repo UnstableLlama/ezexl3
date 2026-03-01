@@ -125,7 +125,7 @@ If you request a fractional BPW (for example `4.07`), ezexl3 now executes the fo
 1. Detect fractional targets and remove them from the initial integer quant queue.
 2. Ensure required neighboring integers exist in the quant queue (`4` and `5` for `4.07`).
 3. Run normal integer quantization.
-4. For each fractional target, run exllamav3 `util/measure.py` (resume-safe: skips if `measurements/<low>-<high>_measurement.json` exists).
+4. Run exllamav3 `util/measure.py` in a dynamic multi-GPU queue for required integer pairs (resume-safe: skips if `measurements/<low>-<high>_measurement.json` exists), with terminal logs when jobs are assigned and completed per GPU.
 5. Run exllamav3 `util/optimize.py` to build the fractional output directory.
 6. Run normal ezexl3 KL/PPL measurement over all produced targets (integers + fractionals).
 
