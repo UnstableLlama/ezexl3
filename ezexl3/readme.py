@@ -203,7 +203,7 @@ def run_readme(
                     first_bpw = label
             except Exception:
                 formatted_labels[w] = w
-
+                
     quant_repo_link = f"https://huggingface.co/{meta['USER']}/{meta['MODEL']}-{meta['QUANT_METHOD']}"
 
     table_rows = []
@@ -228,7 +228,7 @@ def run_readme(
             ppl = f"{float(ppl):.4f}"
         except Exception:
             pass
-
+          
         if w == "bf16":
             revision_link = meta["REPOLINK"].rstrip("/")
         else:
