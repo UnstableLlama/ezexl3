@@ -229,12 +229,7 @@ def _run_cmd_with_progress(
         else:
             candidate = tail.strip()
         if candidate:
-            clean = _strip_ansi(candidate)
-            # Halve the progress text so it doesn't dominate the terminal
-            max_width = shutil.get_terminal_size((80, 24)).columns // 2
-            if len(clean) > max_width:
-                clean = clean[:max_width - 1] + "…"
-            results.put({"event": "progress", "device": device, "text": clean})
+            results.put({"event": "progress", "device": device, "text": _strip_ansi(candidate)})
             last_send = now
 
     # --- read loop ---------------------------------------------------------
