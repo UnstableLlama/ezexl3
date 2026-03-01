@@ -8,6 +8,7 @@ import os
 import pty
 import re
 import select
+import shutil
 import subprocess
 import sys
 import time
@@ -228,7 +229,12 @@ def _run_cmd_with_progress(
         else:
             candidate = tail.strip()
         if candidate:
-            results.put({"event": "progress", "device": device, "text": _strip_ansi(candidate)})
+            clean = _strip_ansi(candidate)
+            # Halve the progress text so it doesn't dominate the terminal
+            max_width = shutil.get_terminal_size((80, 24)).columns // 2
+            if len(clean) > max_width:
+                clean = clean[:max_width - 1] + "…"
+            results.put({"event": "progress", "device": device, "text": clean})
             last_send = now
 
     # --- read loop ---------------------------------------------------------
@@ -261,13 +267,21 @@ def _run_cmd_with_progress(
 # ANSI progress-area rendering
 # ---------------------------------------------------------------------------
 
+def _gpu_status_line(gpu_id: int, text: str, cols: int) -> str:
+    """Build a single GPU status line, truncated to *cols* to prevent wrapping."""
+    prefix = f"  GPU {gpu_id} | "
+    max_text = cols - len(prefix) - 1  # -1 for safety margin
+    if max_text > 0 and len(text) > max_text:
+        text = text[: max_text - 1] + "…"
+    return f"\033[2K{prefix}{text}"
+
+
 def _clear_and_redraw_progress(gpu_status: Dict[int, str], num_lines: int) -> None:
     """Overwrite the last *num_lines* in-place with the current *gpu_status*."""
-    # Move cursor up
+    cols = shutil.get_terminal_size((80, 24)).columns
     sys.stdout.write(f"\033[{num_lines}A")
     for gpu_id in sorted(gpu_status):
-        text = gpu_status[gpu_id]
-        sys.stdout.write(f"\033[2K  GPU {gpu_id} | {text}\n")
+        sys.stdout.write(_gpu_status_line(gpu_id, gpu_status[gpu_id], cols) + "\n")
     sys.stdout.flush()
 
 
@@ -277,6 +291,7 @@ def _print_above_progress(
     num_lines: int,
 ) -> None:
     """Print *message* above the fixed progress area, then redraw it."""
+    cols = shutil.get_terminal_size((80, 24)).columns
     # Move up into the progress area and clear it
     sys.stdout.write(f"\033[{num_lines}A")
     for _ in range(num_lines):
@@ -287,8 +302,7 @@ def _print_above_progress(
     sys.stdout.write(f"{message}\n")
     # Redraw the progress area
     for gpu_id in sorted(gpu_status):
-        text = gpu_status[gpu_id]
-        sys.stdout.write(f"\033[2K  GPU {gpu_id} | {text}\n")
+        sys.stdout.write(_gpu_status_line(gpu_id, gpu_status[gpu_id], cols) + "\n")
     sys.stdout.flush()
 
 
