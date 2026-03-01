@@ -195,6 +195,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Template for working directory. Fields: {model}, {model_name}, {bpw}")
     q.add_argument("--dry", action="store_true", help="Print what would run, but do not execute.")
     q.add_argument("--continue-on-error", action="store_true", help="Keep going after failures.")
+    q.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
     q.add_argument("-l", "--layers", type=int, default=2, choices=[1, 2, 3], help="Layers used by optimized comparative measure stage (1-3, default: 2)")
 
     # --- measure ---
@@ -301,13 +302,31 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     if cmd in ("quant", "quantize"):
+        from ezexl3.repo import _plan_repo_bpws, _run_optimized_opt_stage
+
+        bpw_plan = _plan_repo_bpws(args.bpws)
+        quant_bpws = bpw_plan["quant_integer_queue"]
+        optimized_bpws = bpw_plan["requested_optimizeds"]
+
+        if optimized_bpws and args.out_template != "{model}/{bpw}":
+            print("Error: --out-template cannot be customized when using decimal BPWs.")
+            print("The optimized quantization stage requires outputs at {model}/{bpw}.")
+            return 1
+
+        auto_added = [b for b in quant_bpws if b not in bpw_plan["requested_integers"]]
+        if auto_added:
+            print(
+                "ℹ️ Added required integer quants for optimized targets: "
+                + ", ".join(auto_added)
+            )
+
         failed_models: List[str] = []
         for model_dir in args.models:
             print(f"\nQuantizing model: {model_dir}")
             try:
                 rc = run_quant_stage(
                     model_dir=model_dir,
-                    bpws=args.bpws,
+                    bpws=quant_bpws,
                     devices=devices_i,
                     device_ratios=device_ratios_str,
                     quant_args=pt.quant_args,
@@ -319,6 +338,16 @@ def main(argv: Optional[List[str]] = None) -> int:
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
+                    continue
+
+                if optimized_bpws and not args.dry:
+                    _run_optimized_opt_stage(
+                        model_dir=os.path.abspath(model_dir),
+                        optimized_bpws=optimized_bpws,
+                        devices=devices_i,
+                        layers=layers,
+                        write_logs=not args.no_logs,
+                    )
             except Exception as e:
                 print(f"Error quantizing {model_dir}: {e}")
                 failed_models.append(model_dir)
