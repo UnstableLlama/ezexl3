@@ -16,7 +16,7 @@ from multiprocessing import Process, Queue
 from typing import Dict, IO, List, Optional, Tuple
 
 from ezexl3.quantize import run as quant_run
-from ezexl3.measure import default_csv_path
+from ezexl3.measure import default_csv_path, read_existing_weights
 
 
 def _normalize_bpw_str(raw: str) -> str:
@@ -575,20 +575,36 @@ def _bpw_sort_key(w: str):
         return (1e9, w)
 
 
+def _task_to_csv_label(task: str) -> str:
+    """Map an internal measurement task label to its CSV weights label."""
+    return "bf16" if task == "base" else task
+
+
+def _filter_measure_tasks_for_checkpoint(requested_tasks: List[str], existing_labels: set[str]) -> List[str]:
+    """Filter measurement tasks based on existing canonical CSV labels."""
+    return [task for task in requested_tasks if _task_to_csv_label(task) not in existing_labels]
+
+
 def _merge_csvs(out_csv: str, shard_csvs: List[str]) -> None:
-    # Merge by unique weights, keeping first occurrence (should be deterministic if bf16 is in shard0)
+    """Merge existing output CSV plus shard CSVs into *out_csv*.
+
+    Existing rows in *out_csv* are used as checkpoint baseline, then shard rows
+    are applied on top so newly measured rows (or retries) win for duplicate
+    weights.
+    """
     rows = {}
-    for p in shard_csvs:
-        if not os.path.exists(p):
+    sources = [out_csv, *shard_csvs]
+
+    for path in sources:
+        if not os.path.exists(path):
             continue
-        with open(p, "r", newline="") as f:
+        with open(path, "r", newline="") as f:
             r = csv.DictReader(f)
             for row in r:
                 w = (row.get("weights") or "").strip()
                 if not w:
                     continue
-                if w not in rows:
-                    rows[w] = row
+                rows[w] = row
 
     # Write merged
     os.makedirs(os.path.dirname(out_csv) or ".", exist_ok=True)
@@ -640,7 +656,7 @@ def _worker_measure(
                 quants=[item],
                 device=device,
                 csv_path=csv_path,
-                skip_done=True,
+                skip_done=False,
                 return_row=True,
                 ppl_rows=ppl_rows,
             )
@@ -762,6 +778,9 @@ def run_measure_stage(
     if not devices:
         raise ValueError("No CUDA devices available for measure stage. Provide -d/--devices.")
 
+    out_csv = default_csv_path(model_dir)
+    existing_labels = read_existing_weights(out_csv)
+
     # Shard CSVs
     shard_csvs = []
     log_paths = []
@@ -769,10 +788,23 @@ def run_measure_stage(
         shard_csvs.append(os.path.join(model_dir, f"{os.path.basename(model_dir)}Measured.gpu{d}.csv"))
         log_paths.append(os.path.join(model_dir, "logs", f"measure_gpu{d}.log") if write_logs else None)
 
-    # Build task list: base once + all bpws
+    # Build task list: base once + all bpws, then checkpoint-filter.
     tasks = Queue()
     results = Queue()
-    tasks_list = bpws + ["base"]
+    requested_tasks = bpws + ["base"]
+    tasks_list = _filter_measure_tasks_for_checkpoint(requested_tasks, existing_labels)
+
+    skipped_count = len(requested_tasks) - len(tasks_list)
+    if skipped_count:
+        print(
+            f"ℹ️ Measurement checkpoint: skipping {skipped_count} already measured row(s) "
+            f"({len(tasks_list)} remaining)."
+        )
+
+    if not tasks_list:
+        _merge_csvs(out_csv, shard_csvs)
+        print("✅ All requested measurement rows already exist. Nothing to do.")
+        return 0
 
     for t in tasks_list:
         tasks.put(t)
@@ -790,7 +822,6 @@ def run_measure_stage(
         time.sleep(2.0)
 
     # Result listener loop
-    out_csv = default_csv_path(model_dir)
     active_workers = len(devices)
     all_results = {}
 
