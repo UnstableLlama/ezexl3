@@ -5,7 +5,7 @@
 It wraps the exllamav3 quantization and evaluation workflow into a tool that:
 - Runs batch quantization easily (resume / skip supported)
 - Supports optimized BPWs by auto-building neighboring integer quants, then running exllamav3 comparative measure + optimize
-- Measures PPL + KL div @ 200k tokens context, recording data to CSV
+- Measures PPL + KL div @ 200k tokens, recording data to CSV
 - Generates a HuggingFace-ready `README.md` with your measurements using customizable templates
 - Embeds an SVG graph from the merged measurement CSV in the README
 
