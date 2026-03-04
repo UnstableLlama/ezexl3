@@ -113,8 +113,12 @@ class MeasureCheckpointingTests(unittest.TestCase):
         self.assertEqual(repo._filter_measure_tasks_for_checkpoint(requested, existing), ["2"])
 
     def test_run_measure_stage_returns_early_when_all_rows_measured(self):
-        with patch("ezexl3.repo.read_existing_weights", return_value={"2", "bf16"}), \
-             patch("ezexl3.repo._merge_csvs") as mock_merge, \
+        full_rows = {
+            "2": {"weights": "2", "KL Div": "0.1", "PPL r-100": "11.0", "GiB": "4.2"},
+            "bf16": {"weights": "bf16", "KL Div": "0.0", "PPL r-100": "10.0", "GiB": "12.3"},
+        }
+        with patch("ezexl3.repo._merge_csvs"), \
+             patch("ezexl3.repo._read_csv_rows", return_value=full_rows), \
              patch("ezexl3.repo.Process") as mock_process:
             rc = repo.run_measure_stage(
                 model_dir="/tmp/model",
@@ -125,7 +129,6 @@ class MeasureCheckpointingTests(unittest.TestCase):
             )
 
         self.assertEqual(rc, 0)
-        mock_merge.assert_called_once()
         mock_process.assert_not_called()
 
     def test_merge_csvs_preserves_existing_checkpoint_rows(self):
@@ -151,6 +154,35 @@ class MeasureCheckpointingTests(unittest.TestCase):
 
         labels = [r["weights"] for r in rows]
         self.assertEqual(labels, ["bf16", "2"])
+
+    def test_merge_csvs_combines_partial_rows(self):
+        """KL-only and PPL-only rows for the same label merge into one complete row."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out_csv = f"{tmp}/ModelMeasured.csv"
+            shard_a = f"{tmp}/ModelMeasured.gpu0.csv"
+            shard_b = f"{tmp}/ModelMeasured.gpu1.csv"
+            fields = ["weights", "KL Div", "PPL r-100", "GiB"]
+
+            # No existing output CSV
+            with open(shard_a, "w", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=fields)
+                w.writeheader()
+                w.writerow({"weights": "4", "KL Div": "0.05", "PPL r-100": "", "GiB": "6.0"})
+
+            with open(shard_b, "w", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=fields)
+                w.writeheader()
+                w.writerow({"weights": "4", "KL Div": "", "PPL r-100": "9.8", "GiB": "6.0"})
+
+            repo._merge_csvs(out_csv, [shard_a, shard_b])
+
+            with open(out_csv, "r", newline="") as f:
+                rows = list(csv.DictReader(f))
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["weights"], "4")
+        self.assertEqual(rows[0]["KL Div"], "0.05")
+        self.assertEqual(rows[0]["PPL r-100"], "9.8")
 
     def test_merge_csvs_prefers_newer_shard_rows_for_duplicates(self):
         with tempfile.TemporaryDirectory() as tmp:

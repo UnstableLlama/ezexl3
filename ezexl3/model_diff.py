@@ -4,9 +4,9 @@
 
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import argparse
-from exllamav3.util.file import disk_lru_cache
 from exllamav3.util.progress import ProgressBar
 from exllamav3.util.memory import free_mem
 from exllamav3.util.measures import cosine_error, sqnr
@@ -34,7 +34,6 @@ def save_tensor(tensor, path: str, tensor_name: str = None):
         }, path)
 
 
-@disk_lru_cache("get_dataset_text")
 def get_dataset_text(spec: dict):
     assert spec["dataset"] == "wiki2", "Only wiki2 implemented atm"
     dataset_text = "\n\n".join(
@@ -113,6 +112,7 @@ def main(args):
 
     # Dataset
     all_eval_ids = get_test_tokens(tokenizer, args.rows)
+    print(f" -- Processing {len(model_a.modules)} layers...")
 
     # Inputs
     states_a = list(all_eval_ids.split(args.batch_size))

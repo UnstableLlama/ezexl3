@@ -10,6 +10,8 @@ import argparse
 import math
 import torch
 
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 def get_test_tokens(tokenizer, rows, eval_len=2048, eval_stride=512):
     from datasets import load_dataset
     from exllamav3.util.progress import ProgressBar
