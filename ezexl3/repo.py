@@ -695,10 +695,14 @@ def _run_measure_subprocess(
         # Detect layer completion (lines like " -- model.layers.0.attn  ...")
         if total_layers and _LAYER_LINE_RE.match(line):
             completed += 1
-            if completed < total_layers:
-                # Regular layers → 0-90%
-                denom = max(total_layers - 1, 1)
-                pct = min(int((completed / denom) * 90), 90)
+            if completed == 1:
+                # First layer (embed) → 10%
+                pct = 10
+            elif completed < total_layers:
+                # Regular layers → 10-90%
+                mid_total = max(total_layers - 2, 1)
+                mid_done = completed - 1
+                pct = 10 + int((mid_done / mid_total) * 80)
             else:
                 # Head/logits layer finished
                 pct = 100
