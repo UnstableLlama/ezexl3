@@ -64,6 +64,23 @@ def read_existing_weights(csv_path: str) -> Set[str]:
     return out
 
 
+def read_existing_field_labels(csv_path: str, field: str) -> Set[str]:
+    """Return 'weights' labels that have a non-empty value for *field*."""
+    if not os.path.exists(csv_path):
+        return set()
+    out: Set[str] = set()
+    with open(csv_path, "r", newline="") as f:
+        reader = csv.DictReader(f)
+        if not reader.fieldnames:
+            return set()
+        for row in reader:
+            w = (row.get("weights") or "").strip()
+            val = (row.get(field) or "").strip()
+            if w and val:
+                out.add(w)
+    return out
+
+
 def append_csv_row(csv_path: str, row: Dict[str, object]) -> None:
     """Append a row to the CSV and fsync immediately."""
     with open(csv_path, "a", newline="") as f:

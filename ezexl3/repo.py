@@ -22,6 +22,7 @@ from ezexl3.measure import (
     ensure_csv_exists,
     file_size_gib,
     find_model_diff_script,
+    read_existing_field_labels,
     read_existing_weights,
 )
 
@@ -614,10 +615,11 @@ def _filter_measure_tasks_for_checkpoint(requested_tasks: List[str], existing_la
 def _merge_csvs(out_csv: str, shard_csvs: List[str]) -> None:
     """Merge existing output CSV plus shard CSVs into *out_csv*.
 
-    Existing rows in *out_csv* are used as checkpoint baseline, then shard rows
-    are applied on top so newly measured rows (or retries) win for duplicate
-    weights.
+    Uses field-level merge: for each label, non-empty field values from later
+    sources overwrite earlier ones.  This lets a KL-only row and a PPL-only row
+    combine into a single complete row.
     """
+    fieldnames = ["weights", "KL Div", "PPL r-100", "GiB"]
     rows = {}
     sources = [out_csv, *shard_csvs]
 
@@ -630,16 +632,35 @@ def _merge_csvs(out_csv: str, shard_csvs: List[str]) -> None:
                 w = (row.get("weights") or "").strip()
                 if not w:
                     continue
-                rows[w] = row
+                if w not in rows:
+                    rows[w] = dict(row)
+                else:
+                    for field in fieldnames:
+                        new_val = (row.get(field) or "").strip()
+                        if new_val:
+                            rows[w][field] = new_val
 
     # Write merged
     os.makedirs(os.path.dirname(out_csv) or ".", exist_ok=True)
-    fieldnames = ["weights", "KL Div", "PPL r-100", "GiB"]
     with open(out_csv, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
         for key in sorted(rows.keys(), key=_bpw_sort_key):
             w.writerow(rows[key])
+
+
+def _read_csv_rows(csv_path: str) -> Dict[str, dict]:
+    """Read CSV into ``{label: row_dict}``."""
+    out: Dict[str, dict] = {}
+    if not os.path.exists(csv_path):
+        return out
+    with open(csv_path, "r", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            w = (row.get("weights") or "").strip()
+            if w:
+                out[w] = dict(row)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -752,11 +773,14 @@ def _worker_measure(
     base_dir: str,
     device: int,
     csv_path: str,
-    tasks: "Queue[str]",
+    tasks: "Queue[Optional[dict]]",
     results: "Queue[Optional[dict]]",
     log_path: Optional[str],
     ppl_rows: int = 100,
 ) -> None:
+    """Phase-agnostic worker.  Each task is a dict with keys ``label`` and
+    ``phase`` (``"kl"`` or ``"ppl"``).  ``None`` is the termination sentinel.
+    """
     log_f = None
     if log_path:
         os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
@@ -767,20 +791,21 @@ def _worker_measure(
     model_diff_script = find_model_diff_script()
 
     while True:
-        item = tasks.get()
-        if item is None:
+        job = tasks.get()
+        if job is None:
             results.put(None)  # Sentinel
             break
 
-        label = "bf16" if item == "base" else str(item)
-        model_dir = base_dir if item == "base" else os.path.join(base_dir, str(item))
-        results.put({"event": "start", "device": device, "label": label})
+        task_label = job["label"]
+        phase = job["phase"]
+        label = "bf16" if task_label == "base" else str(task_label)
+        model_dir = base_dir if task_label == "base" else os.path.join(base_dir, str(task_label))
+        phase_tag = phase.upper()
+        results.put({"event": "start", "device": device, "label": label, "phase": phase})
 
         try:
-            # --- KL divergence ---
-            if item == "base":
-                kl_div = 0.0
-            else:
+            if phase == "kl":
+                # --- KL divergence ---
                 kl_cmd = [
                     sys.executable,
                     model_diff_script,
@@ -797,38 +822,58 @@ def _worker_measure(
                     )
                 kl_div = float(kl_match.group(1))
 
-            # --- PPL ---
-            ppl_cmd = [
-                sys.executable,
-                "-m", "ezexl3.ppl_layer",
-                "-m", model_dir,
-                "-r", str(ppl_rows),
-                "-d", str(device),
-            ]
-            ppl_out = _run_measure_subprocess(ppl_cmd, device, results, f"{label} PPL", log_f)
-            ppl_match = _PPL_RE.search(ppl_out)
-            if not ppl_match:
-                raise ValueError(
-                    "Could not parse ppl_layer output (Perplexity pattern didn't match)."
-                )
-            ppl_val = float(ppl_match.group(1))
+                row = {
+                    "weights": label,
+                    "KL Div": kl_div,
+                    "PPL r-100": "",
+                    "GiB": file_size_gib(model_dir),
+                }
+                append_csv_row(csv_path, row)
+                results.put({
+                    "event": "done", "device": device, "label": label,
+                    "phase": phase, "row": row,
+                })
 
-            # --- Build row and write to shard CSV ---
-            row = {
-                "weights": label,
-                "KL Div": kl_div,
-                "PPL r-100": ppl_val,
-                "GiB": file_size_gib(model_dir),
-            }
-            append_csv_row(csv_path, row)
-            results.put({"event": "done", "device": device, "label": label, "row": row})
+            elif phase == "ppl":
+                # --- PPL ---
+                ppl_cmd = [
+                    sys.executable,
+                    "-m", "ezexl3.ppl_layer",
+                    "-m", model_dir,
+                    "-r", str(ppl_rows),
+                    "-d", str(device),
+                ]
+                ppl_out = _run_measure_subprocess(ppl_cmd, device, results, f"{label} PPL", log_f)
+                ppl_match = _PPL_RE.search(ppl_out)
+                if not ppl_match:
+                    raise ValueError(
+                        "Could not parse ppl_layer output (Perplexity pattern didn't match)."
+                    )
+                ppl_val = float(ppl_match.group(1))
+
+                # For base, hardcode KL=0.0; for others leave blank (merge fills it)
+                kl_field = 0.0 if task_label == "base" else ""
+                row = {
+                    "weights": label,
+                    "KL Div": kl_field,
+                    "PPL r-100": ppl_val,
+                    "GiB": file_size_gib(model_dir),
+                }
+                append_csv_row(csv_path, row)
+                results.put({
+                    "event": "done", "device": device, "label": label,
+                    "phase": phase, "row": row,
+                })
 
         except Exception as e:
             import traceback
             if log_f:
                 traceback.print_exc(file=log_f)
                 log_f.flush()
-            results.put({"event": "error", "device": device, "label": label, "error": str(e)})
+            results.put({
+                "event": "error", "device": device, "label": label,
+                "phase": phase, "error": str(e),
+            })
 
     if log_f:
         log_f.close()
@@ -943,7 +988,6 @@ def run_measure_stage(
         raise ValueError("No CUDA devices available for measure stage. Provide -d/--devices.")
 
     out_csv = default_csv_path(model_dir)
-    existing_labels = read_existing_weights(out_csv)
 
     # Shard CSVs
     shard_csvs = []
@@ -952,28 +996,55 @@ def run_measure_stage(
         shard_csvs.append(os.path.join(model_dir, f"{os.path.basename(model_dir)}Measured.gpu{d}.csv"))
         log_paths.append(os.path.join(model_dir, "logs", f"measure_gpu{d}.log") if write_logs else None)
 
-    # Build task list: base once + all bpws, then checkpoint-filter.
-    tasks = Queue()
-    results = Queue()
-    requested_tasks = bpws + ["base"]
-    tasks_list = _filter_measure_tasks_for_checkpoint(requested_tasks, existing_labels)
+    # Seed merged output from any existing shard state.
+    _merge_csvs(out_csv, shard_csvs)
 
-    skipped_count = len(requested_tasks) - len(tasks_list)
-    if skipped_count:
-        print(
-            f"ℹ️ Measurement checkpoint: skipping {skipped_count} already measured row(s) "
-            f"({len(tasks_list)} remaining)."
-        )
+    # Per-field checkpointing: read merged CSV and decide which phases to skip.
+    existing_rows = _read_csv_rows(out_csv)
 
-    if not tasks_list:
-        _merge_csvs(out_csv, shard_csvs)
-        print("✅ All requested measurement rows already exist. Nothing to do.")
+    kl_tasks: List[dict] = []
+    ppl_tasks: List[dict] = []
+
+    for bpw in bpws:
+        label = _task_to_csv_label(bpw)
+        row = existing_rows.get(label, {})
+        has_kl = bool((row.get("KL Div") or "").strip())
+        has_ppl = bool((row.get("PPL r-100") or "").strip())
+
+        # base never needs KL (hardcoded to 0.0)
+        if bpw != "base" and not has_kl:
+            kl_tasks.append({"label": bpw, "phase": "kl"})
+        if not has_ppl:
+            ppl_tasks.append({"label": bpw, "phase": "ppl"})
+
+    # Always include base PPL if not yet measured
+    base_label = "bf16"
+    base_row = existing_rows.get(base_label, {})
+    if not bool((base_row.get("PPL r-100") or "").strip()):
+        if not any(t["label"] == "base" for t in ppl_tasks):
+            ppl_tasks.append({"label": "base", "phase": "ppl"})
+
+    total_jobs = len(kl_tasks) + len(ppl_tasks)
+
+    if total_jobs == 0:
+        print("✅ All requested measurement phases already exist. Nothing to do.")
         return 0
 
-    for t in tasks_list:
-        tasks.put(t)
+    skipped = (len(bpws) + 1) * 2 - len(bpws) - total_jobs  # rough skip count
+    n_kl = len(kl_tasks)
+    n_ppl = len(ppl_tasks)
 
-    # Termination sentinels
+    if n_kl < len(bpws) or n_ppl < len(bpws) + 1:
+        print(f"ℹ️ Measurement checkpoint: {n_kl} KL + {n_ppl} PPL jobs remaining.")
+
+    # Queue: all KL first, then all PPL, then sentinels
+    tasks: Queue = Queue()
+    results: Queue = Queue()
+
+    for t in kl_tasks:
+        tasks.put(t)
+    for t in ppl_tasks:
+        tasks.put(t)
     for _ in devices:
         tasks.put(None)
 
@@ -985,12 +1056,7 @@ def run_measure_stage(
         procs.append(p)
         time.sleep(2.0)
 
-    # Seed merged output from any existing shard state.
-    # This is important for resume flows where workers may skip already-done rows
-    # and therefore not emit fresh result events for every quant.
-    _merge_csvs(out_csv, shard_csvs)
-
-    print(f"\n🚀 Measuring {len(tasks_list)} items on {len(devices)} GPUs...")
+    print(f"\n🚀 Measuring {n_kl} KL + {n_ppl} PPL jobs on {len(devices)} GPUs...")
 
     use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     gpu_status: Dict[int, str] = {d: "idle" for d in devices}
@@ -1004,7 +1070,6 @@ def run_measure_stage(
 
     # Result listener loop
     active_workers = len(devices)
-    all_results: Dict[str, dict] = {}
     failures = 0
 
     while active_workers > 0:
@@ -1023,21 +1088,25 @@ def run_measure_stage(
             continue
 
         label = res["label"]
+        phase = res.get("phase", "")
+        phase_tag = phase.upper()
 
         if event == "start":
-            msg = f"🧪 [GPU {gpu}] START measure {label}"
-            gpu_status[gpu] = f"{label} | starting..."
+            msg = f"🧪 [GPU {gpu}] START {label} {phase_tag}"
+            gpu_status[gpu] = f"{label} {phase_tag} | starting..."
         elif event == "done":
             row = res["row"]
-            ppl_val = row.get("PPL r-100", "N/A")
-            kl_val = row.get("KL Div", "N/A")
-            msg = f"✅ [GPU {gpu}] DONE {label}: PPL(r{ppl_rows})={ppl_val}, KL={kl_val}"
+            if phase == "kl":
+                kl_val = row.get("KL Div", "N/A")
+                msg = f"✅ [GPU {gpu}] DONE {label} KL: KL={kl_val}"
+            else:
+                ppl_val = row.get("PPL r-100", "N/A")
+                msg = f"✅ [GPU {gpu}] DONE {label} PPL: PPL={ppl_val}"
             gpu_status[gpu] = "idle"
-            all_results[label] = row
             _merge_csvs(out_csv, shard_csvs)
         elif event == "error":
             failures += 1
-            msg = f"🔴 [GPU {gpu}] FAIL {label}: {res['error']}"
+            msg = f"🔴 [GPU {gpu}] FAIL {label} {phase_tag}: {res['error']}"
             gpu_status[gpu] = "idle"
         else:
             continue
@@ -1058,9 +1127,7 @@ def run_measure_stage(
     for p in procs:
         p.join()
 
-    # Always do one final merge after workers exit to ensure every shard write is
-    # reflected in the main CSV, even when a worker skipped tasks (no result event)
-    # or when the last merge happened before another worker finished flushing rows.
+    # Final merge after all workers exit
     _merge_csvs(out_csv, shard_csvs)
 
     if failures:
