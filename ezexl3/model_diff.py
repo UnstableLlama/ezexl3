@@ -112,6 +112,7 @@ def main(args):
 
     # Dataset
     all_eval_ids = get_test_tokens(tokenizer, args.rows)
+    print(f" -- Processing {len(model_a.modules)} layers...")
 
     # Inputs
     states_a = list(all_eval_ids.split(args.batch_size))
