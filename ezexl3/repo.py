@@ -16,7 +16,14 @@ from multiprocessing import Process, Queue
 from typing import Dict, IO, List, Optional, Tuple
 
 from ezexl3.quantize import run as quant_run
-from ezexl3.measure import default_csv_path, read_existing_weights
+from ezexl3.measure import (
+    append_csv_row,
+    default_csv_path,
+    ensure_csv_exists,
+    file_size_gib,
+    find_model_diff_script,
+    read_existing_weights,
+)
 
 
 def _normalize_bpw_str(raw: str) -> str:
@@ -152,11 +159,13 @@ def _run_cmd_with_progress(
     device: int,
     results: "Queue[Optional[dict]]",
     log_f: Optional[IO] = None,
-) -> None:
+) -> str:
     """Run *cmd* in a PTY, stream output to *log_f*, and send throttled
     ``{"event": "progress", "device": …, "text": …}`` dicts through *results*.
 
     Falls back to a plain pipe if the PTY cannot be created.
+
+    Returns the full captured output as a string.
     """
     if log_f:
         log_f.write(f"$ {' '.join(cmd)}\n")
@@ -256,6 +265,7 @@ def _run_cmd_with_progress(
         raise RuntimeError(
             f"Command failed with exit code {proc.returncode}: {' '.join(cmd)}"
         )
+    return buf
 
 
 # ---------------------------------------------------------------------------
@@ -620,6 +630,17 @@ def _merge_csvs(out_csv: str, shard_csvs: List[str]) -> None:
             w.writerow(rows[key])
 
 
+_KL_RE = re.compile(
+    r"(?:KL|K/L)\s+divergence(?:\s+\(A,\s+B\))?:\s+"
+    r"([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?|nan|inf|-inf)",
+    re.IGNORECASE,
+)
+_PPL_RE = re.compile(
+    r"Perplexity:\s+([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?|nan|inf|-inf)",
+    re.IGNORECASE,
+)
+
+
 def _worker_measure(
     base_dir: str,
     device: int,
@@ -629,17 +650,14 @@ def _worker_measure(
     log_path: Optional[str],
     ppl_rows: int = 100,
 ) -> None:
-    import traceback
-
-    # Optional per-worker log file
+    log_f = None
     if log_path:
         os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
         log_f = open(log_path, "w")
-        sys.stdout = log_f  # type: ignore
-        sys.stderr = log_f  # type: ignore
 
-    # Make sure shard CSV exists early
-    os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
+    ensure_csv_exists(csv_path)
+
+    model_diff_script = find_model_diff_script()
 
     while True:
         item = tasks.get()
@@ -647,34 +665,65 @@ def _worker_measure(
             results.put(None)  # Sentinel
             break
 
-        # Each item is a single quant label ("base" or "2" etc.)
-        try:
-            # We want to capture the result row. 
-            # run_measure currently doesn't return it, so we'll read the last row of the shard CSV 
-            # after it runs, or modify run_measure.
-            # Let's modify run_measure in measure.py to return the row.
-            
-            from ezexl3.measure import run_measure
-            row = run_measure(
-                base_dir=base_dir,
-                quants=[item],
-                device=device,
-                csv_path=csv_path,
-                skip_done=False,
-                return_row=True,
-                ppl_rows=ppl_rows,
-            )
-            if row:
-                results.put(row)
-        except Exception as e:
-            print(f"🔴 ERROR measuring '{item}': {e}")
-            traceback.print_exc()
-            # Send an error placeholder?
-            results.put({"weights": item if item != "base" else "bf16", "error": str(e)})
+        label = "bf16" if item == "base" else str(item)
+        model_dir = base_dir if item == "base" else os.path.join(base_dir, str(item))
+        results.put({"event": "start", "device": device, "label": label})
 
-    if log_path:
-        sys.stdout.flush()
-        sys.stderr.flush()
+        try:
+            # --- KL divergence ---
+            if item == "base":
+                kl_div = 0.0
+            else:
+                kl_cmd = [
+                    sys.executable,
+                    model_diff_script,
+                    "-ma", base_dir,
+                    "-mb", model_dir,
+                    "-r", "10",
+                    "-d", str(device),
+                ]
+                kl_out = _run_cmd_with_progress(kl_cmd, device, results, log_f)
+                kl_match = _KL_RE.search(kl_out)
+                if not kl_match:
+                    raise ValueError(
+                        "Could not parse model_diff output (KL Divergence pattern did not match)."
+                    )
+                kl_div = float(kl_match.group(1))
+
+            # --- PPL ---
+            ppl_cmd = [
+                sys.executable,
+                "-m", "ezexl3.ppl_layer",
+                "-m", model_dir,
+                "-r", str(ppl_rows),
+                "-d", str(device),
+            ]
+            ppl_out = _run_cmd_with_progress(ppl_cmd, device, results, log_f)
+            ppl_match = _PPL_RE.search(ppl_out)
+            if not ppl_match:
+                raise ValueError(
+                    "Could not parse ppl_layer output (Perplexity pattern didn't match)."
+                )
+            ppl_val = float(ppl_match.group(1))
+
+            # --- Build row and write to shard CSV ---
+            row = {
+                "weights": label,
+                "KL Div": kl_div,
+                "PPL r-100": ppl_val,
+                "GiB": file_size_gib(model_dir),
+            }
+            append_csv_row(csv_path, row)
+            results.put({"event": "done", "device": device, "label": label, "row": row})
+
+        except Exception as e:
+            import traceback
+            if log_f:
+                traceback.print_exc(file=log_f)
+                log_f.flush()
+            results.put({"event": "error", "device": device, "label": label, "error": str(e)})
+
+    if log_f:
         log_f.close()
 
 
@@ -829,35 +878,75 @@ def run_measure_stage(
         procs.append(p)
         time.sleep(2.0)
 
-    # Result listener loop
-    active_workers = len(devices)
-    all_results = {}
-
     # Seed merged output from any existing shard state.
     # This is important for resume flows where workers may skip already-done rows
     # and therefore not emit fresh result events for every quant.
     _merge_csvs(out_csv, shard_csvs)
 
     print(f"\n🚀 Measuring {len(tasks_list)} items on {len(devices)} GPUs...")
-    
+
+    use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+    gpu_status: Dict[int, str] = {d: "idle" for d in devices}
+    num_lines = len(devices)
+
+    # Print initial progress area (one line per GPU)
+    if use_ansi:
+        for d in sorted(gpu_status):
+            sys.stdout.write(f"\033[2K  GPU {d} | idle\n")
+        sys.stdout.flush()
+
+    # Result listener loop
+    active_workers = len(devices)
+    all_results: Dict[str, dict] = {}
+    failures = 0
+
     while active_workers > 0:
         res = results.get()
         if res is None:
             active_workers -= 1
             continue
-        
-        w = res.get("weights")
-        if not w: continue
-        
-        if "error" in res:
-            print(f"🔴 {w}: FAILED - {res['error']}")
+
+        gpu = res["device"]
+        event = res["event"]
+
+        if event == "progress":
+            gpu_status[gpu] = res["text"]
+            if use_ansi:
+                _clear_and_redraw_progress(gpu_status, num_lines)
+            continue
+
+        label = res["label"]
+
+        if event == "start":
+            msg = f"🧪 [GPU {gpu}] START measure {label}"
+            gpu_status[gpu] = f"{label} | starting..."
+        elif event == "done":
+            row = res["row"]
+            ppl_val = row.get("PPL r-100", "N/A")
+            kl_val = row.get("KL Div", "N/A")
+            msg = f"✅ [GPU {gpu}] DONE {label}: PPL(r{ppl_rows})={ppl_val}, KL={kl_val}"
+            gpu_status[gpu] = "idle"
+            all_results[label] = row
+            _merge_csvs(out_csv, shard_csvs)
+        elif event == "error":
+            failures += 1
+            msg = f"🔴 [GPU {gpu}] FAIL {label}: {res['error']}"
+            gpu_status[gpu] = "idle"
         else:
-            print(f"✅ {w}: PPL(r100)={res.get('PPL r-100', 'N/A')}")
-        
-        all_results[w] = res
-        
-        # Merge partially to keep the main CSV up to date
-        _merge_csvs(out_csv, shard_csvs)
+            continue
+
+        if use_ansi:
+            _print_above_progress(msg, gpu_status, num_lines)
+        else:
+            print(msg)
+
+    # Clear the progress area
+    if use_ansi:
+        sys.stdout.write(f"\033[{num_lines}A")
+        for _ in range(num_lines):
+            sys.stdout.write("\033[2K\n")
+        sys.stdout.write(f"\033[{num_lines}A")
+        sys.stdout.flush()
 
     for p in procs:
         p.join()
@@ -867,7 +956,10 @@ def run_measure_stage(
     # or when the last merge happened before another worker finished flushing rows.
     _merge_csvs(out_csv, shard_csvs)
 
-    print(f"✅ All measurements complete. Merged CSV: {out_csv}")
+    if failures:
+        print(f"⚠️ Measurement stage completed with {failures} failure(s). Merged CSV: {out_csv}")
+    else:
+        print(f"✅ All measurements complete. Merged CSV: {out_csv}")
     return 0
 
 
