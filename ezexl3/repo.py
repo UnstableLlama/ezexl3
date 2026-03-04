@@ -647,7 +647,7 @@ def _merge_csvs(out_csv: str, shard_csvs: List[str]) -> None:
 # ---------------------------------------------------------------------------
 
 _TOTAL_LAYERS_RE = re.compile(r"Processing\s+(\d+)\s+layers", re.IGNORECASE)
-_LAYER_LINE_RE = re.compile(r"^\s*--\s+\S+")
+_LAYER_LINE_RE = re.compile(r"^\s*--\s+.*\s{2,}(?:time:|rfn_err:)")
 _RESULT_LINE_RE = re.compile(r"Perplexity:|KL divergence", re.IGNORECASE)
 
 
@@ -667,9 +667,11 @@ def _run_measure_subprocess(
         log_f.write(f"$ {' '.join(cmd)}\n")
         log_f.flush()
 
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1,
+        text=True, bufsize=1, env=env,
     )
     assert proc.stdout is not None
 
