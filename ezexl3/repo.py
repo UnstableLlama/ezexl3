@@ -333,6 +333,18 @@ def _print_above_progress(
     sys.stdout.flush()
 
 
+def _build_synthetic_bar(pct: int, width: int = 30) -> str:
+    """Build a Unicode progress bar string from a percentage (0-100).
+
+    Uses box-drawing characters so the existing ``_gpu_status_line`` shrink
+    logic can resize the bar proportionally when the terminal is narrow.
+    """
+    pct = max(0, min(100, pct))
+    filled = int(width * pct / 100)
+    empty = width - filled
+    return "\u2501" * filled + "\u2500" * empty + f" {pct:3d}%"
+
+
 def _build_optimized_jobs(model_dir: str, optimized_bpws: List[str]) -> Tuple[List[dict], List[dict]]:
     measurements_dir = os.path.join(model_dir, "measurements")
     os.makedirs(measurements_dir, exist_ok=True)
@@ -630,6 +642,95 @@ def _merge_csvs(out_csv: str, shard_csvs: List[str]) -> None:
             w.writerow(rows[key])
 
 
+# ---------------------------------------------------------------------------
+# Synthetic progress for measure subprocesses (ppl_layer / model_diff)
+# ---------------------------------------------------------------------------
+
+_TOTAL_LAYERS_RE = re.compile(r"Processing\s+(\d+)\s+layers", re.IGNORECASE)
+_LAYER_LINE_RE = re.compile(r"^\s*--\s+\S+")
+_RESULT_LINE_RE = re.compile(r"Perplexity:|KL divergence", re.IGNORECASE)
+
+
+def _run_measure_subprocess(
+    cmd: List[str],
+    device: int,
+    results: "Queue[Optional[dict]]",
+    phase_label: str,
+    log_f: Optional[IO] = None,
+) -> str:
+    """Run a measure subprocess, parse layer output, and send synthetic
+    progress bar events through *results*.
+
+    Returns the full captured output as a string.
+    """
+    if log_f:
+        log_f.write(f"$ {' '.join(cmd)}\n")
+        log_f.flush()
+
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
+    )
+    assert proc.stdout is not None
+
+    buf_lines: List[str] = []
+    total_layers: Optional[int] = None
+    completed = 0
+    last_send: float = 0.0
+
+    for line in proc.stdout:
+        buf_lines.append(line)
+        if log_f:
+            log_f.write(line)
+            log_f.flush()
+
+        # Detect total layer count
+        if total_layers is None:
+            m = _TOTAL_LAYERS_RE.search(line)
+            if m:
+                total_layers = int(m.group(1))
+
+        # Detect layer completion (lines like " -- model.layers.0.attn  ...")
+        if total_layers and _LAYER_LINE_RE.match(line):
+            completed += 1
+            if completed < total_layers:
+                # Regular layers → 0-90%
+                denom = max(total_layers - 1, 1)
+                pct = min(int((completed / denom) * 90), 90)
+            else:
+                # Head/logits layer finished
+                pct = 100
+
+            now = time.monotonic()
+            if now - last_send >= 0.5 or pct >= 100:
+                bar = _build_synthetic_bar(pct)
+                results.put({
+                    "event": "progress",
+                    "device": device,
+                    "text": f"{phase_label} {bar} ({completed}/{total_layers})",
+                })
+                last_send = now
+
+        # Detect final result lines → jump to 100%
+        if total_layers and _RESULT_LINE_RE.search(line) and completed < total_layers:
+            bar = _build_synthetic_bar(100)
+            results.put({
+                "event": "progress",
+                "device": device,
+                "text": f"{phase_label} {bar} ({total_layers}/{total_layers})",
+            })
+            last_send = time.monotonic()
+
+    proc.wait()
+    if proc.returncode != 0:
+        full_out = "".join(buf_lines)
+        raise RuntimeError(
+            f"Command failed with exit code {proc.returncode}: {' '.join(cmd)}\n\n"
+            f"Output:\n{full_out}"
+        )
+    return "".join(buf_lines)
+
+
 _KL_RE = re.compile(
     r"(?:KL|K/L)\s+divergence(?:\s+\(A,\s+B\))?:\s+"
     r"([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?|nan|inf|-inf)",
@@ -682,7 +783,7 @@ def _worker_measure(
                     "-r", "10",
                     "-d", str(device),
                 ]
-                kl_out = _run_cmd_with_progress(kl_cmd, device, results, log_f)
+                kl_out = _run_measure_subprocess(kl_cmd, device, results, f"{label} KL", log_f)
                 kl_match = _KL_RE.search(kl_out)
                 if not kl_match:
                     raise ValueError(
@@ -698,7 +799,7 @@ def _worker_measure(
                 "-r", str(ppl_rows),
                 "-d", str(device),
             ]
-            ppl_out = _run_cmd_with_progress(ppl_cmd, device, results, log_f)
+            ppl_out = _run_measure_subprocess(ppl_cmd, device, results, f"{label} PPL", log_f)
             ppl_match = _PPL_RE.search(ppl_out)
             if not ppl_match:
                 raise ValueError(
