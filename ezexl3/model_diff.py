@@ -6,7 +6,6 @@ import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import argparse
-from exllamav3.util.file import disk_lru_cache
 from exllamav3.util.progress import ProgressBar
 from exllamav3.util.memory import free_mem
 from exllamav3.util.measures import cosine_error, sqnr
@@ -34,7 +33,6 @@ def save_tensor(tensor, path: str, tensor_name: str = None):
         }, path)
 
 
-@disk_lru_cache("get_dataset_text")
 def get_dataset_text(spec: dict):
     assert spec["dataset"] == "wiki2", "Only wiki2 implemented atm"
     dataset_text = "\n\n".join(
