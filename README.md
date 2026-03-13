@@ -117,7 +117,7 @@ Common Use Cases:
 - **Quantization**: `-pm` (MoE speedup)
 - **Measurement**: `-r` / `--rows` (number of rows for PPL)
 
-Note: passthrough blocks consume remaining args until another passthrough block starts, so keep normal CLI flags (like `--no-readme`) before `--measure-args -- ...`.
+Note: passthrough blocks consume remaining args until another passthrough block starts, so keep normal CLI flags (like `--no-readme`) before `--measure-args -- ...`
 
 
 ### Optimized BPW workflow
