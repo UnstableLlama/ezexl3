@@ -1,15 +1,20 @@
 # ezexl3
 
-**ezexl3** is a simple, single-command [exl3](https://github.com/turboderp-org/exllamav3) repo generator.
+**ezexl3** is a single-command quantization and measurement pipeline that generates high-quality, HuggingFace-ready exl3 repos automatically.
 
-It wraps the exllamav3 quantization and evaluation workflow into a tool that:
-- Runs batch quantization easily (resume / skip supported)
-- Supports optimized BPWs by auto-building neighboring integer quants, then running exllamav3 comparative measure + optimize
-- Measures PPL + KL div @ 200k tokens, recording data to CSV
+It wraps the exllamav3 quantization and evaluation workflow into a tool that has:
+- Runs batched quantization (multi-gpu supported)
+- Supports optimized BPWs, (2.1 bpw, 3.5 bpw etc.)
+- Measures KL divergence + PPL @ 200k tokens, recording data to CSV
 - Generates a HuggingFace-ready `README.md` with your measurements using customizable templates
 - Embeds an SVG graph from the measurement CSV in the README
+- Checkpoints and resumes intelligently
+all from one command.
 
-all with one command.
+# Pipeline:
+<p align="center">
+model → quantize → optimize → measure (KL + PPL) → graph → README
+</p>
 
 ---
 
@@ -39,11 +44,11 @@ Then ezexl3 automatically:
 
 - Quantizes the model to all indicated bitrates, saved under subdirectories in the base model folder.
 
-- Measures PPL and KL div and saves to a modelMeasured.csv in the base model folder, and makes a stylish dark mode SVG graph with the data.
+- Measures PPL and KL div and saves to modelNameMeasured.csv in the base model folder, and makes a stylish dark mode SVG graph with the data.
 
-- Generates a README.md for a HuggingFace exl3 quantization repo in the base model folder. (with optional customizable templates)
+- Generates a README.md for a HuggingFace repo in the base model folder. (with optional customizable templates)
 
-### 2. Standalone subcommands
+### 2. Single-stage subcommands
 If you only want to run specific stages:
 ```bash
 # Quantize only
@@ -57,6 +62,8 @@ ezexl3 measure -m /path/to/base_model -b 2,3,4,5,6 -d 0,1
 
 # Generate README only (from existing CSV)
 ezexl3 readme -m /path/to/base_model -t fire
+
+(but really everything is checkpointed so it usually doesn't hurt to just run the "repo" command every time)
 ```
 
 ### 3. Template System
@@ -107,16 +114,11 @@ ezexl3 repo -m /path/to/model -b 4.0 --measure-args -- -r 200 -d 0
 ```
 
 Common Use Cases:
-- **Quantization**: `-pm` (MoE speedup), `-ss` (shard size), `-nr` (no-rope-scaling).
-  If using `-r/--device-ratios`, provide one positive ratio per device in `-d/--devices`.
-- **Measurement**: `-r` / `--rows` (number of rows for PPL), `-d` / `--device` / `--devices` (specific evaluation device list).
+- **Quantization**: `-pm` (MoE speedup)
+- **Measurement**: `-r` / `--rows` (number of rows for PPL)
 
 Note: passthrough blocks consume remaining args until another passthrough block starts, so keep normal CLI flags (like `--no-readme`) before `--measure-args -- ...`.
 
-Deprecated/legacy flags:
-- `--exllamav3-root` is deprecated and ignored.
-- `repo --schedule` currently supports queue behavior only (`--schedule static` is accepted but ignored).
-- `repo --no-meta` is accepted but currently ignored.
 
 ### Optimized BPW workflow
 
