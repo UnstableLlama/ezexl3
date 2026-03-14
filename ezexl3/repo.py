@@ -96,6 +96,17 @@ def _plan_repo_bpws(bpws: List[str]) -> Dict[str, List[str]]:
     }
 
 
+def _catbench_file_prefix(label: str) -> str:
+    """Convert a CSV label to a catbench SVG filename prefix."""
+    if label in ("bf16", "base"):
+        return "fp16"
+    try:
+        val = float(label)
+        return f"{val:.2f}bpw"
+    except (ValueError, TypeError):
+        return label
+
+
 def _resolve_exllamav3_util_scripts() -> Tuple[str, str]:
     attempted: List[str] = []
     roots: List[str] = []
@@ -768,6 +779,82 @@ _PPL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ---------------------------------------------------------------------------
+# Catbench progress parsing
+# ---------------------------------------------------------------------------
+
+_CATBENCH_LOADED_RE = re.compile(r"CATBENCH_MODEL_LOADED")
+_CATBENCH_SAMPLE_RE = re.compile(r"CATBENCH_SAMPLE_DONE\s+(\d+)/(\d+)")
+
+
+def _run_catbench_subprocess(
+    cmd: List[str],
+    device: int,
+    results: "Queue[Optional[dict]]",
+    phase_label: str,
+    log_f: Optional[IO] = None,
+) -> str:
+    """Run a catbench subprocess and send progress events.
+
+    Progress model: 80% for model loading, 20% for N inference samples.
+    """
+    if log_f:
+        log_f.write(f"$ {' '.join(cmd)}\n")
+        log_f.flush()
+
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1, env=env,
+    )
+    assert proc.stdout is not None
+
+    buf_lines: List[str] = []
+    last_send: float = 0.0
+
+    for line in proc.stdout:
+        buf_lines.append(line)
+        if log_f:
+            log_f.write(line)
+            log_f.flush()
+
+        # Model loaded → 80%
+        if _CATBENCH_LOADED_RE.search(line):
+            bar = _build_synthetic_bar(80)
+            results.put({
+                "event": "progress",
+                "device": device,
+                "text": f"{phase_label} {bar} (loading done)",
+            })
+            last_send = time.monotonic()
+            continue
+
+        # Sample done → 80 + (i * 20 / n) %
+        m = _CATBENCH_SAMPLE_RE.search(line)
+        if m:
+            i_done = int(m.group(1))
+            n_total = int(m.group(2))
+            pct = 80 + int(i_done * 20 / max(n_total, 1))
+            now = time.monotonic()
+            if now - last_send >= 0.5 or pct >= 100:
+                bar = _build_synthetic_bar(pct)
+                results.put({
+                    "event": "progress",
+                    "device": device,
+                    "text": f"{phase_label} {bar} ({i_done}/{n_total} samples)",
+                })
+                last_send = now
+
+    proc.wait()
+    if proc.returncode != 0:
+        full_out = "".join(buf_lines)
+        raise RuntimeError(
+            f"Catbench failed with exit code {proc.returncode}: {' '.join(cmd)}\n\n"
+            f"Output:\n{full_out}"
+        )
+    return "".join(buf_lines)
+
 
 def _worker_measure(
     base_dir: str,
@@ -863,6 +950,26 @@ def _worker_measure(
                 results.put({
                     "event": "done", "device": device, "label": label,
                     "phase": phase, "row": row,
+                })
+
+            elif phase == "catbench":
+                # --- Catbench ---
+                n_samples = job.get("n_samples", 3)
+                catbench_out_dir = os.path.join(base_dir, "catbench")
+                catbench_device = job.get("device_str", str(device))
+                catbench_cmd = [
+                    sys.executable,
+                    "-m", "ezexl3.catbench",
+                    "-m", model_dir,
+                    "-d", catbench_device,
+                    "-n", str(n_samples),
+                    "-o", catbench_out_dir,
+                    "-l", label,
+                ]
+                _run_catbench_subprocess(catbench_cmd, device, results, f"{label} CAT", log_f)
+                results.put({
+                    "event": "done", "device": device, "label": label,
+                    "phase": phase, "row": {},
                 })
 
         except Exception as e:
@@ -979,6 +1086,7 @@ def run_measure_stage(
     devices: List[int],
     write_logs: bool = True,
     measure_args: Optional[List[str]] = None,
+    catbench_n: int = 0,
 ) -> int:
     model_dir = os.path.abspath(model_dir)
     bpws = [str(b) for b in bpws]
@@ -1024,26 +1132,111 @@ def run_measure_stage(
         if not any(t["label"] == "base" for t in ppl_tasks):
             ppl_tasks.append({"label": "base", "phase": "ppl"})
 
-    total_jobs = len(kl_tasks) + len(ppl_tasks)
+    # --- Catbench tasks ---
+    catbench_tasks: List[dict] = []
+    multi_gpu_catbench_tasks: List[dict] = []
+
+    if catbench_n > 0:
+        catbench_out_dir = os.path.join(model_dir, "catbench")
+
+        # Build catbench tasks for all bpws
+        for bpw in bpws:
+            label = _task_to_csv_label(bpw)
+            file_prefix = _catbench_file_prefix(label)
+            canonical = os.path.join(catbench_out_dir, f"{file_prefix}.svg")
+            if not os.path.exists(canonical):
+                catbench_tasks.append({
+                    "label": bpw, "phase": "catbench", "n_samples": catbench_n,
+                })
+
+        # Include FP16 baseline
+        fp16_canonical = os.path.join(catbench_out_dir, "fp16.svg")
+        if not os.path.exists(fp16_canonical):
+            catbench_tasks.append({
+                "label": "base", "phase": "catbench", "n_samples": catbench_n,
+            })
+
+        # VRAM pre-flight: sort into multi-GPU vs single-GPU
+        if len(devices) > 1 and catbench_tasks:
+            from ezexl3.catbench import check_vram_fit
+            single_gpu = []
+            for task in catbench_tasks:
+                task_label = task["label"]
+                task_model_dir = model_dir if task_label == "base" else os.path.join(model_dir, str(task_label))
+                fits, model_gib, avail_gib = check_vram_fit(task_model_dir, devices[0])
+                if fits:
+                    single_gpu.append(task)
+                else:
+                    # Multi-GPU: run on all devices together
+                    device_str = ",".join(str(d) for d in devices)
+                    task["device_str"] = device_str
+                    multi_gpu_catbench_tasks.append(task)
+            catbench_tasks = single_gpu
+
+    total_jobs = len(kl_tasks) + len(ppl_tasks) + len(catbench_tasks) + len(multi_gpu_catbench_tasks)
 
     if total_jobs == 0:
         print("✅ All requested measurement phases already exist. Nothing to do.")
         return 0
 
-    skipped = (len(bpws) + 1) * 2 - len(bpws) - total_jobs  # rough skip count
     n_kl = len(kl_tasks)
     n_ppl = len(ppl_tasks)
+    n_cat = len(catbench_tasks) + len(multi_gpu_catbench_tasks)
 
     if n_kl < len(bpws) or n_ppl < len(bpws) + 1:
         print(f"ℹ️ Measurement checkpoint: {n_kl} KL + {n_ppl} PPL jobs remaining.")
 
-    # Queue: all KL first, then all PPL, then sentinels
+    # --- Run multi-GPU catbench jobs first (sequentially, all GPUs) ---
+    if multi_gpu_catbench_tasks:
+        print(f"\n🐱 Running {len(multi_gpu_catbench_tasks)} multi-GPU catbench job(s)...")
+        for task in multi_gpu_catbench_tasks:
+            task_label = task["label"]
+            label = "bf16" if task_label == "base" else str(task_label)
+            task_model_dir = model_dir if task_label == "base" else os.path.join(model_dir, str(task_label))
+            device_str = task["device_str"]
+            catbench_cmd = [
+                sys.executable, "-m", "ezexl3.catbench",
+                "-m", task_model_dir,
+                "-d", device_str,
+                "-n", str(task.get("n_samples", 3)),
+                "-o", os.path.join(model_dir, "catbench"),
+                "-l", label,
+            ]
+            print(f"  🐱 {label} on GPUs [{device_str}]...")
+            try:
+                env = os.environ.copy()
+                env["PYTHONUNBUFFERED"] = "1"
+                proc = subprocess.Popen(
+                    catbench_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, bufsize=1, env=env,
+                )
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    sys.stdout.write(f"    {line}")
+                proc.wait()
+                if proc.returncode != 0:
+                    print(f"  🔴 Multi-GPU catbench failed for {label}")
+                else:
+                    print(f"  ✅ Multi-GPU catbench done for {label}")
+            except Exception as e:
+                print(f"  🔴 Multi-GPU catbench error for {label}: {e}")
+
+    # Remaining jobs (KL + PPL + single-GPU catbench) into shared queue
+    remaining_jobs = len(kl_tasks) + len(ppl_tasks) + len(catbench_tasks)
+    if remaining_jobs == 0:
+        if multi_gpu_catbench_tasks:
+            print("✅ All catbench jobs complete (multi-GPU only).")
+        return 0
+
+    # Queue: all KL first, then all PPL, then catbench, then sentinels
     tasks: Queue = Queue()
     results: Queue = Queue()
 
     for t in kl_tasks:
         tasks.put(t)
     for t in ppl_tasks:
+        tasks.put(t)
+    for t in catbench_tasks:
         tasks.put(t)
     for _ in devices:
         tasks.put(None)
@@ -1056,7 +1249,8 @@ def run_measure_stage(
         procs.append(p)
         time.sleep(2.0)
 
-    print(f"\n🚀 Measuring {n_kl} KL + {n_ppl} PPL jobs on {len(devices)} GPUs...")
+    cat_msg = f" + {n_cat} CAT" if n_cat else ""
+    print(f"\n🚀 Measuring {n_kl} KL + {n_ppl} PPL{cat_msg} jobs on {len(devices)} GPUs...")
 
     use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     gpu_status: Dict[int, str] = {d: "idle" for d in devices}
@@ -1099,11 +1293,14 @@ def run_measure_stage(
             if phase == "kl":
                 kl_val = row.get("KL Div", "N/A")
                 msg = f"✅ [GPU {gpu}] DONE {label} KL: KL={kl_val}"
+            elif phase == "catbench":
+                msg = f"🐱 [GPU {gpu}] DONE {label} CATBENCH"
             else:
                 ppl_val = row.get("PPL r-100", "N/A")
                 msg = f"✅ [GPU {gpu}] DONE {label} PPL: PPL={ppl_val}"
             gpu_status[gpu] = "idle"
-            _merge_csvs(out_csv, shard_csvs)
+            if phase != "catbench":
+                _merge_csvs(out_csv, shard_csvs)
         elif event == "error":
             failures += 1
             msg = f"🔴 [GPU {gpu}] FAIL {label} {phase_tag}: {res['error']}"
@@ -1154,6 +1351,7 @@ def run_repo(
     include_graph: bool = True,
     include_measurements: bool = True,
     optimized_measure_layers: int = 2,
+    catbench_n: int = 0,
 ) -> int:
     bpw_plan = _plan_repo_bpws(bpws)
     quant_bpws = bpw_plan["quant_integer_queue"]
@@ -1190,13 +1388,14 @@ def run_repo(
         )
 
     # --- Stage 3: measure (sharded, dynamic queue) ---
-    if do_measure:
+    if do_measure or catbench_n > 0:
         rc = run_measure_stage(
             model_dir=model_dir,
             bpws=measure_bpws,
             devices=devices,
             write_logs=write_logs,
             measure_args=measure_args,
+            catbench_n=catbench_n,
         )
         if rc != 0:
             return rc
@@ -1212,6 +1411,7 @@ def run_repo(
             include_graph=include_graph,
             include_measurements=include_measurements,
             bpws_hint=measure_bpws,
+            include_catbench=(catbench_n > 0),
         )
 
     # --- Stage 5: cleanup ---
