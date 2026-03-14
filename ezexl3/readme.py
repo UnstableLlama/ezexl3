@@ -352,17 +352,21 @@ def run_readme(
             # No SVGs found – remove the entire catbench panel
             template = re.sub(
                 r'\s*<div class="content-panel">\s*'
-                r'<div class="panel-title">SVG Catbench</div>.*?'
-                r'\{\{CATBENCH_CONTENT\}\}.*?</div>\s*</div>',
-                "", template, flags=re.DOTALL,
+                r"<div class=\"panel-title\">[^<]*?[Cc]atbench[^<]*?</div>.*?"
+                r"\{\{CATBENCH_CONTENT\}\}.*?</div>\s*</div>",
+                "",
+                template,
+                flags=re.DOTALL,
             )
     else:
         # -cb not requested – remove the entire catbench panel
         template = re.sub(
             r'\s*<div class="content-panel">\s*'
-            r'<div class="panel-title">SVG Catbench</div>.*?'
-            r'\{\{CATBENCH_CONTENT\}\}.*?</div>\s*</div>',
-            "", template, flags=re.DOTALL,
+            r"<div class=\"panel-title\">[^<]*?[Cc]atbench[^<]*?</div>.*?"
+            r"\{\{CATBENCH_CONTENT\}\}.*?</div>\s*</div>",
+            "",
+            template,
+            flags=re.DOTALL,
         )
 
     readme_path = os.path.join(model_dir, "README.md")
