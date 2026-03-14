@@ -117,6 +117,9 @@ def extract_svg(text: str) -> str | None:
 
 def _run_matplotlib_code(code: str) -> str | None:
     """Execute matplotlib code in a subprocess to produce SVG."""
+    # Strip plt.show() — it clears the figure before our savefig
+    code = re.sub(r"plt\.show\(\)", "", code)
+
     with tempfile.TemporaryDirectory() as tmpdir:
         svg_path = os.path.join(tmpdir, "output.svg")
 
