@@ -6,7 +6,6 @@ import sys
 import os
 import re
 import argparse
-import shutil
 import subprocess
 import tempfile
 import time
@@ -170,8 +169,6 @@ def _retry_txt_extraction(
     file_prefix: str,
     n_samples: int,
     saved_paths: list,
-    canonical_path: str,
-    first_svg_saved: bool,
 ) -> list:
     """Re-read .txt files and retry SVG extraction.
 
@@ -179,8 +176,13 @@ def _retry_txt_extraction(
     earlier runs.  Successfully extracted SVGs replace their .txt source.
     """
     for i in range(1, n_samples + 1):
-        txt_path = os.path.join(output_dir, f"{file_prefix}_{i}.txt")
-        sample_path = os.path.join(output_dir, f"{file_prefix}_{i}.svg")
+        # Match the naming convention: sample 1 is canonical, rest are _1, _2, ...
+        if i == 1:
+            txt_path = os.path.join(output_dir, f"{file_prefix}.txt")
+            sample_path = os.path.join(output_dir, f"{file_prefix}.svg")
+        else:
+            txt_path = os.path.join(output_dir, f"{file_prefix}_{i - 1}.txt")
+            sample_path = os.path.join(output_dir, f"{file_prefix}_{i - 1}.svg")
 
         # Skip if SVG already exists for this sample
         if os.path.exists(sample_path):
@@ -198,10 +200,6 @@ def _retry_txt_extraction(
             saved_paths.append(sample_path)
             os.remove(txt_path)
             print(f" -- Retry sample {i}: SVG extracted ({len(svg_content)} chars)", flush=True)
-
-            if not first_svg_saved:
-                shutil.copy2(sample_path, canonical_path)
-                first_svg_saved = True
 
     return saved_paths
 
@@ -275,12 +273,15 @@ def run_catbench(args) -> list:
     print(f" -- Max new tokens: {max_new_tokens}", flush=True)
 
     saved_paths = []
-    canonical_path = os.path.join(output_dir, f"{file_prefix}.svg")
-    first_svg_saved = False
 
     for i in range(1, n_samples + 1):
-        sample_path = os.path.join(output_dir, f"{file_prefix}_{i}.svg")
-        txt_path = os.path.join(output_dir, f"{file_prefix}_{i}.txt")
+        # First sample saves directly as canonical; subsequent get _1, _2, ...
+        if i == 1:
+            sample_path = os.path.join(output_dir, f"{file_prefix}.svg")
+            txt_path = os.path.join(output_dir, f"{file_prefix}.txt")
+        else:
+            sample_path = os.path.join(output_dir, f"{file_prefix}_{i - 1}.svg")
+            txt_path = os.path.join(output_dir, f"{file_prefix}_{i - 1}.txt")
 
         print(f"CATBENCH_SAMPLE_START {i}/{n_samples}", flush=True)
 
@@ -324,11 +325,6 @@ def run_catbench(args) -> list:
                 f.write(svg_content)
             saved_paths.append(sample_path)
             print(f" -- Sample {i}: SVG saved ({len(svg_content)} chars)", flush=True)
-
-            # First successful SVG becomes canonical
-            if not first_svg_saved:
-                shutil.copy2(sample_path, canonical_path)
-                first_svg_saved = True
         else:
             # Save raw response for debugging
             with open(txt_path, "w") as f:
@@ -343,7 +339,7 @@ def run_catbench(args) -> list:
 
     # Retry extraction on any .txt files (current + pre-existing)
     saved_paths = _retry_txt_extraction(output_dir, file_prefix, n_samples,
-                                        saved_paths, canonical_path, first_svg_saved)
+                                        saved_paths)
 
     if saved_paths:
         print(f" -- Catbench complete: {len(saved_paths)}/{n_samples} SVGs saved", flush=True)

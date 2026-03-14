@@ -110,19 +110,36 @@ def _catbench_file_prefix(label: str) -> str:
 def _catbench_has_output(catbench_dir: str, file_prefix: str) -> bool:
     """Check if catbench already produced output for *file_prefix*.
 
-    Returns True if a canonical SVG exists, or if .txt files exist
-    (after attempting re-extraction with latest logic).
+    Returns True if a canonical SVG exists, or if any sample .txt/.svg files
+    exist (after attempting re-extraction with latest logic).
+
+    File naming convention:
+      sample 1: {prefix}.svg / {prefix}.txt  (canonical)
+      sample 2: {prefix}_1.svg / {prefix}_1.txt
+      sample 3: {prefix}_2.svg / {prefix}_2.txt
     """
     if not os.path.isdir(catbench_dir):
         return False
     # Canonical SVG already exists
-    if os.path.exists(os.path.join(catbench_dir, f"{file_prefix}.svg")):
+    canonical_svg = os.path.join(catbench_dir, f"{file_prefix}.svg")
+    if os.path.exists(canonical_svg):
         return True
-    # Try re-extracting any .txt files with latest extraction logic
+    # Try re-extracting .txt files with latest extraction logic
     from ezexl3.catbench import extract_svg
-    import shutil
-    canonical_path = os.path.join(catbench_dir, f"{file_prefix}.svg")
     has_any = False
+    # Check canonical .txt (sample 1)
+    canonical_txt = os.path.join(catbench_dir, f"{file_prefix}.txt")
+    if os.path.exists(canonical_txt):
+        has_any = True
+        with open(canonical_txt, "r") as f:
+            raw = f.read()
+        svg_content = extract_svg(raw)
+        if svg_content:
+            with open(canonical_svg, "w") as f:
+                f.write(svg_content)
+            os.remove(canonical_txt)
+            print(f"  🔄 Re-extracted SVG from {file_prefix}.txt ({len(svg_content)} chars)")
+    # Check numbered samples (_1, _2, ...)
     for fn in sorted(os.listdir(catbench_dir)):
         if fn.startswith(f"{file_prefix}_") and fn.endswith(".txt"):
             has_any = True
@@ -138,8 +155,6 @@ def _catbench_has_output(catbench_dir: str, file_prefix: str) -> bool:
                     f.write(svg_content)
                 os.remove(txt_path)
                 print(f"  🔄 Re-extracted SVG from {fn} ({len(svg_content)} chars)")
-                if not os.path.exists(canonical_path):
-                    shutil.copy2(svg_path, canonical_path)
         elif fn.startswith(f"{file_prefix}_") and fn.endswith(".svg"):
             has_any = True
     return has_any
