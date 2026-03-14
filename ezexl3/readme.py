@@ -102,7 +102,7 @@ def _discover_rows_without_measurements(model_dir: str, bpws_hint: Optional[List
 def _build_catbench_grid(model_dir: str) -> str:
     """Build an HTML table grid of catbench SVG thumbnails.
 
-    Scans {model_dir}/catbench/ for canonical SVGs (e.g. 2.00bpw.svg, fp16.svg)
+    Scans {model_dir}/catbench/ for canonical SVGs (e.g. 2.00bpw.svg, bf16.svg)
     and arranges them in rows of 4, matching turboderp's format.
     """
     catbench_dir = os.path.join(model_dir, "catbench")
@@ -118,8 +118,8 @@ def _build_catbench_grid(model_dir: str) -> str:
         if re.search(r"_\d+\.svg$", fn):
             continue
 
-        if fn == "fp16.svg":
-            svgs.append((9999.0, "FP16", fn))
+        if fn == "bf16.svg":
+            svgs.append((9999.0, "BF16", fn))
         elif fn.endswith("bpw.svg"):
             bpw_str = fn.replace("bpw.svg", "")
             try:

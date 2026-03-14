@@ -21,10 +21,10 @@ class CatbenchFilePrefixTests(unittest.TestCase):
         self.assertEqual(_catbench_file_prefix("3.5"), "3.50bpw")
 
     def test_bf16_label(self):
-        self.assertEqual(_catbench_file_prefix("bf16"), "fp16")
+        self.assertEqual(_catbench_file_prefix("bf16"), "bf16")
 
     def test_base_label(self):
-        self.assertEqual(_catbench_file_prefix("base"), "fp16")
+        self.assertEqual(_catbench_file_prefix("base"), "bf16")
 
 
 class SafetensorsSizeTests(unittest.TestCase):
@@ -81,7 +81,7 @@ class CatbenchGridTests(unittest.TestCase):
             os.makedirs(catdir)
 
             # Create canonical SVGs
-            for name in ["2.00bpw.svg", "3.00bpw.svg", "4.00bpw.svg", "fp16.svg"]:
+            for name in ["2.00bpw.svg", "3.00bpw.svg", "4.00bpw.svg", "bf16.svg"]:
                 Path(os.path.join(catdir, name)).write_text('<svg xmlns="test"></svg>')
 
             # Create a numbered variant that should be excluded
@@ -92,7 +92,7 @@ class CatbenchGridTests(unittest.TestCase):
             self.assertIn("2.00 bpw", result)
             self.assertIn("3.00 bpw", result)
             self.assertIn("4.00 bpw", result)
-            self.assertIn("FP16", result)
+            self.assertIn("BF16", result)
             self.assertIn('catbench/2.00bpw.svg', result)
             self.assertIn('width="160"', result)
             # Numbered variant should not appear
@@ -103,16 +103,16 @@ class CatbenchGridTests(unittest.TestCase):
             catdir = os.path.join(tmpdir, "catbench")
             os.makedirs(catdir)
 
-            for name in ["6.00bpw.svg", "2.00bpw.svg", "fp16.svg"]:
+            for name in ["6.00bpw.svg", "2.00bpw.svg", "bf16.svg"]:
                 Path(os.path.join(catdir, name)).write_text('<svg></svg>')
 
             result = _build_catbench_grid(tmpdir)
-            # 2.00 should come before 6.00, fp16 last
+            # 2.00 should come before 6.00, bf16 last
             idx_2 = result.index("2.00 bpw")
             idx_6 = result.index("6.00 bpw")
-            idx_fp = result.index("FP16")
+            idx_bf = result.index("BF16")
             self.assertLess(idx_2, idx_6)
-            self.assertLess(idx_6, idx_fp)
+            self.assertLess(idx_6, idx_bf)
 
     def test_four_columns_per_row(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -180,14 +180,14 @@ class ReadmeCatbenchIntegrationTests(unittest.TestCase):
             catdir = model_dir / "catbench"
             catdir.mkdir()
             (catdir / "4.00bpw.svg").write_text('<svg xmlns="test"><circle/></svg>')
-            (catdir / "fp16.svg").write_text('<svg xmlns="test"><rect/></svg>')
+            (catdir / "bf16.svg").write_text('<svg xmlns="test"><rect/></svg>')
 
             run_readme(str(model_dir), template_name="basic", interactive=False, include_catbench=True)
 
             readme = (model_dir / "README.md").read_text()
             self.assertIn("SVG Catbench", readme)
             self.assertIn("catbench/4.00bpw.svg", readme)
-            self.assertIn("catbench/fp16.svg", readme)
+            self.assertIn("catbench/bf16.svg", readme)
 
     def test_readme_no_catbench_when_disabled(self):
         with tempfile.TemporaryDirectory() as tmp:

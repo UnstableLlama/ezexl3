@@ -170,7 +170,7 @@ def run_catbench(args) -> list:
 
     # Determine file naming
     if label == "bf16" or label == "base":
-        file_prefix = "fp16"
+        file_prefix = "bf16"
     else:
         try:
             val = float(label)
