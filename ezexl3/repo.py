@@ -1327,7 +1327,14 @@ def run_measure_stage(
     total_jobs = len(kl_tasks) + len(ppl_tasks) + len(catbench_tasks) + len(multi_gpu_catbench_tasks)
 
     if total_jobs == 0:
-        print("✅ All requested measurement phases already exist. Nothing to do.")
+        # Even with no inference jobs, regenerate SVGs from existing TXT files
+        if catbench_n > 0:
+            catbench_out_dir = os.path.join(model_dir, "catbench")
+            print("🎨 Generating SVGs from catbench results...")
+            n_svgs = _catbench_generate_svgs(catbench_out_dir)
+            print(f"✅ {n_svgs} SVGs generated.")
+        else:
+            print("✅ All requested measurement phases already exist. Nothing to do.")
         return 0
 
     n_kl = len(kl_tasks)
