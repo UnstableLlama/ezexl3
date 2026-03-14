@@ -40,7 +40,7 @@ def check_vram_fit(model_dir: str, device: int, headroom_gib: float = 2.0):
 
     model_gib = _safetensors_size_gib(model_dir)
     props = torch.cuda.get_device_properties(device)
-    total_gib = props.total_mem / (1024 ** 3)
+    total_gib = props.total_memory / (1024 ** 3)
     allocated_gib = torch.cuda.memory_allocated(device) / (1024 ** 3)
     available_gib = total_gib - allocated_gib
 
@@ -59,7 +59,7 @@ def check_multi_gpu_fit(model_dir: str, devices: list, headroom_gib: float = 2.0
     total_available = 0.0
     for d in devices:
         props = torch.cuda.get_device_properties(d)
-        total_gib = props.total_mem / (1024 ** 3)
+        total_gib = props.total_memory / (1024 ** 3)
         allocated_gib = torch.cuda.memory_allocated(d) / (1024 ** 3)
         total_available += total_gib - allocated_gib
 
