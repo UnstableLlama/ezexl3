@@ -38,7 +38,7 @@ pip install -e .
 ### 1. Quantize a full repository
 Run the entire pipeline (quantize -> measure -> README):
 ```bash
-ezexl3 repo -m /path/to/base_model -b 2,3,4,5,6 -d 0,1 -t basic
+ezexl3 repo -m /path/to/base_model -b 2,2.5,3,4,5,6 -d 0,1 -t basic
 ```
 Then ezexl3 automatically:
 
@@ -52,7 +52,7 @@ Then ezexl3 automatically:
 If you only want to run specific stages:
 ```bash
 # Quantize only
-ezexl3 quantize -m /path/to/base_model -b 2,3,4,5,6 -d 0,1
+ezexl3 quantize -m /path/to/base_model -b 2,2.5,3,4,5,6 -d 0,1
 
 # Quantize with optimized target (automatically ensures integer neighbors)
 ezexl3 repo -m /path/to/base_model -b 4.07 -d 0
@@ -67,7 +67,8 @@ ezexl3 readme -m /path/to/base_model -t fire
 ```
 
 ### 3. Template System
-You can customize the generated README by providing a template name via `--template` or `-t`. Templates are stored in the `templates/` directory.
+You can customize the generated README by providing a template name via `--template` or `-t`.
+Templates are stored in the `/ezexl3/templates/` directory.
 
 The system is flexible with naming. For example, `-t fire` will search for:
 - `templates/fire.md`
