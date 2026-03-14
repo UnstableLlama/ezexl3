@@ -110,19 +110,39 @@ def _catbench_file_prefix(label: str) -> str:
 def _catbench_has_output(catbench_dir: str, file_prefix: str) -> bool:
     """Check if catbench already produced output for *file_prefix*.
 
-    Returns True if a canonical SVG or any numbered sample file
-    (.svg or .txt) exists, indicating the model already ran.
+    Returns True if a canonical SVG exists, or if .txt files exist
+    (after attempting re-extraction with latest logic).
     """
     if not os.path.isdir(catbench_dir):
         return False
-    # Canonical SVG
+    # Canonical SVG already exists
     if os.path.exists(os.path.join(catbench_dir, f"{file_prefix}.svg")):
         return True
-    # Any numbered sample file (e.g. bf16_1.svg, bf16_1.txt)
-    for fn in os.listdir(catbench_dir):
-        if fn.startswith(f"{file_prefix}_") and (fn.endswith(".svg") or fn.endswith(".txt")):
-            return True
-    return False
+    # Try re-extracting any .txt files with latest extraction logic
+    from ezexl3.catbench import extract_svg
+    import shutil
+    canonical_path = os.path.join(catbench_dir, f"{file_prefix}.svg")
+    has_any = False
+    for fn in sorted(os.listdir(catbench_dir)):
+        if fn.startswith(f"{file_prefix}_") and fn.endswith(".txt"):
+            has_any = True
+            txt_path = os.path.join(catbench_dir, fn)
+            svg_path = txt_path.replace(".txt", ".svg")
+            if os.path.exists(svg_path):
+                continue
+            with open(txt_path, "r") as f:
+                raw = f.read()
+            svg_content = extract_svg(raw)
+            if svg_content:
+                with open(svg_path, "w") as f:
+                    f.write(svg_content)
+                os.remove(txt_path)
+                print(f"  🔄 Re-extracted SVG from {fn} ({len(svg_content)} chars)")
+                if not os.path.exists(canonical_path):
+                    shutil.copy2(svg_path, canonical_path)
+        elif fn.startswith(f"{file_prefix}_") and fn.endswith(".svg"):
+            has_any = True
+    return has_any
 
 
 def _resolve_exllamav3_util_scripts() -> Tuple[str, str]:
