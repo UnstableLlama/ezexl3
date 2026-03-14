@@ -6,7 +6,7 @@ TEMPLATES = [
     "ezexl3/templates/basicTemplateREADME.md",
     "ezexl3/templates/fireTemplateREADME.md",
     "ezexl3/templates/greenTemplateREADME.md",
-    "ezexl3/templates/forestTemplateREADME.md",
+    "ezexl3/templates/punkTemplateREADME.md",
 ]
 
 
@@ -36,10 +36,15 @@ class TemplateGeometryContractTests(unittest.TestCase):
                 self.assertIn(token, content, f"{template_path} missing {token}")
 
     def test_table_headers_keep_expected_order(self):
-        expected_headers = ["REVISION", "GiB", "KL DIV", "PPL"]
+        # Standard templates use uppercase headers; punk uses bracketed style
+        header_variants = {
+            "ezexl3/templates/punkTemplateREADME.md": ["[Revision]", "[GiB]", "[KL Div]", "[PPL]"],
+        }
+        default_headers = ["REVISION", "GiB", "KL DIV", "PPL"]
         for template_path in TEMPLATES:
             content = Path(template_path).read_text()
-            positions = [content.find(f"<th>{header}</th>") for header in expected_headers]
+            headers = header_variants.get(template_path, default_headers)
+            positions = [content.find(f"<th>{header}</th>") for header in headers]
             self.assertTrue(all(pos != -1 for pos in positions), template_path)
             self.assertEqual(positions, sorted(positions), template_path)
 

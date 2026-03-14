@@ -176,6 +176,8 @@ def build_parser() -> argparse.ArgumentParser:
         p_sub.add_argument("--no-measurement", "-nm", action="store_true", help="Skip KL/PPL measurements (also disables README graph and KL/PPL table columns)")
         p_sub.add_argument("--template", "-t", help="README template name (e.g., 'fire', 'basic')")
         p_sub.add_argument("-l", "--layers", type=int, default=2, choices=[1, 2, 3], help="Layers used by optimized comparative measure stage (1-3, default: 2)")
+        p_sub.add_argument("-cb", "--catbench", type=int, default=0, nargs="?", const=3,
+                           help="Run SVG Catbench with N samples per model (default: 3 when flag present)")
 
     # --- repo (main command) ---
     repo = sub.add_parser("repo", help="Generate an EXL3 repo (quantize -> measure -> README)")
@@ -205,6 +207,8 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("-d", "--devices", default="0", help="CUDA devices for measurement. Example: -d 0,1")
     m.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
     m.add_argument("--no-cleanup", "-nc", action="store_true", help="Keep temporary shard CSVs and logs")
+    m.add_argument("-cb", "--catbench", type=int, default=0, nargs="?", const=3,
+                   help="Run SVG Catbench with N samples per model (default: 3 when flag present)")
     m.add_argument(
         "--exllamav3-root",
         help="[DEPRECATED] No longer needed, bundled model_diff.py is used.",
@@ -285,6 +289,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     include_measurements=(not args.no_measurement),
                     template=args.template,
                     optimized_measure_layers=layers,
+                    catbench_n=getattr(args, "catbench", 0) or 0,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
@@ -364,6 +369,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     devices=devices_i,
                     write_logs=(not args.no_logs),
                     measure_args=pt.measure_args,
+                    catbench_n=getattr(args, "catbench", 0) or 0,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)

@@ -99,6 +99,60 @@ def _discover_rows_without_measurements(model_dir: str, bpws_hint: Optional[List
     return rows
 
 
+def _build_catbench_grid(model_dir: str) -> str:
+    """Build an HTML table grid of catbench SVG thumbnails.
+
+    Scans {model_dir}/catbench/ for canonical SVGs (e.g. 2.00bpw.svg, bf16.svg)
+    and arranges them in rows of 4, matching turboderp's format.
+    """
+    catbench_dir = os.path.join(model_dir, "catbench")
+    if not os.path.isdir(catbench_dir):
+        return ""
+
+    # Find canonical SVGs (not _1, _2 variants)
+    svgs: List[tuple] = []  # (sort_key, label, filename)
+    for fn in os.listdir(catbench_dir):
+        if not fn.endswith(".svg"):
+            continue
+        # Skip numbered variants like 2.00bpw_1.svg
+        if re.search(r"_\d+\.svg$", fn):
+            continue
+
+        if fn == "bf16.svg":
+            svgs.append((9999.0, "BF16", fn))
+        elif fn.endswith("bpw.svg"):
+            bpw_str = fn.replace("bpw.svg", "")
+            try:
+                val = float(bpw_str)
+                svgs.append((val, f"{val:.2f} bpw", fn))
+            except ValueError:
+                continue
+
+    if not svgs:
+        return ""
+
+    svgs.sort(key=lambda x: x[0])
+
+    cols_per_row = 4
+    rows_html = []
+
+    for i in range(0, len(svgs), cols_per_row):
+        cells = []
+        for _, label, fn in svgs[i:i + cols_per_row]:
+            rel_path = f"catbench/{fn}"
+            cells.append(
+                f'    <td align="center">\n'
+                f'      <a href="{rel_path}">\n'
+                f'        <img src="{rel_path}" alt="{label}" width="160">\n'
+                f'      </a>\n'
+                f'      <div>{label}</div>\n'
+                f'    </td>'
+            )
+        rows_html.append("  <tr>\n" + "\n".join(cells) + "\n  </tr>")
+
+    return '<table align="center">\n' + "\n".join(rows_html) + "\n</table>"
+
+
 def run_readme(
     model_dir: str,
     template_name: Optional[str] = None,
@@ -106,6 +160,7 @@ def run_readme(
     include_graph: bool = True,
     include_measurements: bool = True,
     bpws_hint: Optional[List[str]] = None,
+    include_catbench: bool = False,
 ) -> None:
     """
     Generate README.md for the model repository based on measurement CSV and template.
@@ -287,6 +342,28 @@ def run_readme(
 
     default_rev = first_bpw or formatted_labels.get("bf16", "REVISION")
     template = template.replace("{{DEFAULT_REVISION}}", default_rev)
+
+    # Fill or remove the SVG Catbench panel (defined in templates)
+    if include_catbench:
+        catbench_html = _build_catbench_grid(model_dir)
+        if catbench_html:
+            template = template.replace("{{CATBENCH_CONTENT}}", catbench_html)
+        else:
+            # No SVGs found – remove the entire catbench panel
+            template = re.sub(
+                r'\s*<div class="content-panel">\s*'
+                r'<div class="panel-title">SVG Catbench</div>.*?'
+                r'\{\{CATBENCH_CONTENT\}\}.*?</div>\s*</div>',
+                "", template, flags=re.DOTALL,
+            )
+    else:
+        # -cb not requested – remove the entire catbench panel
+        template = re.sub(
+            r'\s*<div class="content-panel">\s*'
+            r'<div class="panel-title">SVG Catbench</div>.*?'
+            r'\{\{CATBENCH_CONTENT\}\}.*?</div>\s*</div>',
+            "", template, flags=re.DOTALL,
+        )
 
     readme_path = os.path.join(model_dir, "README.md")
     with open(readme_path, "w") as f:

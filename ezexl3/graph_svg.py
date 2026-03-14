@@ -97,6 +97,17 @@ def make_plot(bpw, kld, ppl, gib, title, outfile, add_checks=True):
     fig.patch.set_facecolor(bg)
     ax.set_facecolor(bg)
 
+    # Black outline behind the cyan KL line
+    ax.plot(
+        bpw,
+        kld,
+        color=bg,
+        linewidth=5.0,
+        marker="o",
+        markersize=10,
+        markerfacecolor=bg,
+        markeredgecolor=bg,
+    )
     l1, = ax.plot(
         bpw,
         kld,
@@ -124,6 +135,8 @@ def make_plot(bpw, kld, ppl, gib, title, outfile, add_checks=True):
 
     axr = ax.twinx()
     axr.set_facecolor("none")
+    ax.set_zorder(axr.get_zorder() + 1)
+    ax.patch.set_visible(False)
     l2, = axr.plot(
         bpw,
         ppl,
