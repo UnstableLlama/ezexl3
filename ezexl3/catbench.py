@@ -74,6 +74,14 @@ def check_multi_gpu_fit(model_dir: str, devices: list, headroom_gib: float = 2.0
 
 _SVG_BLOCK_RE = re.compile(r"(<svg[\s\S]*?</svg>)", re.IGNORECASE)
 _CODE_BLOCK_RE = re.compile(r"```(?:python)?\s*\n([\s\S]*?)```")
+_THINK_BLOCK_RE = re.compile(r"<think>[\s\S]*?</think>", re.IGNORECASE)
+
+
+def _clean_response(text: str) -> str:
+    """Strip think tags and code fences from model response."""
+    text = _THINK_BLOCK_RE.sub("", text)
+    text = text.replace("```python", "").replace("```", "")
+    return text.strip()
 
 
 def extract_svg(text: str) -> str | None:
@@ -243,8 +251,9 @@ def run_catbench(args) -> list:
 
         response = "".join(response_chunks)
 
-        # Extract SVG
-        svg_content = extract_svg(response)
+        # Clean up model response and extract SVG
+        cleaned = _clean_response(response)
+        svg_content = extract_svg(cleaned)
         if svg_content:
             with open(sample_path, "w") as f:
                 f.write(svg_content)
