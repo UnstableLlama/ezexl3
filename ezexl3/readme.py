@@ -350,7 +350,7 @@ def run_readme(
             catbench_section = (
                 '\n  <div class="content-panel">\n'
                 '    <div class="panel-title">SVG Catbench</div>\n'
-                '    <div class="panel-body" style="display:flex;justify-content:center;">\n'
+                '    <div class="panel-body repo-data-body repo-data-panel">\n'
                 f"      {catbench_html}\n"
                 "    </div>\n"
                 "  </div>\n"
