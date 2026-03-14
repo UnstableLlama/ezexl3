@@ -1256,8 +1256,14 @@ def run_measure_stage(
     # Per-field checkpointing: read merged CSV and decide which phases to skip.
     existing_rows = _read_csv_rows(out_csv)
 
+    print("\n============================================================")
+    print("📊 Measurement Phase")
+    print("============================================================")
+
     kl_tasks: List[dict] = []
     ppl_tasks: List[dict] = []
+    skipped_kl: List[str] = []
+    skipped_ppl: List[str] = []
 
     for bpw in bpws:
         label = _task_to_csv_label(bpw)
@@ -1268,8 +1274,12 @@ def run_measure_stage(
         # base never needs KL (hardcoded to 0.0)
         if bpw != "base" and not has_kl:
             kl_tasks.append({"label": bpw, "phase": "kl"})
+        elif bpw != "base":
+            skipped_kl.append(label)
         if not has_ppl:
             ppl_tasks.append({"label": bpw, "phase": "ppl"})
+        else:
+            skipped_ppl.append(label)
 
     # Always include base PPL if not yet measured
     base_label = "bf16"
@@ -1277,10 +1287,19 @@ def run_measure_stage(
     if not bool((base_row.get("PPL r-100") or "").strip()):
         if not any(t["label"] == "base" for t in ppl_tasks):
             ppl_tasks.append({"label": "base", "phase": "ppl"})
+    else:
+        if base_label not in skipped_ppl:
+            skipped_ppl.append(base_label)
+
+    if skipped_kl:
+        print(f"🟦 skipping KL divergence: {', '.join(skipped_kl)} (already measured)")
+    if skipped_ppl:
+        print(f"🟦 skipping perplexity: {', '.join(skipped_ppl)} (already measured)")
 
     # --- Catbench tasks ---
     catbench_tasks: List[dict] = []
     multi_gpu_catbench_tasks: List[dict] = []
+    skipped_catbench: List[str] = []
 
     if catbench_n > 0:
         catbench_out_dir = os.path.join(model_dir, "catbench")
@@ -1293,12 +1312,19 @@ def run_measure_stage(
                 catbench_tasks.append({
                     "label": bpw, "phase": "catbench", "n_samples": catbench_n,
                 })
+            else:
+                skipped_catbench.append(label)
 
         # Include bf16 baseline
         if not _catbench_has_output(catbench_out_dir, "bf16", catbench_n):
             catbench_tasks.append({
                 "label": "base", "phase": "catbench", "n_samples": catbench_n,
             })
+        else:
+            skipped_catbench.append("bf16")
+
+        if skipped_catbench:
+            print(f"🟦 skipping catbench: {', '.join(skipped_catbench)} (txt samples exist)")
 
         # VRAM pre-flight: sort into multi-GPU vs single-GPU
         if len(devices) > 1 and catbench_tasks:
@@ -1340,9 +1366,6 @@ def run_measure_stage(
     n_kl = len(kl_tasks)
     n_ppl = len(ppl_tasks)
     n_cat = len(catbench_tasks) + len(multi_gpu_catbench_tasks)
-
-    if n_kl < len(bpws) or n_ppl < len(bpws) + 1:
-        print(f"ℹ️ Measurement checkpoint: {n_kl} KL + {n_ppl} PPL jobs remaining.")
 
     # --- Run multi-GPU catbench jobs first (sequentially, all GPUs) ---
     if multi_gpu_catbench_tasks:
