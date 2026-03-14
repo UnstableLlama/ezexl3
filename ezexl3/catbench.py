@@ -10,9 +10,6 @@ import subprocess
 import tempfile
 import time
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
 CATBENCH_PROMPT = "Write a python script that draws a cute kitten using matplotlib."
 DEFAULT_MAX_NEW_TOKENS = 4096
 
@@ -153,7 +150,9 @@ def _run_matplotlib_code(code: str) -> str | None:
             if result.returncode == 0 and os.path.exists(svg_path):
                 with open(svg_path, "r") as f:
                     return f.read()
-        except (subprocess.TimeoutExpired, Exception):
+        except subprocess.TimeoutExpired:
+            pass
+        except OSError:
             pass
 
     return None
@@ -175,6 +174,8 @@ def run_catbench(args) -> list:
 
     Returns list of saved .txt paths.
     """
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
     import torch
     from exllamav3 import Generator, Job, model_init
     from exllamav3.util.memory import free_mem
@@ -238,6 +239,7 @@ def run_catbench(args) -> list:
 
         # Skip if .txt already exists (inference already done for this sample)
         if os.path.exists(txt_path):
+            saved_paths.append(txt_path)
             print(f" -- Sample {i}: already exists, skipping", flush=True)
             print(f"CATBENCH_SAMPLE_DONE {i}/{n_samples}", flush=True)
             continue
@@ -280,6 +282,7 @@ def run_catbench(args) -> list:
         # Save raw response as .txt — SVG extraction happens later in batch
         with open(txt_path, "w") as f:
             f.write(response)
+        saved_paths.append(txt_path)
         print(f" -- Sample {i}: saved .txt ({len(response)} chars)", flush=True)
 
         print(f"CATBENCH_SAMPLE_DONE {i}/{n_samples}", flush=True)
@@ -297,6 +300,7 @@ def run_catbench(args) -> list:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     from exllamav3 import model_init
 
     parser = argparse.ArgumentParser(description="Run SVG Catbench on a model")

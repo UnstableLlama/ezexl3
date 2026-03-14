@@ -344,26 +344,19 @@ def run_readme(
     template = template.replace("{{DEFAULT_REVISION}}", default_rev)
 
     # Fill or remove the SVG Catbench panel (defined in templates)
+    _catbench_panel_re = (
+        r'\s*<div class="content-panel">\s*'
+        r'<div class="panel-title">SVG Catbench</div>.*?'
+        r'\{\{CATBENCH_CONTENT\}\}.*?</div>\s*</div>'
+    )
     if include_catbench:
         catbench_html = _build_catbench_grid(model_dir)
         if catbench_html:
             template = template.replace("{{CATBENCH_CONTENT}}", catbench_html)
         else:
-            # No SVGs found – remove the entire catbench panel
-            template = re.sub(
-                r'\s*<div class="content-panel">\s*'
-                r'<div class="panel-title">SVG Catbench</div>.*?'
-                r'\{\{CATBENCH_CONTENT\}\}.*?</div>\s*</div>',
-                "", template, flags=re.DOTALL,
-            )
+            template = re.sub(_catbench_panel_re, "", template, flags=re.DOTALL)
     else:
-        # -cb not requested – remove the entire catbench panel
-        template = re.sub(
-            r'\s*<div class="content-panel">\s*'
-            r'<div class="panel-title">SVG Catbench</div>.*?'
-            r'\{\{CATBENCH_CONTENT\}\}.*?</div>\s*</div>',
-            "", template, flags=re.DOTALL,
-        )
+        template = re.sub(_catbench_panel_re, "", template, flags=re.DOTALL)
 
     readme_path = os.path.join(model_dir, "README.md")
     with open(readme_path, "w") as f:
