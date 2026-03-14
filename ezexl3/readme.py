@@ -343,30 +343,27 @@ def run_readme(
     default_rev = first_bpw or formatted_labels.get("bf16", "REVISION")
     template = template.replace("{{DEFAULT_REVISION}}", default_rev)
 
-    # Insert catbench grid if available
+    # Fill or remove the SVG Catbench panel (defined in templates)
     if include_catbench:
         catbench_html = _build_catbench_grid(model_dir)
         if catbench_html:
-            catbench_section = (
-                '\n  <div class="content-panel">\n'
-                '    <div class="panel-title">SVG Catbench</div>\n'
-                '    <div class="panel-body repo-data-body repo-data-panel">\n'
-                f"      {catbench_html}\n"
-                "    </div>\n"
-                "  </div>\n"
+            template = template.replace("{{CATBENCH_CONTENT}}", catbench_html)
+        else:
+            # No SVGs found – remove the entire catbench panel
+            template = re.sub(
+                r'\s*<div class="content-panel">\s*'
+                r'<div class="panel-title">SVG Catbench</div>.*?'
+                r'\{\{CATBENCH_CONTENT\}\}.*?</div>\s*</div>',
+                "", template, flags=re.DOTALL,
             )
-            # Insert before the first CLI Download panel, or append before end
-            if '<div class="panel-title">CLI Download</div>' in template:
-                idx = template.index('<div class="panel-title">CLI Download</div>')
-                # Walk back to find the opening content-panel div
-                panel_start = template.rfind('<div class="content-panel">', 0, idx)
-                if panel_start >= 0:
-                    template = template[:panel_start] + catbench_section + "\n  " + template[panel_start:]
-                else:
-                    template += catbench_section
-            else:
-                # Append before closing tags or at end
-                template += catbench_section
+    else:
+        # -cb not requested – remove the entire catbench panel
+        template = re.sub(
+            r'\s*<div class="content-panel">\s*'
+            r'<div class="panel-title">SVG Catbench</div>.*?'
+            r'\{\{CATBENCH_CONTENT\}\}.*?</div>\s*</div>',
+            "", template, flags=re.DOTALL,
+        )
 
     readme_path = os.path.join(model_dir, "README.md")
     with open(readme_path, "w") as f:
