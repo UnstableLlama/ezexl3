@@ -820,9 +820,11 @@ def _run_catbench_subprocess(
     buf_lines: List[str] = []
     last_send: float = 0.0
     current_sample = ""
+    model_loaded = False
+    load_lines = 0
 
-    # Show loading progress bar
-    bar = _build_synthetic_bar(50)
+    # Show initial loading progress bar
+    bar = _build_synthetic_bar(0)
     results.put({
         "event": "progress",
         "device": device,
@@ -837,6 +839,7 @@ def _run_catbench_subprocess(
 
         # Model loaded → 100% bar
         if _CATBENCH_LOADED_RE.search(line):
+            model_loaded = True
             bar = _build_synthetic_bar(100)
             results.put({
                 "event": "progress",
@@ -844,6 +847,21 @@ def _run_catbench_subprocess(
                 "text": f"{phase_label} {bar} (loaded)",
             })
             last_send = time.monotonic()
+            continue
+
+        # During loading phase, increment bar for each output line
+        if not model_loaded:
+            load_lines += 1
+            pct = min(95, load_lines * 3)
+            now = time.monotonic()
+            if now - last_send >= 0.3:
+                bar = _build_synthetic_bar(pct)
+                results.put({
+                    "event": "progress",
+                    "device": device,
+                    "text": f"{phase_label} {bar} (loading)",
+                })
+                last_send = now
             continue
 
         # Sample start → update current sample label
