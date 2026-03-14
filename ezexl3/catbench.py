@@ -160,61 +160,20 @@ def _run_matplotlib_code(code: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Retry extraction on saved .txt files
-# ---------------------------------------------------------------------------
-
-
-def _retry_txt_extraction(
-    output_dir: str,
-    file_prefix: str,
-    n_samples: int,
-    saved_paths: list,
-) -> list:
-    """Re-read .txt files and retry SVG extraction.
-
-    Creates SVGs alongside .txt files — .txt files are never deleted.
-    """
-    for i in range(1, n_samples + 1):
-        if i == 1:
-            txt_path = os.path.join(output_dir, f"{file_prefix}.txt")
-            svg_path = os.path.join(output_dir, f"{file_prefix}.svg")
-        else:
-            txt_path = os.path.join(output_dir, f"{file_prefix}_{i - 1}.txt")
-            svg_path = os.path.join(output_dir, f"{file_prefix}_{i - 1}.svg")
-
-        if os.path.exists(svg_path):
-            continue
-        if not os.path.exists(txt_path):
-            continue
-
-        with open(txt_path, "r") as f:
-            raw = f.read()
-
-        svg_content = extract_svg(raw)
-        if svg_content:
-            with open(svg_path, "w") as f:
-                f.write(svg_content)
-            saved_paths.append(svg_path)
-            print(f" -- Retry sample {i}: SVG extracted ({len(svg_content)} chars)", flush=True)
-
-    return saved_paths
-
-
-# ---------------------------------------------------------------------------
 # Core catbench runner
 # ---------------------------------------------------------------------------
 
 
 def run_catbench(args) -> list:
-    """Run catbench against a single model, producing N SVG samples.
+    """Run catbench against a single model, saving N raw .txt samples.
 
-    Uses exllamav3's model_init for model loading (same as chat.py).
+    SVG extraction is handled later in batch by the orchestrator.
 
     Prints progress markers for the parent process to parse:
-      CATBENCH_MODEL_LOADED   — model loaded, 80% of work done
+      CATBENCH_MODEL_LOADED   — model loaded
       CATBENCH_SAMPLE_DONE i/n — sample i of n complete
 
-    Returns list of paths to saved SVGs.
+    Returns list of saved .txt paths.
     """
     import torch
     from exllamav3 import Generator, Job, model_init
@@ -274,16 +233,12 @@ def run_catbench(args) -> list:
         # First sample is canonical (no suffix); subsequent get _1, _2, ...
         if i == 1:
             txt_path = os.path.join(output_dir, f"{file_prefix}.txt")
-            svg_path = os.path.join(output_dir, f"{file_prefix}.svg")
         else:
             txt_path = os.path.join(output_dir, f"{file_prefix}_{i - 1}.txt")
-            svg_path = os.path.join(output_dir, f"{file_prefix}_{i - 1}.svg")
 
         # Skip if .txt already exists (inference already done for this sample)
         if os.path.exists(txt_path):
             print(f" -- Sample {i}: already exists, skipping", flush=True)
-            if os.path.exists(svg_path):
-                saved_paths.append(svg_path)
             print(f"CATBENCH_SAMPLE_DONE {i}/{n_samples}", flush=True)
             continue
 
@@ -322,19 +277,10 @@ def run_catbench(args) -> list:
 
         response = "".join(response_chunks)
 
-        # Always save raw response as .txt
+        # Save raw response as .txt — SVG extraction happens later in batch
         with open(txt_path, "w") as f:
             f.write(response)
-
-        # Try to extract SVG alongside the .txt
-        svg_content = extract_svg(response)
-        if svg_content:
-            with open(svg_path, "w") as f:
-                f.write(svg_content)
-            saved_paths.append(svg_path)
-            print(f" -- Sample {i}: SVG saved ({len(svg_content)} chars)", flush=True)
-        else:
-            print(f" -- Sample {i}: No SVG extracted", flush=True)
+        print(f" -- Sample {i}: saved .txt ({len(response)} chars)", flush=True)
 
         print(f"CATBENCH_SAMPLE_DONE {i}/{n_samples}", flush=True)
 
@@ -342,15 +288,7 @@ def run_catbench(args) -> list:
     del generator, cache, model, config
     free_mem()
 
-    # Retry extraction on any .txt files (current + pre-existing)
-    saved_paths = _retry_txt_extraction(output_dir, file_prefix, n_samples,
-                                        saved_paths)
-
-    if saved_paths:
-        print(f" -- Catbench complete: {len(saved_paths)}/{n_samples} SVGs saved", flush=True)
-    else:
-        print(f" -- Catbench complete: no SVGs extracted", flush=True)
-
+    print(f" -- Catbench complete: {n_samples} samples saved", flush=True)
     return saved_paths
 
 

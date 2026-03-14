@@ -109,41 +109,92 @@ def _catbench_file_prefix(label: str) -> str:
 
 
 def _catbench_has_output(catbench_dir: str, file_prefix: str, n_samples: int) -> bool:
-    """Check if catbench has all N samples for *file_prefix*.
-
-    Returns True only when all N .txt files exist (every sample always
-    produces a .txt).  Also attempts SVG re-extraction for any .txt
-    files that don't yet have a corresponding .svg.
+    """Check if catbench has all N .txt samples for *file_prefix*.
 
     File naming convention:
-      sample 1: {prefix}.txt + {prefix}.svg  (canonical)
-      sample 2: {prefix}_1.txt + {prefix}_1.svg
-      sample 3: {prefix}_2.txt + {prefix}_2.svg
+      sample 1: {prefix}.txt  (canonical)
+      sample 2: {prefix}_1.txt
+      sample 3: {prefix}_2.txt
     """
     if not os.path.isdir(catbench_dir):
         return False
-    from ezexl3.catbench import extract_svg
     count = 0
     for i in range(1, n_samples + 1):
         if i == 1:
             txt = os.path.join(catbench_dir, f"{file_prefix}.txt")
-            svg = os.path.join(catbench_dir, f"{file_prefix}.svg")
         else:
             txt = os.path.join(catbench_dir, f"{file_prefix}_{i - 1}.txt")
-            svg = os.path.join(catbench_dir, f"{file_prefix}_{i - 1}.svg")
-        if not os.path.exists(txt):
-            continue
-        count += 1
-        # Try SVG re-extraction if .svg is missing
-        if not os.path.exists(svg):
-            with open(txt, "r") as f:
-                raw = f.read()
-            svg_content = extract_svg(raw)
-            if svg_content:
-                with open(svg, "w") as f:
-                    f.write(svg_content)
-                print(f"  🔄 Re-extracted SVG from {os.path.basename(txt)} ({len(svg_content)} chars)")
+        if os.path.exists(txt):
+            count += 1
     return count >= n_samples
+
+
+def _catbench_generate_svgs(catbench_dir: str) -> int:
+    """Batch-extract SVGs from all .txt files in catbench_dir.
+
+    Groups .txt files by prefix, extracts SVGs, and names them
+    sequentially based on successful extractions:
+      first success  → {prefix}.svg
+      second success → {prefix}_1.svg
+      third success  → {prefix}_2.svg
+      ...
+
+    Any pre-existing .svg files for a prefix are removed first so
+    numbering is always consistent.
+
+    Returns total number of SVGs generated.
+    """
+    if not os.path.isdir(catbench_dir):
+        return 0
+
+    from ezexl3.catbench import extract_svg
+
+    # Group txt files by prefix: "2.00bpw" → ["2.00bpw.txt", "2.00bpw_1.txt", ...]
+    import re as _re
+    prefix_txts: Dict[str, List[str]] = {}
+    for fn in sorted(os.listdir(catbench_dir)):
+        if not fn.endswith(".txt"):
+            continue
+        # Match {prefix}.txt or {prefix}_{N}.txt
+        m = _re.match(r"^(.+?)(?:_\d+)?\.txt$", fn)
+        if m:
+            prefix = m.group(1)
+            prefix_txts.setdefault(prefix, []).append(fn)
+
+    total_svgs = 0
+    for prefix, txt_files in sorted(prefix_txts.items()):
+        # Remove any existing SVGs for this prefix to ensure clean numbering
+        for fn in os.listdir(catbench_dir):
+            if fn.endswith(".svg") and (fn == f"{prefix}.svg" or
+                    _re.match(rf"^{_re.escape(prefix)}_\d+\.svg$", fn)):
+                os.remove(os.path.join(catbench_dir, fn))
+
+        svg_count = 0
+        for txt_fn in txt_files:
+            txt_path = os.path.join(catbench_dir, txt_fn)
+            with open(txt_path, "r") as f:
+                raw = f.read()
+
+            svg_content = extract_svg(raw)
+            if not svg_content:
+                print(f"  ⚠️  No SVG extracted from {txt_fn}")
+                continue
+
+            # First successful SVG: {prefix}.svg, then {prefix}_1.svg, etc.
+            if svg_count == 0:
+                svg_fn = f"{prefix}.svg"
+            else:
+                svg_fn = f"{prefix}_{svg_count}.svg"
+
+            svg_path = os.path.join(catbench_dir, svg_fn)
+            with open(svg_path, "w") as f:
+                f.write(svg_content)
+            print(f"  🎨 {txt_fn} → {svg_fn} ({len(svg_content)} chars)")
+            svg_count += 1
+
+        total_svgs += svg_count
+
+    return total_svgs
 
 
 def _resolve_exllamav3_util_scripts() -> Tuple[str, str]:
@@ -1376,7 +1427,10 @@ def run_measure_stage(
     remaining_jobs = len(kl_tasks) + len(ppl_tasks) + len(catbench_tasks)
     if remaining_jobs == 0:
         if multi_gpu_catbench_tasks:
-            print("✅ All catbench jobs complete (multi-GPU only).")
+            catbench_out_dir = os.path.join(model_dir, "catbench")
+            print("\n🎨 Generating SVGs from catbench results...")
+            n_svgs = _catbench_generate_svgs(catbench_out_dir)
+            print(f"✅ All catbench jobs complete: {n_svgs} SVGs generated.")
         return 0
 
     # Queue: all KL first, then all PPL, then catbench, then sentinels
@@ -1477,6 +1531,13 @@ def run_measure_stage(
 
     # Final merge after all workers exit
     _merge_csvs(out_csv, shard_csvs)
+
+    # Batch SVG generation after all catbench jobs
+    if catbench_n > 0:
+        catbench_out_dir = os.path.join(model_dir, "catbench")
+        print("\n🎨 Generating SVGs from catbench results...")
+        n_svgs = _catbench_generate_svgs(catbench_out_dir)
+        print(f"✅ Catbench: {n_svgs} SVGs generated.")
 
     if failures:
         print(f"⚠️ Measurement stage completed with {failures} failure(s). Merged CSV: {out_csv}")
