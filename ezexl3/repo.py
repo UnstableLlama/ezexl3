@@ -99,12 +99,30 @@ def _plan_repo_bpws(bpws: List[str]) -> Dict[str, List[str]]:
 def _catbench_file_prefix(label: str) -> str:
     """Convert a CSV label to a catbench SVG filename prefix."""
     if label in ("bf16", "base"):
-        return "fp16"
+        return "bf16"
     try:
         val = float(label)
         return f"{val:.2f}bpw"
     except (ValueError, TypeError):
         return label
+
+
+def _catbench_has_output(catbench_dir: str, file_prefix: str) -> bool:
+    """Check if catbench already produced output for *file_prefix*.
+
+    Returns True if a canonical SVG or any numbered sample file
+    (.svg or .txt) exists, indicating the model already ran.
+    """
+    if not os.path.isdir(catbench_dir):
+        return False
+    # Canonical SVG
+    if os.path.exists(os.path.join(catbench_dir, f"{file_prefix}.svg")):
+        return True
+    # Any numbered sample file (e.g. bf16_1.svg, bf16_1.txt)
+    for fn in os.listdir(catbench_dir):
+        if fn.startswith(f"{file_prefix}_") and (fn.endswith(".svg") or fn.endswith(".txt")):
+            return True
+    return False
 
 
 def _resolve_exllamav3_util_scripts() -> Tuple[str, str]:
@@ -1199,15 +1217,13 @@ def run_measure_stage(
         for bpw in bpws:
             label = _task_to_csv_label(bpw)
             file_prefix = _catbench_file_prefix(label)
-            canonical = os.path.join(catbench_out_dir, f"{file_prefix}.svg")
-            if not os.path.exists(canonical):
+            if not _catbench_has_output(catbench_out_dir, file_prefix):
                 catbench_tasks.append({
                     "label": bpw, "phase": "catbench", "n_samples": catbench_n,
                 })
 
-        # Include FP16 baseline
-        fp16_canonical = os.path.join(catbench_out_dir, "fp16.svg")
-        if not os.path.exists(fp16_canonical):
+        # Include bf16 baseline
+        if not _catbench_has_output(catbench_out_dir, "bf16"):
             catbench_tasks.append({
                 "label": "base", "phase": "catbench", "n_samples": catbench_n,
             })
