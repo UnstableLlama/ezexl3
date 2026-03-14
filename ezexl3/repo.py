@@ -97,6 +97,9 @@ def _plan_repo_bpws(bpws: List[str]) -> Dict[str, List[str]]:
     }
 
 
+_CATBENCH_CACHE_TOKENS = 4096 + 512  # prompt + generation headroom
+
+
 def _catbench_file_prefix(label: str) -> str:
     """Convert a CSV label to a catbench SVG filename prefix."""
     if label in ("bf16", "base"):
@@ -150,13 +153,12 @@ def _catbench_generate_svgs(catbench_dir: str) -> int:
     from ezexl3.catbench import extract_svg
 
     # Group txt files by prefix: "2.00bpw" → ["2.00bpw.txt", "2.00bpw_1.txt", ...]
-    import re as _re
     prefix_txts: Dict[str, List[str]] = {}
     for fn in sorted(os.listdir(catbench_dir)):
         if not fn.endswith(".txt"):
             continue
         # Match {prefix}.txt or {prefix}_{N}.txt
-        m = _re.match(r"^(.+?)(?:_\d+)?\.txt$", fn)
+        m = re.match(r"^(.+?)(?:_\d+)?\.txt$", fn)
         if m:
             prefix = m.group(1)
             prefix_txts.setdefault(prefix, []).append(fn)
@@ -166,7 +168,7 @@ def _catbench_generate_svgs(catbench_dir: str) -> int:
         # Remove any existing SVGs for this prefix to ensure clean numbering
         for fn in os.listdir(catbench_dir):
             if fn.endswith(".svg") and (fn == f"{prefix}.svg" or
-                    _re.match(rf"^{_re.escape(prefix)}_\d+\.svg$", fn)):
+                    re.match(rf"^{re.escape(prefix)}_\d+\.svg$", fn)):
                 os.remove(os.path.join(catbench_dir, fn))
 
         svg_count = 0
@@ -1107,7 +1109,7 @@ def _worker_measure(
                     sys.executable,
                     "-m", "ezexl3.catbench",
                     "-m", model_dir,
-                    "-cs", str(4096 + 512),
+                    "-cs", str(_CATBENCH_CACHE_TOKENS),
                     "-n", str(n_samples),
                     "-o", catbench_out_dir,
                     "-l", label,
@@ -1394,7 +1396,7 @@ def run_measure_stage(
                 sys.executable, "-m", "ezexl3.catbench",
                 "-m", task_model_dir,
                 "-gs", ",".join("99" for _ in device_str.split(",")),
-                "-cs", str(4096 + 512),
+                "-cs", str(_CATBENCH_CACHE_TOKENS),
                 "-n", str(task.get("n_samples", 3)),
                 "-o", os.path.join(model_dir, "catbench"),
                 "-l", label,
