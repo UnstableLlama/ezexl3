@@ -172,20 +172,17 @@ def _retry_txt_extraction(
 ) -> list:
     """Re-read .txt files and retry SVG extraction.
 
-    Handles both current-run failures and pre-existing .txt files from
-    earlier runs.  Successfully extracted SVGs replace their .txt source.
+    Creates SVGs alongside .txt files — .txt files are never deleted.
     """
     for i in range(1, n_samples + 1):
-        # Match the naming convention: sample 1 is canonical, rest are _1, _2, ...
         if i == 1:
             txt_path = os.path.join(output_dir, f"{file_prefix}.txt")
-            sample_path = os.path.join(output_dir, f"{file_prefix}.svg")
+            svg_path = os.path.join(output_dir, f"{file_prefix}.svg")
         else:
             txt_path = os.path.join(output_dir, f"{file_prefix}_{i - 1}.txt")
-            sample_path = os.path.join(output_dir, f"{file_prefix}_{i - 1}.svg")
+            svg_path = os.path.join(output_dir, f"{file_prefix}_{i - 1}.svg")
 
-        # Skip if SVG already exists for this sample
-        if os.path.exists(sample_path):
+        if os.path.exists(svg_path):
             continue
         if not os.path.exists(txt_path):
             continue
@@ -195,10 +192,9 @@ def _retry_txt_extraction(
 
         svg_content = extract_svg(raw)
         if svg_content:
-            with open(sample_path, "w") as f:
+            with open(svg_path, "w") as f:
                 f.write(svg_content)
-            saved_paths.append(sample_path)
-            os.remove(txt_path)
+            saved_paths.append(svg_path)
             print(f" -- Retry sample {i}: SVG extracted ({len(svg_content)} chars)", flush=True)
 
     return saved_paths
@@ -275,19 +271,19 @@ def run_catbench(args) -> list:
     saved_paths = []
 
     for i in range(1, n_samples + 1):
-        # First sample saves directly as canonical; subsequent get _1, _2, ...
+        # First sample is canonical (no suffix); subsequent get _1, _2, ...
         if i == 1:
-            sample_path = os.path.join(output_dir, f"{file_prefix}.svg")
             txt_path = os.path.join(output_dir, f"{file_prefix}.txt")
+            svg_path = os.path.join(output_dir, f"{file_prefix}.svg")
         else:
-            sample_path = os.path.join(output_dir, f"{file_prefix}_{i - 1}.svg")
             txt_path = os.path.join(output_dir, f"{file_prefix}_{i - 1}.txt")
+            svg_path = os.path.join(output_dir, f"{file_prefix}_{i - 1}.svg")
 
-        # Skip if output already exists for this sample
-        if os.path.exists(sample_path) or os.path.exists(txt_path):
+        # Skip if .txt already exists (inference already done for this sample)
+        if os.path.exists(txt_path):
             print(f" -- Sample {i}: already exists, skipping", flush=True)
-            if os.path.exists(sample_path):
-                saved_paths.append(sample_path)
+            if os.path.exists(svg_path):
+                saved_paths.append(svg_path)
             print(f"CATBENCH_SAMPLE_DONE {i}/{n_samples}", flush=True)
             continue
 
@@ -326,18 +322,19 @@ def run_catbench(args) -> list:
 
         response = "".join(response_chunks)
 
-        # Extract SVG (handles think tags, code fences, bare code)
+        # Always save raw response as .txt
+        with open(txt_path, "w") as f:
+            f.write(response)
+
+        # Try to extract SVG alongside the .txt
         svg_content = extract_svg(response)
         if svg_content:
-            with open(sample_path, "w") as f:
+            with open(svg_path, "w") as f:
                 f.write(svg_content)
-            saved_paths.append(sample_path)
+            saved_paths.append(svg_path)
             print(f" -- Sample {i}: SVG saved ({len(svg_content)} chars)", flush=True)
         else:
-            # Save raw response for debugging
-            with open(txt_path, "w") as f:
-                f.write(response)
-            print(f" -- Sample {i}: No SVG extracted, raw response saved", flush=True)
+            print(f" -- Sample {i}: No SVG extracted", flush=True)
 
         print(f"CATBENCH_SAMPLE_DONE {i}/{n_samples}", flush=True)
 

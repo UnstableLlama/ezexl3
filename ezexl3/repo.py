@@ -110,38 +110,38 @@ def _catbench_file_prefix(label: str) -> str:
 def _catbench_has_output(catbench_dir: str, file_prefix: str, n_samples: int) -> bool:
     """Check if catbench has all N samples for *file_prefix*.
 
-    Returns True only when the number of existing outputs (svg + txt)
-    is >= n_samples.  Attempts re-extraction of canonical .txt first.
+    Returns True only when all N .txt files exist (every sample always
+    produces a .txt).  Also attempts SVG re-extraction for any .txt
+    files that don't yet have a corresponding .svg.
 
     File naming convention:
-      sample 1: {prefix}.svg / {prefix}.txt  (canonical)
-      sample 2: {prefix}_1.svg / {prefix}_1.txt
-      sample 3: {prefix}_2.svg / {prefix}_2.txt
+      sample 1: {prefix}.txt + {prefix}.svg  (canonical)
+      sample 2: {prefix}_1.txt + {prefix}_1.svg
+      sample 3: {prefix}_2.txt + {prefix}_2.svg
     """
     if not os.path.isdir(catbench_dir):
         return False
-    # Try re-extracting canonical .txt with latest extraction logic
-    canonical_svg = os.path.join(catbench_dir, f"{file_prefix}.svg")
-    canonical_txt = os.path.join(catbench_dir, f"{file_prefix}.txt")
-    if os.path.exists(canonical_txt) and not os.path.exists(canonical_svg):
-        from ezexl3.catbench import extract_svg
-        with open(canonical_txt, "r") as f:
-            raw = f.read()
-        svg_content = extract_svg(raw)
-        if svg_content:
-            with open(canonical_svg, "w") as f:
-                f.write(svg_content)
-            os.remove(canonical_txt)
-            print(f"  🔄 Re-extracted SVG from {file_prefix}.txt ({len(svg_content)} chars)")
-    # Count outputs: sample 1 = canonical, sample 2+ = _1, _2, ...
+    from ezexl3.catbench import extract_svg
     count = 0
-    if os.path.exists(canonical_svg) or os.path.exists(canonical_txt):
+    for i in range(1, n_samples + 1):
+        if i == 1:
+            txt = os.path.join(catbench_dir, f"{file_prefix}.txt")
+            svg = os.path.join(catbench_dir, f"{file_prefix}.svg")
+        else:
+            txt = os.path.join(catbench_dir, f"{file_prefix}_{i - 1}.txt")
+            svg = os.path.join(catbench_dir, f"{file_prefix}_{i - 1}.svg")
+        if not os.path.exists(txt):
+            continue
         count += 1
-    for i in range(1, n_samples):
-        svg = os.path.join(catbench_dir, f"{file_prefix}_{i}.svg")
-        txt = os.path.join(catbench_dir, f"{file_prefix}_{i}.txt")
-        if os.path.exists(svg) or os.path.exists(txt):
-            count += 1
+        # Try SVG re-extraction if .svg is missing
+        if not os.path.exists(svg):
+            with open(txt, "r") as f:
+                raw = f.read()
+            svg_content = extract_svg(raw)
+            if svg_content:
+                with open(svg, "w") as f:
+                    f.write(svg_content)
+                print(f"  🔄 Re-extracted SVG from {os.path.basename(txt)} ({len(svg_content)} chars)")
     return count >= n_samples
 
 
