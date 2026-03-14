@@ -110,8 +110,9 @@ def _catbench_file_prefix(label: str) -> str:
 def _catbench_has_output(catbench_dir: str, file_prefix: str) -> bool:
     """Check if catbench already produced output for *file_prefix*.
 
-    Returns True if a canonical SVG exists, or if any sample .txt/.svg files
-    exist (after attempting re-extraction with latest logic).
+    Returns True if any SVG output exists (canonical or numbered).
+    Attempts re-extraction from .txt files first. Only SVGs count as
+    output — unextractable .txt files do NOT prevent re-running inference.
 
     File naming convention:
       sample 1: {prefix}.svg / {prefix}.txt  (canonical)
@@ -120,17 +121,15 @@ def _catbench_has_output(catbench_dir: str, file_prefix: str) -> bool:
     """
     if not os.path.isdir(catbench_dir):
         return False
-    # Canonical SVG already exists
     canonical_svg = os.path.join(catbench_dir, f"{file_prefix}.svg")
     if os.path.exists(canonical_svg):
         return True
     # Try re-extracting .txt files with latest extraction logic
     from ezexl3.catbench import extract_svg
-    has_any = False
+    has_svg = False
     # Check canonical .txt (sample 1)
     canonical_txt = os.path.join(catbench_dir, f"{file_prefix}.txt")
     if os.path.exists(canonical_txt):
-        has_any = True
         with open(canonical_txt, "r") as f:
             raw = f.read()
         svg_content = extract_svg(raw)
@@ -139,13 +138,14 @@ def _catbench_has_output(catbench_dir: str, file_prefix: str) -> bool:
                 f.write(svg_content)
             os.remove(canonical_txt)
             print(f"  🔄 Re-extracted SVG from {file_prefix}.txt ({len(svg_content)} chars)")
+            has_svg = True
     # Check numbered samples (_1, _2, ...)
     for fn in sorted(os.listdir(catbench_dir)):
         if fn.startswith(f"{file_prefix}_") and fn.endswith(".txt"):
-            has_any = True
             txt_path = os.path.join(catbench_dir, fn)
             svg_path = txt_path.replace(".txt", ".svg")
             if os.path.exists(svg_path):
+                has_svg = True
                 continue
             with open(txt_path, "r") as f:
                 raw = f.read()
@@ -155,9 +155,17 @@ def _catbench_has_output(catbench_dir: str, file_prefix: str) -> bool:
                     f.write(svg_content)
                 os.remove(txt_path)
                 print(f"  🔄 Re-extracted SVG from {fn} ({len(svg_content)} chars)")
+                has_svg = True
         elif fn.startswith(f"{file_prefix}_") and fn.endswith(".svg"):
-            has_any = True
-    return has_any
+            has_svg = True
+    # If numbered SVGs exist but canonical is missing, rename first one to canonical
+    if has_svg and not os.path.exists(canonical_svg):
+        for fn in sorted(os.listdir(catbench_dir)):
+            if fn.startswith(f"{file_prefix}_") and fn.endswith(".svg"):
+                os.rename(os.path.join(catbench_dir, fn), canonical_svg)
+                print(f"  🔄 Renamed {fn} → {file_prefix}.svg")
+                break
+    return has_svg
 
 
 def _resolve_exllamav3_util_scripts() -> Tuple[str, str]:
