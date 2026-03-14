@@ -124,6 +124,8 @@ def make_plot(bpw, kld, ppl, gib, title, outfile, add_checks=True):
 
     axr = ax.twinx()
     axr.set_facecolor("none")
+    ax.set_zorder(axr.get_zorder() + 1)
+    ax.patch.set_visible(False)
     l2, = axr.plot(
         bpw,
         ppl,
