@@ -150,7 +150,7 @@ def _build_catbench_grid(model_dir: str) -> str:
             )
         rows_html.append("  <tr>\n" + "\n".join(cells) + "\n  </tr>")
 
-    return "<table>\n" + "\n".join(rows_html) + "\n</table>"
+    return '<table align="center">\n' + "\n".join(rows_html) + "\n</table>"
 
 
 def run_readme(
@@ -347,7 +347,14 @@ def run_readme(
     if include_catbench:
         catbench_html = _build_catbench_grid(model_dir)
         if catbench_html:
-            catbench_section = f"\n## SVG Catbench\n\n{catbench_html}\n"
+            catbench_section = (
+                '\n  <div class="content-panel">\n'
+                '    <div class="panel-title">SVG Catbench</div>\n'
+                '    <div class="panel-body" style="display:flex;justify-content:center;">\n'
+                f"      {catbench_html}\n"
+                "    </div>\n"
+                "  </div>\n"
+            )
             # Insert before the first CLI Download panel, or append before end
             if '<div class="panel-title">CLI Download</div>' in template:
                 idx = template.index('<div class="panel-title">CLI Download</div>')

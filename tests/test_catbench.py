@@ -88,7 +88,7 @@ class CatbenchGridTests(unittest.TestCase):
             Path(os.path.join(catdir, "2.00bpw_1.svg")).write_text('<svg xmlns="test"></svg>')
 
             result = _build_catbench_grid(tmpdir)
-            self.assertIn("<table>", result)
+            self.assertIn('<table align="center">', result)
             self.assertIn("2.00 bpw", result)
             self.assertIn("3.00 bpw", result)
             self.assertIn("4.00 bpw", result)
