@@ -804,6 +804,7 @@ def _run_catbench_subprocess(
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+    env["CUDA_VISIBLE_DEVICES"] = str(device)
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1, env=env,
@@ -956,12 +957,11 @@ def _worker_measure(
                 # --- Catbench ---
                 n_samples = job.get("n_samples", 3)
                 catbench_out_dir = os.path.join(base_dir, "catbench")
-                catbench_device = job.get("device_str", str(device))
                 catbench_cmd = [
                     sys.executable,
                     "-m", "ezexl3.catbench",
                     "-m", model_dir,
-                    "-d", catbench_device,
+                    "-cs", str(4096 + 512),
                     "-n", str(n_samples),
                     "-o", catbench_out_dir,
                     "-l", label,
@@ -1197,7 +1197,8 @@ def run_measure_stage(
             catbench_cmd = [
                 sys.executable, "-m", "ezexl3.catbench",
                 "-m", task_model_dir,
-                "-d", device_str,
+                "-gs", ",".join("99" for _ in device_str.split(",")),
+                "-cs", str(4096 + 512),
                 "-n", str(task.get("n_samples", 3)),
                 "-o", os.path.join(model_dir, "catbench"),
                 "-l", label,
@@ -1206,6 +1207,7 @@ def run_measure_stage(
             try:
                 env = os.environ.copy()
                 env["PYTHONUNBUFFERED"] = "1"
+                env["CUDA_VISIBLE_DEVICES"] = device_str
                 proc = subprocess.Popen(
                     catbench_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, bufsize=1, env=env,

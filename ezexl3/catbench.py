@@ -136,15 +136,10 @@ def _run_matplotlib_code(code: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def run_catbench(
-    model_dir: str,
-    device: str,
-    n_samples: int = 3,
-    output_dir: str = "catbench",
-    label: str = "",
-    max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
-) -> list:
+def run_catbench(args) -> list:
     """Run catbench against a single model, producing N SVG samples.
+
+    Uses exllamav3's model_init for model loading (same as chat.py).
 
     Prints progress markers for the parent process to parse:
       CATBENCH_MODEL_LOADED   — model loaded, 80% of work done
@@ -153,8 +148,13 @@ def run_catbench(
     Returns list of paths to saved SVGs.
     """
     import torch
-    from exllamav3 import Config, Model, Tokenizer, Cache, Generator, Job
+    from exllamav3 import Generator, Job, model_init
     from exllamav3.util.memory import free_mem
+
+    n_samples = args.n_samples
+    output_dir = args.output_dir
+    label = args.label
+    max_new_tokens = args.max_new_tokens
 
     torch.set_grad_enabled(False)
     os.makedirs(output_dir, exist_ok=True)
@@ -169,24 +169,10 @@ def run_catbench(
         except (ValueError, TypeError):
             file_prefix = label
 
-    print(f" -- Loading model from: {model_dir}", flush=True)
-    print(f" -- Device: {device}", flush=True)
+    print(f" -- Loading model from: {args.model_dir}", flush=True)
 
-    # Parse device string for multi-GPU
-    device_list = [int(d.strip()) for d in str(device).split(",") if d.strip()]
-    primary_device = device_list[0]
-
-    # Load model
-    config = Config.from_directory(model_dir)
-    tokenizer = Tokenizer.from_config(config)
-    model = Model.from_config(config)
-
-    if len(device_list) > 1:
-        model.load(device_list)
-    else:
-        model.load(f"cuda:{primary_device}")
-
-    cache = Cache(model, max_num_tokens=max_new_tokens + 512)
+    # Load model via model_init (handles device mapping, cache sizing, multi-GPU)
+    model, config, cache, tokenizer = model_init.init(args)
 
     generator = Generator(
         model=model,
@@ -270,19 +256,13 @@ def run_catbench(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    from exllamav3 import model_init
+
     parser = argparse.ArgumentParser(description="Run SVG Catbench on a model")
-    parser.add_argument("-m", "--model", type=str, required=True, help="Model directory")
-    parser.add_argument("-d", "--device", type=str, default="0", help="CUDA device(s), comma-separated")
+    model_init.add_args(parser, cache=True, add_sampling_args=False)
     parser.add_argument("-n", "--n_samples", type=int, default=3, help="Number of samples per model")
     parser.add_argument("-o", "--output_dir", type=str, required=True, help="Output directory for SVGs")
     parser.add_argument("-l", "--label", type=str, required=True, help="BPW label for file naming")
     parser.add_argument("-maxr", "--max_new_tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS, help="Max tokens per response")
     _args = parser.parse_args()
-    run_catbench(
-        model_dir=_args.model,
-        device=_args.device,
-        n_samples=_args.n_samples,
-        output_dir=_args.output_dir,
-        label=_args.label,
-        max_new_tokens=_args.max_new_tokens,
-    )
+    run_catbench(_args)
