@@ -120,6 +120,14 @@ def _run_matplotlib_code(code: str) -> str | None:
     # Strip plt.show() — it clears the figure before our savefig
     code = re.sub(r"plt\.show\(\)", "", code)
 
+    # Auto-call defined functions that aren't invoked at module level
+    func_defs = re.findall(r"^def\s+(\w+)\s*\(", code, re.MULTILINE)
+    func_calls = ""
+    for fn in func_defs:
+        # Check if fn() appears at the start of a line (not indented = module level call)
+        if not re.search(rf"^{re.escape(fn)}\s*\(", code, re.MULTILINE):
+            func_calls += f"{fn}()\n"
+
     with tempfile.TemporaryDirectory() as tmpdir:
         svg_path = os.path.join(tmpdir, "output.svg")
 
@@ -129,6 +137,7 @@ def _run_matplotlib_code(code: str) -> str | None:
             "matplotlib.use('Agg')\n"
             "import matplotlib.pyplot as plt\n"
             f"{code}\n"
+            f"{func_calls}"
             f"plt.savefig({svg_path!r}, format='svg', bbox_inches='tight')\n"
             "plt.close('all')\n"
         )
