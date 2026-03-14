@@ -189,6 +189,12 @@ class ReadmeCatbenchIntegrationTests(unittest.TestCase):
             self.assertIn("catbench/4.00bpw.svg", readme)
             self.assertIn("catbench/bf16.svg", readme)
 
+            # Catbench panel must appear before CLI Download panel
+            catbench_pos = readme.find("SVG Catbench")
+            cli_pos = readme.find("CLI Download")
+            self.assertGreater(cli_pos, catbench_pos,
+                               "SVG Catbench panel should appear before CLI Download")
+
     def test_readme_no_catbench_when_disabled(self):
         with tempfile.TemporaryDirectory() as tmp:
             model_dir = Path(tmp) / "TestAuthor-TestModel"
