@@ -77,30 +77,38 @@ _CODE_BLOCK_RE = re.compile(r"```(?:python)?\s*\n([\s\S]*?)```")
 _THINK_BLOCK_RE = re.compile(r"<think>[\s\S]*?</think>", re.IGNORECASE)
 
 
-def _clean_response(text: str) -> str:
-    """Strip think tags and code fences from model response."""
-    text = _THINK_BLOCK_RE.sub("", text)
-    text = text.replace("```python", "").replace("```", "")
-    return text.strip()
-
-
 def extract_svg(text: str) -> str | None:
     """Extract SVG content from a model response.
 
-    Looks for raw <svg>...</svg> blocks first, then tries to execute
-    Python code blocks that use matplotlib to produce SVG output.
+    Multi-pass approach:
+      1. Strip <think> blocks
+      2. Look for raw <svg>...</svg> tags
+      3. Extract fenced code blocks and run matplotlib ones
+      4. If still nothing, strip code fences and try running the
+         remaining text as bare Python (handles models that emit
+         code without proper fencing)
     """
+    # Strip think blocks first
+    text = _THINK_BLOCK_RE.sub("", text)
+
     # Direct SVG in response
     m = _SVG_BLOCK_RE.search(text)
     if m:
         return m.group(1)
 
-    # Try extracting and running Python code blocks
+    # Try extracting and running fenced Python code blocks
     for code_match in _CODE_BLOCK_RE.finditer(text):
         code = code_match.group(1)
         if "matplotlib" not in code and "plt" not in code:
             continue
         svg = _run_matplotlib_code(code)
+        if svg:
+            return svg
+
+    # Last resort: strip fences and try running as bare Python
+    bare = text.replace("```python", "").replace("```", "").strip()
+    if ("matplotlib" in bare or "plt" in bare) and bare != text.strip():
+        svg = _run_matplotlib_code(bare)
         if svg:
             return svg
 
@@ -138,6 +146,52 @@ def _run_matplotlib_code(code: str) -> str | None:
             pass
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Retry extraction on saved .txt files
+# ---------------------------------------------------------------------------
+
+
+def _retry_txt_extraction(
+    output_dir: str,
+    file_prefix: str,
+    n_samples: int,
+    saved_paths: list,
+    canonical_path: str,
+    first_svg_saved: bool,
+) -> list:
+    """Re-read .txt files and retry SVG extraction.
+
+    Handles both current-run failures and pre-existing .txt files from
+    earlier runs.  Successfully extracted SVGs replace their .txt source.
+    """
+    for i in range(1, n_samples + 1):
+        txt_path = os.path.join(output_dir, f"{file_prefix}_{i}.txt")
+        sample_path = os.path.join(output_dir, f"{file_prefix}_{i}.svg")
+
+        # Skip if SVG already exists for this sample
+        if os.path.exists(sample_path):
+            continue
+        if not os.path.exists(txt_path):
+            continue
+
+        with open(txt_path, "r") as f:
+            raw = f.read()
+
+        svg_content = extract_svg(raw)
+        if svg_content:
+            with open(sample_path, "w") as f:
+                f.write(svg_content)
+            saved_paths.append(sample_path)
+            os.remove(txt_path)
+            print(f" -- Retry sample {i}: SVG extracted ({len(svg_content)} chars)", flush=True)
+
+            if not first_svg_saved:
+                shutil.copy2(sample_path, canonical_path)
+                first_svg_saved = True
+
+    return saved_paths
 
 
 # ---------------------------------------------------------------------------
@@ -251,9 +305,8 @@ def run_catbench(args) -> list:
 
         response = "".join(response_chunks)
 
-        # Clean up model response and extract SVG
-        cleaned = _clean_response(response)
-        svg_content = extract_svg(cleaned)
+        # Extract SVG (handles think tags, code fences, bare code)
+        svg_content = extract_svg(response)
         if svg_content:
             with open(sample_path, "w") as f:
                 f.write(svg_content)
@@ -275,6 +328,10 @@ def run_catbench(args) -> list:
     # Cleanup
     del generator, cache, model, config
     free_mem()
+
+    # Retry extraction on any .txt files (current + pre-existing)
+    saved_paths = _retry_txt_extraction(output_dir, file_prefix, n_samples,
+                                        saved_paths, canonical_path, first_svg_saved)
 
     if saved_paths:
         print(f" -- Catbench complete: {len(saved_paths)}/{n_samples} SVGs saved", flush=True)
