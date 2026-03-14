@@ -36,7 +36,7 @@ pip install -e .
 ## Usage
 
 ### 1. Quantize a full repository
-Run the entire pipeline (quantize -> measure -> README):
+Run the entire pipeline (quantize → measure → README):
 ```bash
 ezexl3 repo -m /path/to/base_model -b 2,2.5,3,4,5,6 -d 0,1 -t basic
 ```
