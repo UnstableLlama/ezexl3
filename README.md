@@ -94,7 +94,7 @@ Use your template with
 ezexl3 repo -m /path/to/base_model -t mynew -b 2,3,4,5,6 -d 0,1
 ```
 <p align="center">
-  <img src="ezexl3/templates/27Bv0.0.6.png" width="35%" />
+  <img src="ezexl3/templates/basicTemplate.png" width="35%" />
   <img src="ezexl3/templates/punkTemplate.png" width="35%" />
   <img src="ezexl3/templates/fireTemplate.png" width="45%" />
   <img src="ezexl3/templates/greenTemplate.png" width="45%" />
