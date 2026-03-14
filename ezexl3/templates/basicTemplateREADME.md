@@ -63,6 +63,7 @@ tags:
     background-color: #4dabf7;
     color: #000000;
     padding: 8px 20px;
+    font-family: 'JetBrains Mono', monospace;
     font-weight: 800;
     font-size: 0.85em;
     text-transform: uppercase;
