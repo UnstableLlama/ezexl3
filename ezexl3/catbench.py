@@ -9,6 +9,7 @@ import argparse
 import shutil
 import subprocess
 import tempfile
+import time
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -194,6 +195,11 @@ def run_catbench(args) -> list:
         if tokenizer.eos_token_id not in stop_conditions:
             stop_conditions.append(tokenizer.eos_token_id)
 
+    print(f" -- Cache: {cache.max_num_tokens} tokens", flush=True)
+    print(f" -- Stop conditions: {stop_conditions}", flush=True)
+    print(f" -- Input tokens: {input_ids.shape[-1]}", flush=True)
+    print(f" -- Max new tokens: {max_new_tokens}", flush=True)
+
     saved_paths = []
     canonical_path = os.path.join(output_dir, f"{file_prefix}.svg")
     first_svg_saved = False
@@ -201,6 +207,8 @@ def run_catbench(args) -> list:
     for i in range(1, n_samples + 1):
         sample_path = os.path.join(output_dir, f"{file_prefix}_{i}.svg")
         txt_path = os.path.join(output_dir, f"{file_prefix}_{i}.txt")
+
+        print(f" -- Starting sample {i}/{n_samples}...", flush=True)
 
         # Run inference
         job = Job(
@@ -210,12 +218,28 @@ def run_catbench(args) -> list:
         )
         generator.enqueue(job)
 
+        token_count = 0
+        t_start = time.time()
         response_chunks = []
+        r = None
         while generator.num_remaining_jobs():
             for r in generator.iterate():
                 chunk = r.get("text", "")
                 if chunk:
                     response_chunks.append(chunk)
+                token_ids = r.get("token_ids")
+                if token_ids is not None:
+                    prev = token_count
+                    token_count += token_ids.shape[-1]
+                    if token_count // 100 > prev // 100:
+                        elapsed = time.time() - t_start
+                        tps = token_count / elapsed if elapsed > 0 else 0
+                        print(f" -- ... {token_count} tokens ({tps:.1f} t/s)", flush=True)
+
+        elapsed = time.time() - t_start
+        tps = token_count / elapsed if elapsed > 0 else 0
+        eos_reason = r.get("eos_reason", "unknown") if r else "unknown"
+        print(f" -- Sample {i}: {token_count} tokens in {elapsed:.1f}s ({tps:.1f} t/s), stopped: {eos_reason}", flush=True)
 
         response = "".join(response_chunks)
 
