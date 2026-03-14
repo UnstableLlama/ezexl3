@@ -11,6 +11,7 @@ import select
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from multiprocessing import Process, Queue
 from typing import Dict, IO, List, Optional, Tuple
@@ -859,15 +860,25 @@ def _run_catbench_subprocess(
     last_send: float = 0.0
     current_sample = ""
     model_loaded = False
-    load_lines = 0
+    load_start: float = time.monotonic()
+    load_done = threading.Event()
 
-    # Show initial loading progress bar
-    bar = _build_synthetic_bar(0)
-    results.put({
-        "event": "progress",
-        "device": device,
-        "text": f"{phase_label} {bar} (loading)",
-    })
+    # Background thread sends smooth time-based progress during model loading.
+    def _loading_progress_ticker():
+        while not load_done.wait(timeout=0.5):
+            elapsed = time.monotonic() - load_start
+            # Asymptotic curve: ~50% at 30s, ~75% at 60s, ~90% at 120s
+            pct = int(95 * (1 - 2 ** (-elapsed / 30)))
+            pct = max(pct, 1)
+            bar = _build_synthetic_bar(pct)
+            results.put({
+                "event": "progress",
+                "device": device,
+                "text": f"{phase_label} {bar} (loading)",
+            })
+
+    ticker = threading.Thread(target=_loading_progress_ticker, daemon=True)
+    ticker.start()
 
     for line in proc.stdout:
         buf_lines.append(line)
@@ -875,9 +886,10 @@ def _run_catbench_subprocess(
             log_f.write(line)
             log_f.flush()
 
-        # Model loaded → 100% bar
+        # Model loaded → stop ticker, show 100%
         if _CATBENCH_LOADED_RE.search(line):
             model_loaded = True
+            load_done.set()
             bar = _build_synthetic_bar(100)
             results.put({
                 "event": "progress",
@@ -887,19 +899,8 @@ def _run_catbench_subprocess(
             last_send = time.monotonic()
             continue
 
-        # During loading phase, increment bar for each output line
+        # During loading phase, ticker handles progress — just skip
         if not model_loaded:
-            load_lines += 1
-            pct = min(95, load_lines * 3)
-            now = time.monotonic()
-            if now - last_send >= 0.3:
-                bar = _build_synthetic_bar(pct)
-                results.put({
-                    "event": "progress",
-                    "device": device,
-                    "text": f"{phase_label} {bar} (loading)",
-                })
-                last_send = now
             continue
 
         # Sample start → update current sample label
