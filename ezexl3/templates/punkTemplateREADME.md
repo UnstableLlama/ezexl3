@@ -202,6 +202,13 @@ tags:
   </div>
 
   <div class="content-panel">
+    <div class="panel-title">SVG Catbench</div>
+    <div class="panel-body repo-data-body repo-data-panel">
+      {{CATBENCH_CONTENT}}
+    </div>
+  </div>
+
+  <div class="content-panel">
     <div class="panel-title">// CLI Download</div>
     <div class="panel-body">
       <div class="terminal-box">
