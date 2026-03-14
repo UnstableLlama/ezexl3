@@ -785,6 +785,8 @@ _PPL_RE = re.compile(
 
 _CATBENCH_LOADED_RE = re.compile(r"CATBENCH_MODEL_LOADED")
 _CATBENCH_SAMPLE_RE = re.compile(r"CATBENCH_SAMPLE_DONE\s+(\d+)/(\d+)")
+_CATBENCH_SAMPLE_START_RE = re.compile(r"CATBENCH_SAMPLE_START\s+(\d+)/(\d+)")
+_CATBENCH_TOKENS_RE = re.compile(r"CATBENCH_TOKENS\s+(\d+)\s+([\d.]+)")
 
 
 def _run_catbench_subprocess(
@@ -793,10 +795,14 @@ def _run_catbench_subprocess(
     results: "Queue[Optional[dict]]",
     phase_label: str,
     log_f: Optional[IO] = None,
+    cuda_visible_devices: Optional[str] = None,
 ) -> str:
     """Run a catbench subprocess and send progress events.
 
-    Progress model: 80% for model loading, 20% for N inference samples.
+    Progress model:
+      - 0-100% bar during model loading
+      - Token count display during inference
+      - Sample completion markers
     """
     if log_f:
         log_f.write(f"$ {' '.join(cmd)}\n")
@@ -804,7 +810,7 @@ def _run_catbench_subprocess(
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
-    env["CUDA_VISIBLE_DEVICES"] = str(device)
+    env["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices or str(device)
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1, env=env,
@@ -813,6 +819,15 @@ def _run_catbench_subprocess(
 
     buf_lines: List[str] = []
     last_send: float = 0.0
+    current_sample = ""
+
+    # Show loading progress bar
+    bar = _build_synthetic_bar(50)
+    results.put({
+        "event": "progress",
+        "device": device,
+        "text": f"{phase_label} {bar} (loading)",
+    })
 
     for line in proc.stdout:
         buf_lines.append(line)
@@ -820,32 +835,55 @@ def _run_catbench_subprocess(
             log_f.write(line)
             log_f.flush()
 
-        # Model loaded → 80%
+        # Model loaded → 100% bar
         if _CATBENCH_LOADED_RE.search(line):
-            bar = _build_synthetic_bar(80)
+            bar = _build_synthetic_bar(100)
             results.put({
                 "event": "progress",
                 "device": device,
-                "text": f"{phase_label} {bar} (loading done)",
+                "text": f"{phase_label} {bar} (loaded)",
             })
             last_send = time.monotonic()
             continue
 
-        # Sample done → 80 + (i * 20 / n) %
+        # Sample start → update current sample label
+        m = _CATBENCH_SAMPLE_START_RE.search(line)
+        if m:
+            current_sample = f"{m.group(1)}/{m.group(2)}"
+            results.put({
+                "event": "progress",
+                "device": device,
+                "text": f"{phase_label} | sample {current_sample} | 0 tokens",
+            })
+            last_send = time.monotonic()
+            continue
+
+        # Token progress → show count and TPS
+        m = _CATBENCH_TOKENS_RE.search(line)
+        if m:
+            tokens = m.group(1)
+            tps = m.group(2)
+            now = time.monotonic()
+            if now - last_send >= 0.3:
+                results.put({
+                    "event": "progress",
+                    "device": device,
+                    "text": f"{phase_label} | sample {current_sample} | {tokens} tokens ({tps} t/s)",
+                })
+                last_send = now
+            continue
+
+        # Sample done
         m = _CATBENCH_SAMPLE_RE.search(line)
         if m:
             i_done = int(m.group(1))
             n_total = int(m.group(2))
-            pct = 80 + int(i_done * 20 / max(n_total, 1))
-            now = time.monotonic()
-            if now - last_send >= 0.5 or pct >= 100:
-                bar = _build_synthetic_bar(pct)
-                results.put({
-                    "event": "progress",
-                    "device": device,
-                    "text": f"{phase_label} {bar} ({i_done}/{n_total} samples)",
-                })
-                last_send = now
+            results.put({
+                "event": "progress",
+                "device": device,
+                "text": f"{phase_label} | sample {i_done}/{n_total} done",
+            })
+            last_send = time.monotonic()
 
     proc.wait()
     if proc.returncode != 0:
@@ -1158,7 +1196,7 @@ def run_measure_stage(
 
         # VRAM pre-flight: sort into multi-GPU vs single-GPU
         if len(devices) > 1 and catbench_tasks:
-            from ezexl3.catbench import check_vram_fit
+            from ezexl3.catbench import check_vram_fit, check_multi_gpu_fit
             single_gpu = []
             for task in catbench_tasks:
                 task_label = task["label"]
@@ -1167,10 +1205,17 @@ def run_measure_stage(
                 if fits:
                     single_gpu.append(task)
                 else:
-                    # Multi-GPU: run on all devices together
-                    device_str = ",".join(str(d) for d in devices)
-                    task["device_str"] = device_str
-                    multi_gpu_catbench_tasks.append(task)
+                    # Check if it fits across all GPUs combined
+                    multi_fits, model_gib, total_avail = check_multi_gpu_fit(task_model_dir, devices)
+                    if multi_fits:
+                        device_str = ",".join(str(d) for d in devices)
+                        task["device_str"] = device_str
+                        multi_gpu_catbench_tasks.append(task)
+                    else:
+                        task_disp = "bf16" if task_label == "base" else str(task_label)
+                        print(f"  ⚠️  Skipping catbench for {task_disp}: "
+                              f"{model_gib:.1f} GiB model won't fit "
+                              f"({total_avail:.1f} GiB available across {len(devices)} GPUs)")
             catbench_tasks = single_gpu
 
     total_jobs = len(kl_tasks) + len(ppl_tasks) + len(catbench_tasks) + len(multi_gpu_catbench_tasks)
@@ -1188,7 +1233,22 @@ def run_measure_stage(
 
     # --- Run multi-GPU catbench jobs first (sequentially, all GPUs) ---
     if multi_gpu_catbench_tasks:
+        import threading
+        from queue import Queue as TQueue
+
+        mgpu_use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+
         print(f"\n🐱 Running {len(multi_gpu_catbench_tasks)} multi-GPU catbench job(s)...")
+
+        mgpu_status: Dict[int, str] = {d: "idle" for d in devices}
+        mgpu_num_lines = len(devices)
+
+        # Print initial progress area
+        if mgpu_use_ansi:
+            for d in sorted(mgpu_status):
+                sys.stdout.write(f"\033[2K  GPU {d} | idle\n")
+            sys.stdout.flush()
+
         for task in multi_gpu_catbench_tasks:
             task_label = task["label"]
             label = "bf16" if task_label == "base" else str(task_label)
@@ -1203,25 +1263,59 @@ def run_measure_stage(
                 "-o", os.path.join(model_dir, "catbench"),
                 "-l", label,
             ]
-            print(f"  🐱 {label} on GPUs [{device_str}]...")
-            try:
-                env = os.environ.copy()
-                env["PYTHONUNBUFFERED"] = "1"
-                env["CUDA_VISIBLE_DEVICES"] = device_str
-                proc = subprocess.Popen(
-                    catbench_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, bufsize=1, env=env,
-                )
-                assert proc.stdout is not None
-                for line in proc.stdout:
-                    sys.stdout.write(f"    {line}")
-                proc.wait()
-                if proc.returncode != 0:
-                    print(f"  🔴 Multi-GPU catbench failed for {label}")
-                else:
-                    print(f"  ✅ Multi-GPU catbench done for {label}")
-            except Exception as e:
-                print(f"  🔴 Multi-GPU catbench error for {label}: {e}")
+            phase_label = f"{label} CAT"
+            mgpu_results: TQueue = TQueue()
+            mgpu_error: List[Optional[Exception]] = [None]
+
+            def _run_mgpu_catbench(
+                _cmd: List[str] = catbench_cmd,
+                _dev: int = devices[0],
+                _q: TQueue = mgpu_results,
+                _pl: str = phase_label,
+                _cvd: str = device_str,
+            ) -> None:
+                try:
+                    _run_catbench_subprocess(_cmd, _dev, _q, _pl,
+                                            cuda_visible_devices=_cvd)
+                except Exception as exc:
+                    mgpu_error[0] = exc
+                _q.put(None)
+
+            t = threading.Thread(target=_run_mgpu_catbench)
+            t.start()
+
+            # Consume progress events and render to GPU status lines
+            while True:
+                ev = mgpu_results.get()
+                if ev is None:
+                    break
+                if ev["event"] == "progress":
+                    for d in devices:
+                        mgpu_status[d] = ev["text"]
+                    if mgpu_use_ansi:
+                        _clear_and_redraw_progress(mgpu_status, mgpu_num_lines)
+
+            t.join()
+
+            if mgpu_error[0] is not None:
+                msg = f"🔴 Multi-GPU catbench failed for {label}: {mgpu_error[0]}"
+            else:
+                msg = f"🐱 DONE {label} CATBENCH (multi-GPU [{device_str}])"
+
+            for d in devices:
+                mgpu_status[d] = "idle"
+            if mgpu_use_ansi:
+                _print_above_progress(msg, mgpu_status, mgpu_num_lines)
+            else:
+                print(msg)
+
+        # Clear progress area
+        if mgpu_use_ansi:
+            sys.stdout.write(f"\033[{mgpu_num_lines}A")
+            for _ in range(mgpu_num_lines):
+                sys.stdout.write("\033[2K\n")
+            sys.stdout.write(f"\033[{mgpu_num_lines}A")
+            sys.stdout.flush()
 
     # Remaining jobs (KL + PPL + single-GPU catbench) into shared queue
     remaining_jobs = len(kl_tasks) + len(ppl_tasks) + len(catbench_tasks)

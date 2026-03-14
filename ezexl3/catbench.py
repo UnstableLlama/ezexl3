@@ -208,7 +208,7 @@ def run_catbench(args) -> list:
         sample_path = os.path.join(output_dir, f"{file_prefix}_{i}.svg")
         txt_path = os.path.join(output_dir, f"{file_prefix}_{i}.txt")
 
-        print(f" -- Starting sample {i}/{n_samples}...", flush=True)
+        print(f"CATBENCH_SAMPLE_START {i}/{n_samples}", flush=True)
 
         # Run inference
         job = Job(
@@ -234,7 +234,7 @@ def run_catbench(args) -> list:
                     if token_count // 100 > prev // 100:
                         elapsed = time.time() - t_start
                         tps = token_count / elapsed if elapsed > 0 else 0
-                        print(f" -- ... {token_count} tokens ({tps:.1f} t/s)", flush=True)
+                        print(f"CATBENCH_TOKENS {token_count} {tps:.1f}", flush=True)
 
         elapsed = time.time() - t_start
         tps = token_count / elapsed if elapsed > 0 else 0
