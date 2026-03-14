@@ -283,6 +283,14 @@ def run_catbench(args) -> list:
             sample_path = os.path.join(output_dir, f"{file_prefix}_{i - 1}.svg")
             txt_path = os.path.join(output_dir, f"{file_prefix}_{i - 1}.txt")
 
+        # Skip if output already exists for this sample
+        if os.path.exists(sample_path) or os.path.exists(txt_path):
+            print(f" -- Sample {i}: already exists, skipping", flush=True)
+            if os.path.exists(sample_path):
+                saved_paths.append(sample_path)
+            print(f"CATBENCH_SAMPLE_DONE {i}/{n_samples}", flush=True)
+            continue
+
         print(f"CATBENCH_SAMPLE_START {i}/{n_samples}", flush=True)
 
         # Run inference

@@ -107,12 +107,11 @@ def _catbench_file_prefix(label: str) -> str:
         return label
 
 
-def _catbench_has_output(catbench_dir: str, file_prefix: str) -> bool:
-    """Check if catbench already produced output for *file_prefix*.
+def _catbench_has_output(catbench_dir: str, file_prefix: str, n_samples: int) -> bool:
+    """Check if catbench has all N samples for *file_prefix*.
 
-    Returns True if any SVG output exists (canonical or numbered).
-    Attempts re-extraction from .txt files first. Only SVGs count as
-    output — unextractable .txt files do NOT prevent re-running inference.
+    Returns True only when the number of existing outputs (svg + txt)
+    is >= n_samples.  Attempts re-extraction of canonical .txt first.
 
     File naming convention:
       sample 1: {prefix}.svg / {prefix}.txt  (canonical)
@@ -121,13 +120,11 @@ def _catbench_has_output(catbench_dir: str, file_prefix: str) -> bool:
     """
     if not os.path.isdir(catbench_dir):
         return False
-    canonical_svg = os.path.join(catbench_dir, f"{file_prefix}.svg")
-    if os.path.exists(canonical_svg):
-        return True
     # Try re-extracting canonical .txt with latest extraction logic
-    from ezexl3.catbench import extract_svg
+    canonical_svg = os.path.join(catbench_dir, f"{file_prefix}.svg")
     canonical_txt = os.path.join(catbench_dir, f"{file_prefix}.txt")
-    if os.path.exists(canonical_txt):
+    if os.path.exists(canonical_txt) and not os.path.exists(canonical_svg):
+        from ezexl3.catbench import extract_svg
         with open(canonical_txt, "r") as f:
             raw = f.read()
         svg_content = extract_svg(raw)
@@ -136,12 +133,16 @@ def _catbench_has_output(catbench_dir: str, file_prefix: str) -> bool:
                 f.write(svg_content)
             os.remove(canonical_txt)
             print(f"  🔄 Re-extracted SVG from {file_prefix}.txt ({len(svg_content)} chars)")
-            return True
-    # Check for numbered SVGs (_1.svg, _2.svg, ...)
-    for fn in sorted(os.listdir(catbench_dir)):
-        if fn.startswith(f"{file_prefix}_") and fn.endswith(".svg"):
-            return True
-    return False
+    # Count outputs: sample 1 = canonical, sample 2+ = _1, _2, ...
+    count = 0
+    if os.path.exists(canonical_svg) or os.path.exists(canonical_txt):
+        count += 1
+    for i in range(1, n_samples):
+        svg = os.path.join(catbench_dir, f"{file_prefix}_{i}.svg")
+        txt = os.path.join(catbench_dir, f"{file_prefix}_{i}.txt")
+        if os.path.exists(svg) or os.path.exists(txt):
+            count += 1
+    return count >= n_samples
 
 
 def _resolve_exllamav3_util_scripts() -> Tuple[str, str]:
@@ -1236,13 +1237,13 @@ def run_measure_stage(
         for bpw in bpws:
             label = _task_to_csv_label(bpw)
             file_prefix = _catbench_file_prefix(label)
-            if not _catbench_has_output(catbench_out_dir, file_prefix):
+            if not _catbench_has_output(catbench_out_dir, file_prefix, catbench_n):
                 catbench_tasks.append({
                     "label": bpw, "phase": "catbench", "n_samples": catbench_n,
                 })
 
         # Include bf16 baseline
-        if not _catbench_has_output(catbench_out_dir, "bf16"):
+        if not _catbench_has_output(catbench_out_dir, "bf16", catbench_n):
             catbench_tasks.append({
                 "label": "base", "phase": "catbench", "n_samples": catbench_n,
             })
