@@ -8,12 +8,13 @@ It wraps the exllamav3 quantization and evaluation workflow into a tool that has
 - Measures KL divergence + PPL @ 200k tokens, recording data to CSV
 - Generates a HuggingFace-ready `README.md` with your measurements using customizable templates
 - Embeds an SVG graph from the measurement CSV in the README
+- Optional catbench integration — generates SVG kitten drawings at each BPW and assembles them into a grid
 - Checkpoints and resumes intelligently
 all from one command.
 
 # Pipeline:
 <p align="center">
-model → quantize → optimize → measure (KL + PPL) → graph → README
+model → quantize → optimize → measure (KL + PPL + catbench) → graph → README
 </p>
 
 ---
@@ -101,7 +102,22 @@ ezexl3 repo -m /path/to/base_model -t mynew -b 2,3,4,5,6 -d 0,1
   <img src="ezexl3/templates/greenTemplate.png" width="45%" />
 </p>
 
-### 4. Advanced: Passthrough Flags
+### 4. Catbench
+SVG Catbench is available as a measurement option via the `-cb` flag. It runs catbench inference at every BPW level (including optimized fractionals), extracts SVGs, and assembles them into a grid in the final README.
+
+```bash
+ezexl3 repo -m /path/to/base_model -b 2,3,4,5,6,8 -d 0,1 -t punk -cb
+```
+
+- `-cb` alone runs 3 samples per BPW (default), `-cb 5` runs 5
+- Catbench runs as a third job category in the measurement phase GPU queue alongside PPL and KL
+- VRAM pre-flight check before each catbench load — skips gracefully if model won't fit, automatically uses multi-GPU for large models
+- Best valid SVG is selected from N samples for the grid
+- SVG extraction and grid assembly happen in a batch pass after all inference completes
+- Catbench results are checkpointed like everything else — rerunning skips completed samples
+- bf16 baseline included when VRAM allows
+
+### 5. Advanced: Passthrough Flags
 You can pass custom arguments directly to the underlying quantization (`multiConvert`) or measurement scripts using the `--quant-args` and `--measure-args` flags.
 
 **Important**: These flags require a double-dash `--` delimiter to separate the passthrough block from the rest of the arguments.
@@ -138,7 +154,7 @@ To locate exllamav3 utility scripts robustly, ezexl3 attempts runtime package di
 EXLLAMAV3_ROOT=/path/to/exllamav3 ezexl3 repo -m /path/to/model -b 4.07
 ```
 
-### 5. Headless Mode
+### 6. Headless Mode
 For automated pipelines, use the `--no-prompt` (or `-np`) flag to skip interactive metadata collection for the README. It will use sensible defaults based on the model directory name and your environment.
 
 ```bash
