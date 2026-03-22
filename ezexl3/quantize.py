@@ -1,7 +1,10 @@
 # ezexl3/quantize.py
 from __future__ import annotations
 
+import importlib.metadata
+import json
 import os
+import shutil
 import time
 from typing import List, Tuple, Optional
 
@@ -13,6 +16,62 @@ def _get_exl3_convert():
         prepare as convert_prepare
     )
     return convert_parser, convert_main, convert_prepare
+
+
+def _find_cal_data_source() -> Optional[str]:
+    """Try to locate c4.utf8 from an exllamav3 source/editable install."""
+    try:
+        import importlib.metadata
+        dist = importlib.metadata.distribution("exllamav3")
+        du_text = dist.read_text("direct_url.json")
+        if du_text:
+            du = json.loads(du_text)
+            url = du.get("url", "")
+            if url.startswith("file://"):
+                src = url.removeprefix("file://")
+                candidate = os.path.join(
+                    src, "exllamav3", "conversion",
+                    "standard_cal_data", "c4.utf8",
+                )
+                if os.path.isfile(candidate):
+                    return candidate
+    except Exception:
+        pass
+    return None
+
+
+def _ensure_exl3_cal_data() -> None:
+    """
+    Verify exllamav3's calibration data exists; auto-repair if possible.
+
+    Some exllamav3 installs (pip wheels, partial builds) omit the
+    standard_cal_data/ directory that the converter hard-codes.
+    """
+    from exllamav3.conversion import calibration_data as cd_mod
+
+    cal_dir = os.path.join(os.path.dirname(cd_mod.__file__), "standard_cal_data")
+    c4_path = os.path.join(cal_dir, "c4.utf8")
+
+    if os.path.exists(c4_path):
+        return
+
+    # Try auto-repair from pip source metadata (editable installs)
+    source = _find_cal_data_source()
+    if source:
+        os.makedirs(cal_dir, exist_ok=True)
+        shutil.copy2(source, c4_path)
+        print(f"ℹ️  Copied missing calibration data to {c4_path}")
+        return
+
+    raise RuntimeError(
+        f"exllamav3 calibration data missing: {c4_path}\n\n"
+        f"Your exllamav3 installation does not include the required c4.utf8 file.\n"
+        f"Copy it from your exllamav3 source checkout:\n\n"
+        f"  mkdir -p '{cal_dir}'\n"
+        f"  cp /path/to/exllamav3/exllamav3/conversion/standard_cal_data/c4.utf8 '{cal_dir}/'\n\n"
+        f"Or reinstall exllamav3 from source:\n"
+        f"  pip install exllamav3 --force-reinstall"
+    )
 
 
 def _split_commas(items: List[str]) -> List[str]:
@@ -70,6 +129,7 @@ def run_one(
         print("🟡 dry-run: not executing")
         return True
 
+    _ensure_exl3_cal_data()
     convert_parser, convert_main, convert_prepare = _get_exl3_convert()
 
     # Parse using the real exllamav3 convert parser, then call prepare/main like convert.py does.
