@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import csv
+import importlib.metadata
 import importlib.util
+import json
 import math
 import os
 import pty
@@ -199,43 +201,83 @@ def _catbench_generate_svgs(catbench_dir: str) -> int:
     return total_svgs
 
 
+def _check_util_pair(
+    root: str, attempted: List[str], checked: List[str],
+) -> Optional[Tuple[str, str]]:
+    """Return (measure_path, optimize_path) if both scripts exist under *root*/util/."""
+    root_abs = os.path.abspath(root)
+    if root_abs in checked:
+        return None
+    checked.append(root_abs)
+    measure = os.path.join(root_abs, "util", "measure.py")
+    optimize = os.path.join(root_abs, "util", "optimize.py")
+    attempted.append(f"{measure} | {optimize}")
+    if os.path.isfile(measure) and os.path.isfile(optimize):
+        return measure, optimize
+    return None
+
+
 def _resolve_exllamav3_util_scripts() -> Tuple[str, str]:
     attempted: List[str] = []
-    roots: List[str] = []
+    checked: List[str] = []
 
+    # --- 1. EXLLAMAV3_ROOT env var (highest priority) ---
     env_root = os.environ.get("EXLLAMAV3_ROOT", "").strip()
     if env_root:
-        roots.append(env_root)
+        result = _check_util_pair(env_root, attempted, checked)
+        if result:
+            return result
 
+    # --- 2. find_spec parent walk (editable installs, PYTHONPATH) ---
     spec = importlib.util.find_spec("exllamav3")
     if spec and spec.origin:
         pkg_dir = os.path.dirname(os.path.abspath(spec.origin))
-        roots.extend(
-            [
-                os.path.dirname(pkg_dir),
-                pkg_dir,
-                os.path.join(pkg_dir, ".."),
-            ]
-        )
+        for candidate in [os.path.dirname(pkg_dir), pkg_dir]:
+            result = _check_util_pair(candidate, attempted, checked)
+            if result:
+                return result
 
-    checked_roots = []
-    for root in roots:
-        root_abs = os.path.abspath(root)
-        if root_abs in checked_roots:
-            continue
-        checked_roots.append(root_abs)
+    # --- 3. PEP 610 direct_url.json (editable pip installs) ---
+    try:
+        dist = importlib.metadata.distribution("exllamav3")
+        direct_url_text = dist.read_text("direct_url.json")
+        if direct_url_text:
+            direct_url = json.loads(direct_url_text)
+            url = direct_url.get("url", "")
+            if url.startswith("file://"):
+                source_dir = url[len("file://"):]
+                result = _check_util_pair(source_dir, attempted, checked)
+                if result:
+                    return result
+    except (importlib.metadata.PackageNotFoundError, Exception):
+        pass
 
-        measure_path = os.path.join(root_abs, "util", "measure.py")
-        optimize_path = os.path.join(root_abs, "util", "optimize.py")
-        attempted.append(f"{measure_path} | {optimize_path}")
-        if os.path.isfile(measure_path) and os.path.isfile(optimize_path):
-            return measure_path, optimize_path
+    # --- 4. Installed-files RECORD (regular pip install) ---
+    try:
+        dist = importlib.metadata.distribution("exllamav3")
+        if dist.files:
+            for f in dist.files:
+                if str(f).replace("\\", "/").endswith("util/measure.py"):
+                    measure_abs = str(dist.locate_file(f))
+                    optimize_abs = os.path.join(
+                        os.path.dirname(measure_abs), "optimize.py",
+                    )
+                    if os.path.isfile(measure_abs) and os.path.isfile(optimize_abs):
+                        return measure_abs, optimize_abs
+                    attempted.append(f"{measure_abs} | {optimize_abs}")
+                    break
+    except (importlib.metadata.PackageNotFoundError, Exception):
+        pass
 
     attempted_msg = "\n  - ".join(attempted) if attempted else "(no paths discovered)"
     raise RuntimeError(
-        "Could not locate exllamav3 util scripts measure.py and optimize.py. "
-        "Set EXLLAMAV3_ROOT to your exllamav3 checkout root.\n"
-        f"Attempted:\n  - {attempted_msg}"
+        "Could not locate exllamav3 util scripts (measure.py / optimize.py).\n"
+        "These scripts live in the exllamav3 git repository but may not be\n"
+        "included in a regular pip install.\n"
+        "Options:\n"
+        "  1. Set EXLLAMAV3_ROOT to your exllamav3 git checkout\n"
+        "  2. Use an editable install: pip install -e <path-to-exllamav3-repo>\n"
+        f"\nPaths attempted:\n  - {attempted_msg}"
     )
 
 
