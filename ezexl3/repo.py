@@ -17,11 +17,11 @@ from typing import Dict, IO, List, Optional, Tuple
 
 from ezexl3.quantize import run as quant_run
 from ezexl3.measure import (
+    _MODEL_DIFF_SCRIPT,
     append_csv_row,
     default_csv_path,
     ensure_csv_exists,
     file_size_gib,
-    find_model_diff_script,
     read_existing_field_labels,
     read_existing_weights,
 )
@@ -984,8 +984,6 @@ def _worker_measure(
 
     ensure_csv_exists(csv_path)
 
-    model_diff_script = find_model_diff_script()
-
     while True:
         job = tasks.get()
         if job is None:
@@ -1004,7 +1002,7 @@ def _worker_measure(
                 # --- KL divergence ---
                 kl_cmd = [
                     sys.executable,
-                    model_diff_script,
+                    _MODEL_DIFF_SCRIPT,
                     "-ma", base_dir,
                     "-mb", model_dir,
                     "-r", "10",
