@@ -2,12 +2,8 @@
 from __future__ import annotations
 
 import csv
-import importlib.metadata
-import importlib.util
-import json
 import math
 import os
-import pathlib
 import pty
 import re
 import select
@@ -202,175 +198,9 @@ def _catbench_generate_svgs(catbench_dir: str) -> int:
     return total_svgs
 
 
-def _check_util_pair(
-    root: str, attempted: List[str], checked: List[str],
-) -> Optional[Tuple[str, str]]:
-    """Return (measure_path, optimize_path) if both scripts exist under *root*/util/."""
-    root_abs = os.path.abspath(root)
-    if root_abs in checked:
-        return None
-    checked.append(root_abs)
-    measure = os.path.join(root_abs, "util", "measure.py")
-    optimize = os.path.join(root_abs, "util", "optimize.py")
-    attempted.append(f"{measure} | {optimize}")
-    if os.path.isfile(measure) and os.path.isfile(optimize):
-        return measure, optimize
-    return None
-
-
-def _download_exllamav3_util_scripts(
-    attempted: List[str],
-) -> Optional[Tuple[str, str]]:
-    """Download util/measure.py and util/optimize.py from the exllamav3 GitHub
-    repo at the installed version and cache them locally.
-
-    Returns the cached paths or ``None`` on failure.
-    """
-    import urllib.request
-    import urllib.error
-
-    try:
-        version = importlib.metadata.version("exllamav3")
-        meta = importlib.metadata.metadata("exllamav3")
-    except importlib.metadata.PackageNotFoundError:
-        return None
-
-    # Determine the GitHub repo URL from package metadata.
-    repo_url: Optional[str] = None
-    for field in ("Home-page", "Home-Page"):
-        val = meta.get(field, "")
-        if val and "github.com" in val:
-            repo_url = val.rstrip("/")
-            break
-    if repo_url is None:
-        # Fallback: check Project-URL entries (PEP 566).
-        for val in meta.get_all("Project-URL") or []:
-            if "github.com" in val:
-                repo_url = val.split(",", 1)[-1].strip().rstrip("/")
-                break
-    if repo_url is None:
-        repo_url = "https://github.com/turboderp/exllamav3"
-
-    # e.g. "turboderp/exllamav3" from "https://github.com/turboderp/exllamav3"
-    repo_slug = "/".join(repo_url.rsplit("/", 2)[-2:])
-
-    cache_dir = pathlib.Path(
-        os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
-        "ezexl3",
-        f"exllamav3-{version}",
-        "util",
-    )
-
-    measure_cached = cache_dir / "measure.py"
-    optimize_cached = cache_dir / "optimize.py"
-
-    # Return immediately if already cached.
-    if measure_cached.is_file() and optimize_cached.is_file():
-        return str(measure_cached), str(optimize_cached)
-
-    # Try version tags in likely formats.
-    tag_candidates = [f"v{version}", version]
-    scripts = {"measure.py": measure_cached, "optimize.py": optimize_cached}
-    downloaded: Dict[str, pathlib.Path] = {}
-
-    for tag in tag_candidates:
-        downloaded.clear()
-        ok = True
-        for name, dest in scripts.items():
-            url = f"https://raw.githubusercontent.com/{repo_slug}/{tag}/util/{name}"
-            attempted.append(f"(download) {url}")
-            try:
-                req = urllib.request.Request(url)
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    data = resp.read()
-                downloaded[name] = dest
-                # Write to a temp file then rename for atomicity.
-                cache_dir.mkdir(parents=True, exist_ok=True)
-                tmp = dest.with_suffix(".tmp")
-                tmp.write_bytes(data)
-                tmp.rename(dest)
-            except (urllib.error.HTTPError, urllib.error.URLError, OSError):
-                ok = False
-                break
-        if ok and len(downloaded) == len(scripts):
-            print(
-                f"ℹ️ Downloaded exllamav3 v{version} util scripts to {cache_dir}"
-            )
-            return str(measure_cached), str(optimize_cached)
-
-    return None
-
-
-def _resolve_exllamav3_util_scripts() -> Tuple[str, str]:
-    attempted: List[str] = []
-    checked: List[str] = []
-
-    # --- 1. EXLLAMAV3_ROOT env var (highest priority) ---
-    env_root = os.environ.get("EXLLAMAV3_ROOT", "").strip()
-    if env_root:
-        result = _check_util_pair(env_root, attempted, checked)
-        if result:
-            return result
-
-    # --- 2. find_spec parent walk (editable installs, PYTHONPATH) ---
-    spec = importlib.util.find_spec("exllamav3")
-    if spec and spec.origin:
-        pkg_dir = os.path.dirname(os.path.abspath(spec.origin))
-        for candidate in [os.path.dirname(pkg_dir), pkg_dir]:
-            result = _check_util_pair(candidate, attempted, checked)
-            if result:
-                return result
-
-    # --- 3. PEP 610 direct_url.json (editable pip installs) ---
-    try:
-        dist = importlib.metadata.distribution("exllamav3")
-        direct_url_text = dist.read_text("direct_url.json")
-        if direct_url_text:
-            direct_url = json.loads(direct_url_text)
-            url = direct_url.get("url", "")
-            if url.startswith("file://"):
-                source_dir = url[len("file://"):]
-                result = _check_util_pair(source_dir, attempted, checked)
-                if result:
-                    return result
-    except (importlib.metadata.PackageNotFoundError, Exception):
-        pass
-
-    # --- 4. Installed-files RECORD (regular pip install) ---
-    try:
-        dist = importlib.metadata.distribution("exllamav3")
-        if dist.files:
-            for f in dist.files:
-                if str(f).replace("\\", "/").endswith("util/measure.py"):
-                    measure_abs = str(dist.locate_file(f))
-                    optimize_abs = os.path.join(
-                        os.path.dirname(measure_abs), "optimize.py",
-                    )
-                    if os.path.isfile(measure_abs) and os.path.isfile(optimize_abs):
-                        return measure_abs, optimize_abs
-                    attempted.append(f"{measure_abs} | {optimize_abs}")
-                    break
-    except (importlib.metadata.PackageNotFoundError, Exception):
-        pass
-
-    # --- 5. Auto-download from GitHub matching installed version ---
-    try:
-        result = _download_exllamav3_util_scripts(attempted)
-        if result:
-            return result
-    except Exception:
-        pass
-
-    attempted_msg = "\n  - ".join(attempted) if attempted else "(no paths discovered)"
-    raise RuntimeError(
-        "Could not locate exllamav3 util scripts (measure.py / optimize.py).\n"
-        "These scripts live in the exllamav3 git repository but may not be\n"
-        "included in a regular pip install.\n"
-        "Options:\n"
-        "  1. Set EXLLAMAV3_ROOT to your exllamav3 git checkout\n"
-        "  2. Use an editable install: pip install -e <path-to-exllamav3-repo>\n"
-        f"\nPaths attempted:\n  - {attempted_msg}"
-    )
+_VENDOR_DIR = os.path.join(os.path.dirname(__file__), "vendor")
+_MEASURE_SCRIPT = os.path.join(_VENDOR_DIR, "measure.py")
+_OPTIMIZE_SCRIPT = os.path.join(_VENDOR_DIR, "optimize.py")
 
 
 def _run_cmd(cmd: List[str]) -> None:
@@ -631,7 +461,6 @@ def _build_optimized_jobs(model_dir: str, optimized_bpws: List[str]) -> Tuple[Li
 
 
 def _worker_optimized_compare(
-    measure_script: str,
     model_dir: str,
     device: int,
     layers: int,
@@ -657,7 +486,7 @@ def _worker_optimized_compare(
         try:
             cmd = [
                 sys.executable,
-                measure_script,
+                _MEASURE_SCRIPT,
                 "-i",
                 job["low_dir"],
                 job["high_dir"],
@@ -686,7 +515,6 @@ def _run_optimized_compare_queue(
     model_dir: str,
     compare_jobs: List[dict],
     devices: List[int],
-    measure_script: str,
     layers: int,
     write_logs: bool = True,
 ) -> None:
@@ -708,7 +536,7 @@ def _run_optimized_compare_queue(
         log_path = os.path.join(model_dir, "logs", f"optimized_compare_gpu{device}.log") if write_logs else None
         p = Process(
             target=_worker_optimized_compare,
-            args=(measure_script, model_dir, device, layers, tasks, results, log_path),
+            args=(model_dir, device, layers, tasks, results, log_path),
         )
         p.daemon = False
         p.start()
@@ -788,7 +616,6 @@ def _run_optimized_opt_stage(
     if not optimized_bpws:
         return
 
-    measure_script, optimize_script = _resolve_exllamav3_util_scripts()
     compare_jobs, optimize_jobs = _build_optimized_jobs(model_dir, optimized_bpws)
 
     queued_jobs: List[dict] = []
@@ -805,7 +632,6 @@ def _run_optimized_opt_stage(
         model_dir=model_dir,
         compare_jobs=queued_jobs,
         devices=devices,
-        measure_script=measure_script,
         layers=layers,
         write_logs=write_logs,
     )
@@ -818,7 +644,7 @@ def _run_optimized_opt_stage(
             continue
         optimize_cmd = [
             sys.executable,
-            optimize_script,
+            _OPTIMIZE_SCRIPT,
             "-m",
             job["measure_json"],
             "-o",
