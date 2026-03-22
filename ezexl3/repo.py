@@ -1,7 +1,6 @@
 # ezexl3/repo.py
 from __future__ import annotations
 
-import csv
 import math
 import os
 import pty
@@ -18,12 +17,15 @@ from typing import Dict, IO, List, Optional, Tuple
 from ezexl3.quantize import run as quant_run
 from ezexl3.measure import (
     _MODEL_DIFF_SCRIPT,
-    append_csv_row,
     default_csv_path,
-    ensure_csv_exists,
     file_size_gib,
-    read_existing_field_labels,
-    read_existing_weights,
+)
+from ezexl3.measure_db import (
+    default_db_path,
+    export_csv,
+    migrate_csv_to_db,
+    read_all_rows as _read_db_rows,
+    upsert_row,
 )
 
 
@@ -675,56 +677,6 @@ def _filter_measure_tasks_for_checkpoint(requested_tasks: List[str], existing_la
     return [task for task in requested_tasks if _task_to_csv_label(task) not in existing_labels]
 
 
-def _merge_csvs(out_csv: str, shard_csvs: List[str]) -> None:
-    """Merge existing output CSV plus shard CSVs into *out_csv*.
-
-    Uses field-level merge: for each label, non-empty field values from later
-    sources overwrite earlier ones.  This lets a KL-only row and a PPL-only row
-    combine into a single complete row.
-    """
-    fieldnames = ["weights", "KL Div", "PPL r-100", "GiB"]
-    rows = {}
-    sources = [out_csv, *shard_csvs]
-
-    for path in sources:
-        if not os.path.exists(path):
-            continue
-        with open(path, "r", newline="") as f:
-            r = csv.DictReader(f)
-            for row in r:
-                w = (row.get("weights") or "").strip()
-                if not w:
-                    continue
-                if w not in rows:
-                    rows[w] = dict(row)
-                else:
-                    for field in fieldnames:
-                        new_val = (row.get(field) or "").strip()
-                        if new_val:
-                            rows[w][field] = new_val
-
-    # Write merged
-    os.makedirs(os.path.dirname(out_csv) or ".", exist_ok=True)
-    with open(out_csv, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=fieldnames)
-        w.writeheader()
-        for key in sorted(rows.keys(), key=_bpw_sort_key):
-            w.writerow(rows[key])
-
-
-def _read_csv_rows(csv_path: str) -> Dict[str, dict]:
-    """Read CSV into ``{label: row_dict}``."""
-    out: Dict[str, dict] = {}
-    if not os.path.exists(csv_path):
-        return out
-    with open(csv_path, "r", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            w = (row.get("weights") or "").strip()
-            if w:
-                out[w] = dict(row)
-    return out
-
 
 # ---------------------------------------------------------------------------
 # Synthetic progress for measure subprocesses (ppl_layer / model_diff)
@@ -968,7 +920,7 @@ def _run_catbench_subprocess(
 def _worker_measure(
     base_dir: str,
     device: int,
-    csv_path: str,
+    db_path: str,
     tasks: "Queue[Optional[dict]]",
     results: "Queue[Optional[dict]]",
     log_path: Optional[str],
@@ -981,8 +933,6 @@ def _worker_measure(
     if log_path:
         os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
         log_f = open(log_path, "w")
-
-    ensure_csv_exists(csv_path)
 
     while True:
         job = tasks.get()
@@ -1016,13 +966,9 @@ def _worker_measure(
                     )
                 kl_div = float(kl_match.group(1))
 
-                row = {
-                    "weights": label,
-                    "KL Div": kl_div,
-                    "PPL r-100": "",
-                    "GiB": file_size_gib(model_dir),
-                }
-                append_csv_row(csv_path, row)
+                gib = file_size_gib(model_dir)
+                upsert_row(db_path, weights=label, kl_div=str(kl_div), gib=str(gib))
+                row = {"weights": label, "KL Div": kl_div, "PPL r-100": "", "GiB": gib}
                 results.put({
                     "event": "done", "device": device, "label": label,
                     "phase": phase, "row": row,
@@ -1045,15 +991,11 @@ def _worker_measure(
                     )
                 ppl_val = float(ppl_match.group(1))
 
-                # For base, hardcode KL=0.0; for others leave blank (merge fills it)
-                kl_field = 0.0 if task_label == "base" else ""
-                row = {
-                    "weights": label,
-                    "KL Div": kl_field,
-                    "PPL r-100": ppl_val,
-                    "GiB": file_size_gib(model_dir),
-                }
-                append_csv_row(csv_path, row)
+                # For base, hardcode KL=0.0; for others leave blank (upsert merges it)
+                kl_field = "0.0" if task_label == "base" else ""
+                gib = file_size_gib(model_dir)
+                upsert_row(db_path, weights=label, kl_div=kl_field, ppl=str(ppl_val), gib=str(gib))
+                row = {"weights": label, "KL Div": kl_field, "PPL r-100": ppl_val, "GiB": gib}
                 results.put({
                     "event": "done", "device": device, "label": label,
                     "phase": phase, "row": row,
@@ -1202,19 +1144,22 @@ def run_measure_stage(
         raise ValueError("No CUDA devices available for measure stage. Provide -d/--devices.")
 
     out_csv = default_csv_path(model_dir)
+    db_path = default_db_path(model_dir)
 
-    # Shard CSVs
-    shard_csvs = []
     log_paths = []
     for d in devices:
-        shard_csvs.append(os.path.join(model_dir, f"{os.path.basename(model_dir)}Measured.gpu{d}.csv"))
         log_paths.append(os.path.join(model_dir, "logs", f"measure_gpu{d}.log") if write_logs else None)
 
-    # Seed merged output from any existing shard state.
-    _merge_csvs(out_csv, shard_csvs)
+    # Migrate any legacy CSV or shard CSVs into the database for resume.
+    if os.path.exists(out_csv):
+        migrate_csv_to_db(out_csv, db_path)
+    for d in devices:
+        legacy_shard = os.path.join(model_dir, f"{os.path.basename(model_dir)}Measured.gpu{d}.csv")
+        if os.path.exists(legacy_shard):
+            migrate_csv_to_db(legacy_shard, db_path)
 
-    # Per-field checkpointing: read merged CSV and decide which phases to skip.
-    existing_rows = _read_csv_rows(out_csv)
+    # Per-field checkpointing: read DB and decide which phases to skip.
+    existing_rows = _read_db_rows(db_path)
 
     print("\n============================================================")
     print("📊 Measurement Phase")
@@ -1437,8 +1382,8 @@ def run_measure_stage(
         tasks.put(None)
 
     procs: List[Process] = []
-    for d, csvp, logp in zip(devices, shard_csvs, log_paths):
-        p = Process(target=_worker_measure, args=(model_dir, d, csvp, tasks, results, logp, ppl_rows))
+    for d, logp in zip(devices, log_paths):
+        p = Process(target=_worker_measure, args=(model_dir, d, db_path, tasks, results, logp, ppl_rows))
         p.daemon = False
         p.start()
         procs.append(p)
@@ -1494,8 +1439,6 @@ def run_measure_stage(
                 ppl_val = row.get("PPL r-100", "N/A")
                 msg = f"✅ [GPU {gpu}] DONE {label} PPL: PPL={ppl_val}"
             gpu_status[gpu] = "idle"
-            if phase != "catbench":
-                _merge_csvs(out_csv, shard_csvs)
         elif event == "error":
             failures += 1
             msg = f"🔴 [GPU {gpu}] FAIL {label} {phase_tag}: {res['error']}"
@@ -1519,8 +1462,8 @@ def run_measure_stage(
     for p in procs:
         p.join()
 
-    # Final merge after all workers exit
-    _merge_csvs(out_csv, shard_csvs)
+    # Export database to CSV for downstream consumers (readme, graph_svg)
+    export_csv(db_path, out_csv)
 
     # Batch SVG generation after all catbench jobs
     if catbench_n > 0:
@@ -1630,10 +1573,15 @@ def run_repo(
                 try: shutil.rmtree(d)
                 except Exception as e: print(f"  🔴 Failed to remove {d}: {e}")
         
-        # 2. *.gpu*.csv
+        # 2. Legacy shard CSVs + measurement database
         gpu_csvs = glob.glob(os.path.join(model_dir, "*.gpu*.csv"))
         for f in gpu_csvs:
-            print(f"  Removing shard CSV {os.path.basename(f)}...")
+            print(f"  Removing legacy shard CSV {os.path.basename(f)}...")
+            try: os.remove(f)
+            except Exception as e: print(f"  🔴 Failed to remove {f}: {e}")
+        db_files = glob.glob(os.path.join(model_dir, "*.db")) + glob.glob(os.path.join(model_dir, "*.db-wal")) + glob.glob(os.path.join(model_dir, "*.db-shm"))
+        for f in db_files:
+            print(f"  Removing {os.path.basename(f)}...")
             try: os.remove(f)
             except Exception as e: print(f"  🔴 Failed to remove {f}: {e}")
             

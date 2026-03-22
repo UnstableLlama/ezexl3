@@ -1,10 +1,12 @@
 import csv
+import os
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from ezexl3 import cli
 from ezexl3 import repo
+from ezexl3 import measure_db
 
 
 class MeasureArgsPassthroughTests(unittest.TestCase):
@@ -117,8 +119,8 @@ class MeasureCheckpointingTests(unittest.TestCase):
             "2": {"weights": "2", "KL Div": "0.1", "PPL r-100": "11.0", "GiB": "4.2"},
             "bf16": {"weights": "bf16", "KL Div": "0.0", "PPL r-100": "10.0", "GiB": "12.3"},
         }
-        with patch("ezexl3.repo._merge_csvs"), \
-             patch("ezexl3.repo._read_csv_rows", return_value=full_rows), \
+        with patch("ezexl3.repo._read_db_rows", return_value=full_rows), \
+             patch("ezexl3.repo.migrate_csv_to_db"), \
              patch("ezexl3.repo.Process") as mock_process:
             rc = repo.run_measure_stage(
                 model_dir="/tmp/model",
@@ -131,52 +133,35 @@ class MeasureCheckpointingTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         mock_process.assert_not_called()
 
-    def test_merge_csvs_preserves_existing_checkpoint_rows(self):
+    def test_upsert_preserves_existing_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
-            out_csv = f"{tmp}/ModelMeasured.csv"
-            shard_csv = f"{tmp}/ModelMeasured.gpu0.csv"
-            fields = ["weights", "KL Div", "PPL r-100", "GiB"]
+            db_path = os.path.join(tmp, "ModelMeasured.db")
+            csv_path = os.path.join(tmp, "ModelMeasured.csv")
 
-            with open(out_csv, "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=fields)
-                w.writeheader()
-                w.writerow({"weights": "bf16", "KL Div": "0.0", "PPL r-100": "10.0", "GiB": "12.3"})
+            measure_db.upsert_row(db_path, weights="bf16", kl_div="0.0", ppl="10.0", gib="12.3")
+            measure_db.upsert_row(db_path, weights="2", kl_div="0.1", ppl="11.0", gib="4.2")
 
-            with open(shard_csv, "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=fields)
-                w.writeheader()
-                w.writerow({"weights": "2", "KL Div": "0.1", "PPL r-100": "11.0", "GiB": "4.2"})
-
-            repo._merge_csvs(out_csv, [shard_csv])
-
-            with open(out_csv, "r", newline="") as f:
+            measure_db.export_csv(db_path, csv_path)
+            with open(csv_path, "r", newline="") as f:
                 rows = list(csv.DictReader(f))
 
         labels = [r["weights"] for r in rows]
-        self.assertEqual(labels, ["bf16", "2"])
+        # Sorted numerically: 2 first, then bf16 (non-numeric sorts last)
+        self.assertEqual(labels, ["2", "bf16"])
 
-    def test_merge_csvs_combines_partial_rows(self):
-        """KL-only and PPL-only rows for the same label merge into one complete row."""
+    def test_upsert_combines_partial_rows(self):
+        """KL-only and PPL-only upserts for the same label merge into one complete row."""
         with tempfile.TemporaryDirectory() as tmp:
-            out_csv = f"{tmp}/ModelMeasured.csv"
-            shard_a = f"{tmp}/ModelMeasured.gpu0.csv"
-            shard_b = f"{tmp}/ModelMeasured.gpu1.csv"
-            fields = ["weights", "KL Div", "PPL r-100", "GiB"]
+            db_path = os.path.join(tmp, "ModelMeasured.db")
+            csv_path = os.path.join(tmp, "ModelMeasured.csv")
 
-            # No existing output CSV
-            with open(shard_a, "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=fields)
-                w.writeheader()
-                w.writerow({"weights": "4", "KL Div": "0.05", "PPL r-100": "", "GiB": "6.0"})
+            # Simulate GPU 0 writing KL only
+            measure_db.upsert_row(db_path, weights="4", kl_div="0.05", gib="6.0")
+            # Simulate GPU 1 writing PPL only
+            measure_db.upsert_row(db_path, weights="4", ppl="9.8", gib="6.0")
 
-            with open(shard_b, "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=fields)
-                w.writeheader()
-                w.writerow({"weights": "4", "KL Div": "", "PPL r-100": "9.8", "GiB": "6.0"})
-
-            repo._merge_csvs(out_csv, [shard_a, shard_b])
-
-            with open(out_csv, "r", newline="") as f:
+            measure_db.export_csv(db_path, csv_path)
+            with open(csv_path, "r", newline="") as f:
                 rows = list(csv.DictReader(f))
 
         self.assertEqual(len(rows), 1)
@@ -184,30 +169,39 @@ class MeasureCheckpointingTests(unittest.TestCase):
         self.assertEqual(rows[0]["KL Div"], "0.05")
         self.assertEqual(rows[0]["PPL r-100"], "9.8")
 
-    def test_merge_csvs_prefers_newer_shard_rows_for_duplicates(self):
+    def test_upsert_overwrites_with_newer_values(self):
         with tempfile.TemporaryDirectory() as tmp:
-            out_csv = f"{tmp}/ModelMeasured.csv"
-            shard_csv = f"{tmp}/ModelMeasured.gpu0.csv"
-            fields = ["weights", "KL Div", "PPL r-100", "GiB"]
+            db_path = os.path.join(tmp, "ModelMeasured.db")
 
-            with open(out_csv, "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=fields)
-                w.writeheader()
-                w.writerow({"weights": "2", "KL Div": "9.9", "PPL r-100": "99.0", "GiB": "4.0"})
+            measure_db.upsert_row(db_path, weights="2", kl_div="9.9", ppl="99.0", gib="4.0")
+            measure_db.upsert_row(db_path, weights="2", kl_div="0.2", ppl="12.0", gib="4.1")
 
-            with open(shard_csv, "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=fields)
-                w.writeheader()
-                w.writerow({"weights": "2", "KL Div": "0.2", "PPL r-100": "12.0", "GiB": "4.1"})
-
-            repo._merge_csvs(out_csv, [shard_csv])
-
-            with open(out_csv, "r", newline="") as f:
-                rows = list(csv.DictReader(f))
+            rows = measure_db.read_all_rows(db_path)
 
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["weights"], "2")
-        self.assertEqual(rows[0]["KL Div"], "0.2")
+        self.assertEqual(rows["2"]["KL Div"], "0.2")
+        self.assertEqual(rows["2"]["PPL r-100"], "12.0")
+
+    def test_migrate_csv_to_db(self):
+        """Legacy CSV data is imported into the database."""
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path = os.path.join(tmp, "ModelMeasured.csv")
+            db_path = os.path.join(tmp, "ModelMeasured.db")
+            fields = ["weights", "KL Div", "PPL r-100", "GiB"]
+
+            with open(csv_path, "w", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=fields)
+                w.writeheader()
+                w.writerow({"weights": "bf16", "KL Div": "0.0", "PPL r-100": "10.0", "GiB": "12.3"})
+                w.writerow({"weights": "3", "KL Div": "0.08", "PPL r-100": "9.5", "GiB": "5.1"})
+
+            count = measure_db.migrate_csv_to_db(csv_path, db_path)
+            self.assertEqual(count, 2)
+
+            rows = measure_db.read_all_rows(db_path)
+            self.assertIn("bf16", rows)
+            self.assertIn("3", rows)
+            self.assertEqual(rows["3"]["KL Div"], "0.08")
 
 
 if __name__ == "__main__":
