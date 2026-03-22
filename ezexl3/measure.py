@@ -138,7 +138,7 @@ def find_model_diff_script() -> str:
     Find internal model_diff.py script.
     """
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
-    script_path = os.path.join(pkg_dir, "model_diff.py")
+    script_path = os.path.join(pkg_dir, "vendor", "model_diff.py")
     if os.path.exists(script_path):
         return script_path
 
