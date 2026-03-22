@@ -7,6 +7,7 @@ import importlib.util
 import json
 import math
 import os
+import pathlib
 import pty
 import re
 import select
@@ -217,6 +218,89 @@ def _check_util_pair(
     return None
 
 
+def _download_exllamav3_util_scripts(
+    attempted: List[str],
+) -> Optional[Tuple[str, str]]:
+    """Download util/measure.py and util/optimize.py from the exllamav3 GitHub
+    repo at the installed version and cache them locally.
+
+    Returns the cached paths or ``None`` on failure.
+    """
+    import urllib.request
+    import urllib.error
+
+    try:
+        version = importlib.metadata.version("exllamav3")
+        meta = importlib.metadata.metadata("exllamav3")
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+    # Determine the GitHub repo URL from package metadata.
+    repo_url: Optional[str] = None
+    for field in ("Home-page", "Home-Page"):
+        val = meta.get(field, "")
+        if val and "github.com" in val:
+            repo_url = val.rstrip("/")
+            break
+    if repo_url is None:
+        # Fallback: check Project-URL entries (PEP 566).
+        for val in meta.get_all("Project-URL") or []:
+            if "github.com" in val:
+                repo_url = val.split(",", 1)[-1].strip().rstrip("/")
+                break
+    if repo_url is None:
+        repo_url = "https://github.com/turboderp/exllamav3"
+
+    # e.g. "turboderp/exllamav3" from "https://github.com/turboderp/exllamav3"
+    repo_slug = "/".join(repo_url.rsplit("/", 2)[-2:])
+
+    cache_dir = pathlib.Path(
+        os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
+        "ezexl3",
+        f"exllamav3-{version}",
+        "util",
+    )
+
+    measure_cached = cache_dir / "measure.py"
+    optimize_cached = cache_dir / "optimize.py"
+
+    # Return immediately if already cached.
+    if measure_cached.is_file() and optimize_cached.is_file():
+        return str(measure_cached), str(optimize_cached)
+
+    # Try version tags in likely formats.
+    tag_candidates = [f"v{version}", version]
+    scripts = {"measure.py": measure_cached, "optimize.py": optimize_cached}
+    downloaded: Dict[str, pathlib.Path] = {}
+
+    for tag in tag_candidates:
+        downloaded.clear()
+        ok = True
+        for name, dest in scripts.items():
+            url = f"https://raw.githubusercontent.com/{repo_slug}/{tag}/util/{name}"
+            attempted.append(f"(download) {url}")
+            try:
+                req = urllib.request.Request(url)
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data = resp.read()
+                downloaded[name] = dest
+                # Write to a temp file then rename for atomicity.
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                tmp = dest.with_suffix(".tmp")
+                tmp.write_bytes(data)
+                tmp.rename(dest)
+            except (urllib.error.HTTPError, urllib.error.URLError, OSError):
+                ok = False
+                break
+        if ok and len(downloaded) == len(scripts):
+            print(
+                f"ℹ️ Downloaded exllamav3 v{version} util scripts to {cache_dir}"
+            )
+            return str(measure_cached), str(optimize_cached)
+
+    return None
+
+
 def _resolve_exllamav3_util_scripts() -> Tuple[str, str]:
     attempted: List[str] = []
     checked: List[str] = []
@@ -267,6 +351,14 @@ def _resolve_exllamav3_util_scripts() -> Tuple[str, str]:
                     attempted.append(f"{measure_abs} | {optimize_abs}")
                     break
     except (importlib.metadata.PackageNotFoundError, Exception):
+        pass
+
+    # --- 5. Auto-download from GitHub matching installed version ---
+    try:
+        result = _download_exllamav3_util_scripts(attempted)
+        if result:
+            return result
+    except Exception:
         pass
 
     attempted_msg = "\n  - ".join(attempted) if attempted else "(no paths discovered)"
