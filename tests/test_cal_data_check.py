@@ -1,4 +1,3 @@
-import json
 import os
 import sys
 import tempfile
@@ -6,7 +5,7 @@ import types
 import unittest
 from unittest.mock import patch, MagicMock
 
-from ezexl3.quantize import _ensure_exl3_cal_data, _find_cal_data_source
+from ezexl3.quantize import _ensure_exl3_cal_data, _CAL_FILES
 
 
 def _install_fake_exl3_module(tmpdir):
@@ -56,84 +55,62 @@ class EnsureCalDataTests(unittest.TestCase):
             finally:
                 cleanup()
 
-    def test_raises_when_c4_missing_and_no_source(self):
+    def test_downloads_when_missing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             cleanup = _install_fake_exl3_module(tmpdir)
             try:
-                with patch("ezexl3.quantize._find_cal_data_source", return_value=None):
+                cal_dir = os.path.join(tmpdir, "standard_cal_data")
+
+                def fake_urlretrieve(url, dest):
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    with open(dest, "w") as f:
+                        f.write(f"data for {os.path.basename(dest)}")
+
+                with patch("ezexl3.quantize.urllib.request.urlretrieve", side_effect=fake_urlretrieve):
+                    _ensure_exl3_cal_data()
+
+                for fname in _CAL_FILES:
+                    path = os.path.join(cal_dir, fname)
+                    self.assertTrue(os.path.isfile(path), f"{fname} should exist")
+            finally:
+                cleanup()
+
+    def test_raises_on_download_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cleanup = _install_fake_exl3_module(tmpdir)
+            try:
+                with patch("ezexl3.quantize.urllib.request.urlretrieve", side_effect=OSError("network error")):
                     with self.assertRaises(RuntimeError) as ctx:
                         _ensure_exl3_cal_data()
-                    self.assertIn("c4.utf8", str(ctx.exception))
+                    self.assertIn("Failed to download", str(ctx.exception))
             finally:
                 cleanup()
 
-    def test_auto_repairs_from_source(self):
+    def test_skips_already_downloaded_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Fake source with c4.utf8
-            source_dir = os.path.join(tmpdir, "source")
-            os.makedirs(source_dir)
-            source_c4 = os.path.join(source_dir, "c4.utf8")
-            with open(source_c4, "w") as f:
-                f.write("calibration data")
-
-            # Fake installed package (missing cal data)
-            pkg_dir = os.path.join(tmpdir, "installed")
-            os.makedirs(pkg_dir)
-
-            cleanup = _install_fake_exl3_module(pkg_dir)
-            try:
-                with patch("ezexl3.quantize._find_cal_data_source", return_value=source_c4):
-                    _ensure_exl3_cal_data()
-            finally:
-                cleanup()
-
-            repaired = os.path.join(pkg_dir, "standard_cal_data", "c4.utf8")
-            self.assertTrue(os.path.isfile(repaired))
-            with open(repaired) as f:
-                self.assertEqual(f.read(), "calibration data")
-
-
-class FindCalDataSourceTests(unittest.TestCase):
-    """Tests for _find_cal_data_source metadata lookup."""
-
-    def test_returns_none_when_no_metadata(self):
-        with patch("importlib.metadata.distribution", side_effect=Exception):
-            self.assertIsNone(_find_cal_data_source())
-
-    def test_returns_path_for_editable_install(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            cal_dir = os.path.join(
-                tmpdir, "exllamav3", "conversion", "standard_cal_data",
-            )
+            cal_dir = os.path.join(tmpdir, "standard_cal_data")
             os.makedirs(cal_dir)
-            c4_path = os.path.join(cal_dir, "c4.utf8")
-            with open(c4_path, "w") as f:
-                f.write("data")
+            # Create all but the first file
+            for fname in _CAL_FILES[1:]:
+                with open(os.path.join(cal_dir, fname), "w") as f:
+                    f.write("existing")
 
-            direct_url = json.dumps({"url": f"file://{tmpdir}"})
+            cleanup = _install_fake_exl3_module(tmpdir)
+            try:
+                downloaded = []
 
-            class FakeDist:
-                def read_text(self, name):
-                    if name == "direct_url.json":
-                        return direct_url
-                    return None
+                def fake_urlretrieve(url, dest):
+                    downloaded.append(os.path.basename(dest))
+                    with open(dest, "w") as f:
+                        f.write("new")
 
-            with patch("importlib.metadata.distribution", return_value=FakeDist()):
-                result = _find_cal_data_source()
+                with patch("ezexl3.quantize.urllib.request.urlretrieve", side_effect=fake_urlretrieve):
+                    _ensure_exl3_cal_data()
 
-            self.assertEqual(result, c4_path)
-
-    def test_returns_none_for_non_file_url(self):
-        direct_url = json.dumps({"url": "https://example.com/exllamav3"})
-
-        class FakeDist:
-            def read_text(self, name):
-                if name == "direct_url.json":
-                    return direct_url
-                return None
-
-        with patch("importlib.metadata.distribution", return_value=FakeDist()):
-            self.assertIsNone(_find_cal_data_source())
+                # Only the first file should have been downloaded
+                self.assertEqual(downloaded, [_CAL_FILES[0]])
+            finally:
+                cleanup()
 
 
 if __name__ == "__main__":

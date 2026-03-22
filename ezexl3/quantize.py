@@ -1,11 +1,10 @@
 # ezexl3/quantize.py
 from __future__ import annotations
 
-import importlib.metadata
-import json
 import os
 import shutil
 import time
+import urllib.request
 from typing import List, Tuple, Optional
 
 # Defer exllamav3 imports to avoid slow startup
@@ -18,60 +17,45 @@ def _get_exl3_convert():
     return convert_parser, convert_main, convert_prepare
 
 
-def _find_cal_data_source() -> Optional[str]:
-    """Try to locate c4.utf8 from an exllamav3 source/editable install."""
-    try:
-        import importlib.metadata
-        dist = importlib.metadata.distribution("exllamav3")
-        du_text = dist.read_text("direct_url.json")
-        if du_text:
-            du = json.loads(du_text)
-            url = du.get("url", "")
-            if url.startswith("file://"):
-                src = url.removeprefix("file://")
-                candidate = os.path.join(
-                    src, "exllamav3", "conversion",
-                    "standard_cal_data", "c4.utf8",
-                )
-                if os.path.isfile(candidate):
-                    return candidate
-    except Exception:
-        pass
-    return None
+_CAL_FILES = ["c4.utf8", "code.utf8", "multilingual.utf8", "technical.utf8", "wiki.utf8", "tiny.utf8"]
+_CAL_BASE_URL = "https://raw.githubusercontent.com/turboderp/exllamav3/master/exllamav3/conversion/standard_cal_data"
 
 
 def _ensure_exl3_cal_data() -> None:
     """
-    Verify exllamav3's calibration data exists; auto-repair if possible.
+    Download exllamav3's calibration data if the pip wheel omitted it.
 
-    Some exllamav3 installs (pip wheels, partial builds) omit the
-    standard_cal_data/ directory that the converter hard-codes.
+    The exllamav3 pip wheel ships an empty standard_cal_data/ directory.
+    The actual .utf8 files only exist in the source repo, so we fetch
+    them on first use.
     """
     from exllamav3.conversion import calibration_data as cd_mod
 
     cal_dir = os.path.join(os.path.dirname(cd_mod.__file__), "standard_cal_data")
-    c4_path = os.path.join(cal_dir, "c4.utf8")
 
-    if os.path.exists(c4_path):
+    # Quick check: if the first file exists, assume all are present
+    if os.path.exists(os.path.join(cal_dir, _CAL_FILES[0])):
         return
 
-    # Try auto-repair from pip source metadata (editable installs)
-    source = _find_cal_data_source()
-    if source:
-        os.makedirs(cal_dir, exist_ok=True)
-        shutil.copy2(source, c4_path)
-        print(f"ℹ️  Copied missing calibration data to {c4_path}")
-        return
-
-    raise RuntimeError(
-        f"exllamav3 calibration data missing: {c4_path}\n\n"
-        f"Your exllamav3 installation does not include the required c4.utf8 file.\n"
-        f"Copy it from your exllamav3 source checkout:\n\n"
-        f"  mkdir -p '{cal_dir}'\n"
-        f"  cp /path/to/exllamav3/exllamav3/conversion/standard_cal_data/c4.utf8 '{cal_dir}/'\n\n"
-        f"Or reinstall exllamav3 from source:\n"
-        f"  pip install exllamav3 --force-reinstall"
-    )
+    os.makedirs(cal_dir, exist_ok=True)
+    print("Downloading exllamav3 calibration data (one-time)...")
+    for fname in _CAL_FILES:
+        dest = os.path.join(cal_dir, fname)
+        if os.path.exists(dest):
+            continue
+        url = f"{_CAL_BASE_URL}/{fname}"
+        try:
+            urllib.request.urlretrieve(url, dest)
+            print(f"  {fname}")
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to download calibration file {fname} from {url}: {e}\n\n"
+                f"You can manually download from:\n"
+                f"  {_CAL_BASE_URL}/\n\n"
+                f"And place the .utf8 files in:\n"
+                f"  {cal_dir}/"
+            ) from e
+    print("Calibration data ready.")
 
 
 def _split_commas(items: List[str]) -> List[str]:
