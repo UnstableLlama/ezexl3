@@ -48,10 +48,7 @@ class OptimizedStageTests(unittest.TestCase):
             measurements.mkdir()
             (measurements / "4-5_measurement.json").write_text("{}")
 
-            with patch(
-                "ezexl3.repo._resolve_exllamav3_util_scripts",
-                return_value=("/opt/exl3/util/measure.py", "/opt/exl3/util/optimize.py"),
-            ), patch("ezexl3.repo._run_optimized_compare_queue") as mock_queue, patch(
+            with patch("ezexl3.repo._run_optimized_compare_queue") as mock_queue, patch(
                 "ezexl3.repo._run_cmd"
             ) as mock_run:
                 repo._run_optimized_opt_stage(str(model_dir), ["4.07"], devices=[0, 1], write_logs=False)
@@ -61,7 +58,7 @@ class OptimizedStageTests(unittest.TestCase):
             self.assertEqual(queued_jobs, [])
             self.assertEqual(mock_run.call_count, 1)
             cmd = mock_run.call_args.args[0]
-            self.assertEqual(cmd[0:2], [repo.sys.executable, "/opt/exl3/util/optimize.py"])
+            self.assertEqual(cmd[0:2], [repo.sys.executable, repo._OPTIMIZE_SCRIPT])
             self.assertIn("4.07", cmd)
 
     def test_compare_queue_prints_start_and_done(self):
@@ -82,9 +79,9 @@ class OptimizedStageTests(unittest.TestCase):
                 self.args = args
 
             def start(self):
-                self.args[5].put({"event": "start", "device": 1, "job": jobs[0]})
-                self.args[5].put({"event": "done", "device": 1, "job": jobs[0], "label": "3-4"})
-                self.args[5].put(None)
+                self.args[4].put({"event": "start", "device": 1, "job": jobs[0]})
+                self.args[4].put({"event": "done", "device": 1, "job": jobs[0], "label": "3-4"})
+                self.args[4].put(None)
 
             def join(self):
                 return None
@@ -94,7 +91,6 @@ class OptimizedStageTests(unittest.TestCase):
                 model_dir="/tmp/model",
                 compare_jobs=jobs,
                 devices=[1],
-                measure_script="/opt/exl3/util/measure.py",
                 layers=2,
                 write_logs=False,
             )
@@ -115,6 +111,7 @@ class OptimizedStageTests(unittest.TestCase):
                 quant_args=[],
                 measure_args=[],
                 do_readme=False,
+                verify=False,
             )
 
         self.assertEqual(rc, 0)
@@ -151,7 +148,7 @@ class ProgressDisplayTests(unittest.TestCase):
                 self.args = args
 
             def start(self):
-                q = self.args[5]
+                q = self.args[4]
                 q.put({"event": "start", "device": 0, "job": jobs[0]})
                 q.put({"event": "progress", "device": 0, "text": "Measuring 45%"})
                 q.put({"event": "progress", "device": 0, "text": "Measuring 90%"})
@@ -166,7 +163,6 @@ class ProgressDisplayTests(unittest.TestCase):
                 model_dir="/tmp/model",
                 compare_jobs=jobs,
                 devices=[0],
-                measure_script="/opt/exl3/util/measure.py",
                 layers=2,
                 write_logs=False,
             )
@@ -195,7 +191,7 @@ class ProgressDisplayTests(unittest.TestCase):
                 self.args = args
 
             def start(self):
-                q = self.args[5]
+                q = self.args[4]
                 q.put({"event": "start", "device": 0, "job": jobs[0]})
                 q.put({"event": "progress", "device": 0, "text": "working..."})
                 q.put({"event": "done", "device": 0, "job": jobs[0], "label": "2-3"})
@@ -211,7 +207,6 @@ class ProgressDisplayTests(unittest.TestCase):
                 model_dir="/tmp/model",
                 compare_jobs=jobs,
                 devices=[0],
-                measure_script="/opt/exl3/util/measure.py",
                 layers=2,
                 write_logs=False,
             )

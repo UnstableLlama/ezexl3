@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import os
+import shutil
 import time
+import urllib.request
 from typing import List, Tuple, Optional
 
 # Defer exllamav3 imports to avoid slow startup
@@ -13,6 +15,47 @@ def _get_exl3_convert():
         prepare as convert_prepare
     )
     return convert_parser, convert_main, convert_prepare
+
+
+_CAL_FILES = ["c4.utf8", "code.utf8", "multilingual.utf8", "technical.utf8", "wiki.utf8", "tiny.utf8"]
+_CAL_BASE_URL = "https://raw.githubusercontent.com/turboderp/exllamav3/master/exllamav3/conversion/standard_cal_data"
+
+
+def _ensure_exl3_cal_data() -> None:
+    """
+    Download exllamav3's calibration data if the pip wheel omitted it.
+
+    The exllamav3 pip wheel ships an empty standard_cal_data/ directory.
+    The actual .utf8 files only exist in the source repo, so we fetch
+    them on first use.
+    """
+    from exllamav3.conversion import calibration_data as cd_mod
+
+    cal_dir = os.path.join(os.path.dirname(cd_mod.__file__), "standard_cal_data")
+
+    # Quick check: if the first file exists, assume all are present
+    if os.path.exists(os.path.join(cal_dir, _CAL_FILES[0])):
+        return
+
+    os.makedirs(cal_dir, exist_ok=True)
+    print("Downloading exllamav3 calibration data (one-time)...")
+    for fname in _CAL_FILES:
+        dest = os.path.join(cal_dir, fname)
+        if os.path.exists(dest):
+            continue
+        url = f"{_CAL_BASE_URL}/{fname}"
+        try:
+            urllib.request.urlretrieve(url, dest)
+            print(f"  {fname}")
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to download calibration file {fname} from {url}: {e}\n\n"
+                f"You can manually download from:\n"
+                f"  {_CAL_BASE_URL}/\n\n"
+                f"And place the .utf8 files in:\n"
+                f"  {cal_dir}/"
+            ) from e
+    print("Calibration data ready.")
 
 
 def _split_commas(items: List[str]) -> List[str]:
@@ -70,6 +113,7 @@ def run_one(
         print("🟡 dry-run: not executing")
         return True
 
+    _ensure_exl3_cal_data()
     convert_parser, convert_main, convert_prepare = _get_exl3_convert()
 
     # Parse using the real exllamav3 convert parser, then call prepare/main like convert.py does.

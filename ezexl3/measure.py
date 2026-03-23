@@ -23,6 +23,8 @@ from typing import Dict, List, Set
 
 CSV_FIELDS = ["weights", "KL Div", "PPL r-100", "GiB"]
 
+_MODEL_DIFF_SCRIPT = os.path.join(os.path.dirname(__file__), "vendor", "model_diff.py")
+
 
 # ----------------------------
 # Helpers: filesystem + CSV
@@ -133,18 +135,6 @@ def run_cmd_capture(cmd: List[str]) -> str:
         raise RuntimeError(f"Command failed (rc={rc}): {' '.join(cmd)}\n\nOutput:\n{full_out}")
     return full_out
 
-def find_model_diff_script() -> str:
-    """
-    Find internal model_diff.py script.
-    """
-    pkg_dir = os.path.dirname(os.path.abspath(__file__))
-    script_path = os.path.join(pkg_dir, "model_diff.py")
-    if os.path.exists(script_path):
-        return script_path
-
-    raise RuntimeError(f"Could not find local model_diff.py at {script_path}")
-
-
 def run_model_diff(
     base_dir: str,
     other_dir: str,
@@ -154,11 +144,9 @@ def run_model_diff(
     """
     Runs internal model_diff.py and returns KL divergence.
     """
-    script_path = find_model_diff_script()
-
     cmd = [
         sys.executable,
-        script_path,
+        _MODEL_DIFF_SCRIPT,
         "-ma", base_dir,
         "-mb", other_dir,
         "-r", str(r),
