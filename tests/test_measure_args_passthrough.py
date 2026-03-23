@@ -211,14 +211,12 @@ class InterleavedPipelineTests(unittest.TestCase):
         """Common patches for run_repo tests."""
         return {
             "quant_run_one": patch("ezexl3.repo.quant_run_one", return_value=True),
-            "run_measure_single_bpw": patch("ezexl3.repo.run_measure_single_bpw", return_value=0),
+            "run_measure_stage": patch("ezexl3.repo.run_measure_stage", return_value=0),
             "_run_optimized_opt_stage": patch("ezexl3.repo._run_optimized_opt_stage"),
-            "_init_measure_db": patch("ezexl3.repo._init_measure_db", return_value=("/tmp/m.db", "/tmp/m.csv")),
-            "export_csv": patch("ezexl3.repo.export_csv"),
         }
 
-    def test_verify_true_calls_quant_then_measure_per_bpw(self):
-        """With verify=True, each BPW is quantized then immediately measured."""
+    def test_verify_true_quants_per_bpw_then_batches_measurement(self):
+        """With verify=True, each BPW is quantized individually, then all measured in one batch."""
         patches = self._base_patches()
         mocks = {k: p.start() for k, p in patches.items()}
         try:
@@ -245,15 +243,11 @@ class InterleavedPipelineTests(unittest.TestCase):
         self.assertIn("2", quant_bpws)
         self.assertIn("4", quant_bpws)
 
-        # run_measure_single_bpw called once per BPW
-        measure_calls = mocks["run_measure_single_bpw"].call_args_list
-        measure_bpws = [c.kwargs["bpw"] for c in measure_calls]
+        # run_measure_stage called once with ALL BPWs for batched multi-GPU measurement
+        mocks["run_measure_stage"].assert_called_once()
+        measure_bpws = mocks["run_measure_stage"].call_args.kwargs["bpws"]
         self.assertIn("2", measure_bpws)
         self.assertIn("4", measure_bpws)
-
-        # First BPW verification includes base PPL
-        first_call = measure_calls[0]
-        self.assertTrue(first_call.kwargs["include_base_ppl"])
 
     def test_verify_true_halts_on_quant_failure(self):
         """Pipeline halts immediately if a quantization fails."""
@@ -280,13 +274,14 @@ class InterleavedPipelineTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         # Only one quant attempted before halting
         self.assertEqual(mocks["quant_run_one"].call_count, 1)
-        mocks["run_measure_single_bpw"].assert_not_called()
+        # Measurement stage never reached
+        mocks["run_measure_stage"].assert_not_called()
 
-    def test_verify_true_halts_on_measure_failure(self):
-        """Pipeline halts immediately if measurement verification fails."""
+    def test_verify_true_halts_on_measure_stage_failure(self):
+        """Pipeline halts if batched measurement stage fails."""
         patches = self._base_patches()
         mocks = {k: p.start() for k, p in patches.items()}
-        mocks["run_measure_single_bpw"].return_value = 1  # measure fails
+        mocks["run_measure_stage"].return_value = 1  # measure fails
         try:
             rc = repo.run_repo(
                 model_dir="/tmp/model",
@@ -305,9 +300,10 @@ class InterleavedPipelineTests(unittest.TestCase):
                 p.stop()
 
         self.assertEqual(rc, 1)
-        # Quant succeeded for first BPW, measure failed, no second BPW attempted
-        self.assertEqual(mocks["quant_run_one"].call_count, 1)
-        self.assertEqual(mocks["run_measure_single_bpw"].call_count, 1)
+        # All quants completed (they succeeded)
+        self.assertEqual(mocks["quant_run_one"].call_count, 2)
+        # Measurement stage was called and failed
+        mocks["run_measure_stage"].assert_called_once()
 
     def test_verify_false_uses_legacy_pipeline(self):
         """With verify=False (--no-verify), uses batch quant then batch measure."""
@@ -353,7 +349,7 @@ class InterleavedPipelineTests(unittest.TestCase):
         self.assertTrue(mock_run_repo.call_args.kwargs["verify"])
 
     def test_verify_with_optimized_bpws(self):
-        """Optimized (fractional) BPWs are measured after optimize stage."""
+        """Optimized (fractional) BPWs are quantized, optimized, then all measured in one batch."""
         patches = self._base_patches()
         mocks = {k: p.start() for k, p in patches.items()}
         try:
@@ -376,12 +372,12 @@ class InterleavedPipelineTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         # Optimized stage was called
         mocks["_run_optimized_opt_stage"].assert_called_once()
-        # Optimized BPW 3.5 was measured
-        measure_bpws = [c.kwargs["bpw"] for c in mocks["run_measure_single_bpw"].call_args_list]
+        # run_measure_stage called with all BPWs including 3.5
+        measure_bpws = mocks["run_measure_stage"].call_args.kwargs["bpws"]
         self.assertIn("3.5", measure_bpws)
 
-    def test_verify_uses_all_available_gpus(self):
-        """run_measure_single_bpw receives the full device list for multi-GPU measurement."""
+    def test_verify_passes_all_gpus_to_measure_stage(self):
+        """run_measure_stage receives all devices for multi-GPU measurement."""
         patches = self._base_patches()
         mocks = {k: p.start() for k, p in patches.items()}
         try:
@@ -401,9 +397,82 @@ class InterleavedPipelineTests(unittest.TestCase):
             for p in patches.values():
                 p.stop()
 
-        # All 4 GPUs passed to measure
-        for c in mocks["run_measure_single_bpw"].call_args_list:
-            self.assertEqual(c.kwargs["devices"], [0, 1, 2, 3])
+        # All 4 GPUs passed to measure stage
+        self.assertEqual(mocks["run_measure_stage"].call_args.kwargs["devices"], [0, 1, 2, 3])
+
+    def test_verify_measure_stage_receives_catbench_n(self):
+        """catbench_n is forwarded to run_measure_stage in interleaved mode."""
+        patches = self._base_patches()
+        mocks = {k: p.start() for k, p in patches.items()}
+        try:
+            repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["2"],
+                devices=[0],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=True,
+                catbench_n=5,
+            )
+        finally:
+            for p in patches.values():
+                p.stop()
+
+        self.assertEqual(mocks["run_measure_stage"].call_args.kwargs["catbench_n"], 5)
+
+
+class GiBGapFillTests(unittest.TestCase):
+    """Tests for GiB gap detection and filling in run_measure_stage."""
+
+    def test_gib_gaps_filled_before_measurement(self):
+        """Missing GiB values are filled from filesystem before GPU work starts."""
+        full_rows = {
+            "2": {"weights": "2", "KL Div": "0.1", "PPL r-100": "11.0", "GiB": ""},
+            "bf16": {"weights": "bf16", "KL Div": "0.0", "PPL r-100": "10.0", "GiB": "12.3"},
+        }
+        with patch("ezexl3.repo._read_db_rows", return_value=full_rows), \
+             patch("ezexl3.repo.migrate_csv_to_db"), \
+             patch("ezexl3.repo.file_size_gib", return_value=4.2) as mock_gib, \
+             patch("ezexl3.repo.upsert_row") as mock_upsert, \
+             patch("ezexl3.repo.Process"):
+            repo.run_measure_stage(
+                model_dir="/tmp/model",
+                bpws=["2"],
+                devices=[0],
+                write_logs=False,
+                measure_args=[],
+            )
+
+        # file_size_gib called for the BPW with missing GiB
+        mock_gib.assert_any_call("/tmp/model/2")
+        # upsert_row called to fill the GiB gap
+        mock_upsert.assert_any_call("/tmp/model/modelMeasured.db", weights="2", gib="4.2")
+
+    def test_gib_gaps_not_filled_when_present(self):
+        """No upsert when GiB values are already present."""
+        full_rows = {
+            "2": {"weights": "2", "KL Div": "0.1", "PPL r-100": "11.0", "GiB": "4.2"},
+            "bf16": {"weights": "bf16", "KL Div": "0.0", "PPL r-100": "10.0", "GiB": "12.3"},
+        }
+        with patch("ezexl3.repo._read_db_rows", return_value=full_rows), \
+             patch("ezexl3.repo.migrate_csv_to_db"), \
+             patch("ezexl3.repo.file_size_gib") as mock_gib, \
+             patch("ezexl3.repo.upsert_row") as mock_upsert, \
+             patch("ezexl3.repo.Process"):
+            repo.run_measure_stage(
+                model_dir="/tmp/model",
+                bpws=["2"],
+                devices=[0],
+                write_logs=False,
+                measure_args=[],
+            )
+
+        # file_size_gib never called — no gaps to fill
+        mock_gib.assert_not_called()
 
 
 if __name__ == "__main__":
