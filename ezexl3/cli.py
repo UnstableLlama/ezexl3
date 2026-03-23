@@ -117,16 +117,6 @@ def _parse_device_ratios(values: Optional[List[str]], devices: List[int]) -> Opt
     return parsed
 
 
-def _warn_deprecated_or_unused(args: argparse.Namespace, cmd: str) -> None:
-    if getattr(args, "exllamav3_root", None):
-        print("⚠️ --exllamav3-root is deprecated and ignored.")
-
-    if cmd == "repo":
-        if getattr(args, "schedule", "queue") != "queue":
-            print("⚠️ --schedule is currently ignored; only queue scheduling is implemented.")
-        if getattr(args, "no_meta", False):
-            print("⚠️ --no-meta is currently ignored; run metadata receipts are not implemented.")
-
 
 def _parse_layers(value: int) -> int:
     if value not in (1, 2, 3):
@@ -146,10 +136,6 @@ def build_parser() -> argparse.ArgumentParser:
         p_sub.add_argument("-m", "--models", nargs="+", required=True,
                            help="One or more BF16/base model directories (space or comma separated)")
         p_sub.add_argument(
-            "--exllamav3-root",
-            help="[DEPRECATED] No longer needed, bundled model_diff.py is used.",
-        )
-        p_sub.add_argument(
             "-b", "--bpws",
             required=True,
             nargs="+",
@@ -165,11 +151,8 @@ def build_parser() -> argparse.ArgumentParser:
             default=None,
             help="Device ratios for quantization only. Example: -r 1,1 (optional)",
         )
-        p_sub.add_argument("--schedule", choices=["queue", "static"], default="queue",
-                           help="Measurement scheduling strategy (default: queue)")
         p_sub.add_argument("--no-cleanup", "-nc", action="store_true", help="Keep w-* working dirs and logs")
         p_sub.add_argument("--no-readme", action="store_true", help="Skip README stage")
-        p_sub.add_argument("--no-meta", action="store_true", help="Do not write run.json receipt")
         p_sub.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
         p_sub.add_argument("--no-prompt", "-np", action="store_true", help="Use defaults for README instead of prompting")
         p_sub.add_argument("--no-graph", "-ng", action="store_true", help="Do not generate or embed the README SVG graph")
@@ -211,10 +194,6 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--no-cleanup", "-nc", action="store_true", help="Keep temporary shard CSVs and logs")
     m.add_argument("-cb", "--catbench", type=int, default=0, nargs="?", const=3,
                    help="Run SVG Catbench with N samples per model (default: 3 when flag present)")
-    m.add_argument(
-        "--exllamav3-root",
-        help="[DEPRECATED] No longer needed, bundled model_diff.py is used.",
-    )
 
 
     # --- readme ---
@@ -242,8 +221,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not cmd:
         parser.print_help()
         return 0
-
-    _warn_deprecated_or_unused(args, cmd)
 
     # Normalize lists
     if hasattr(args, "models"):

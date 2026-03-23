@@ -83,6 +83,15 @@ def read_existing_field_labels(csv_path: str, field: str) -> Set[str]:
     return out
 
 
+def _lookup_csv_row(csv_path: str, label: str) -> dict:
+    """Return the CSV row whose 'weights' column matches *label*."""
+    with open(csv_path, "r", newline="") as f:
+        for row in csv.DictReader(f):
+            if (row.get("weights") or "").strip() == label:
+                return dict(row)
+    return {}
+
+
 def append_csv_row(csv_path: str, row: Dict[str, object]) -> None:
     """Append a row to the CSV and fsync immediately."""
     with open(csv_path, "a", newline="") as f:
@@ -202,7 +211,6 @@ def run_measure(
     device: int = 0,
     csv_path: str | None = None,
     skip_done: bool = True,
-    exllamav3_root: str | None = None,
     return_row: bool = False,
     ppl_rows: int = 100,
 ) -> int | dict:
@@ -223,10 +231,8 @@ def run_measure(
             label = str(q)
 
         if skip_done and label in done:
-            # If return_row is True and we skip, we should probably still return the existing row?
-            # For simplicity, we'll return None if skipped.
             if return_row and len(quants) == 1:
-                return {} # Or find the row in the CSV
+                return _lookup_csv_row(csv_path, label)
             continue
 
         if not os.path.isdir(model_dir):

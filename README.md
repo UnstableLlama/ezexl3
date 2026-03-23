@@ -157,11 +157,7 @@ If you request an optimized BPW (for example `4.07`), ezexl3 executes the follow
 5. Run exllamav3 `util/optimize.py` to build the optimized output directory.
 6. Verify each optimized BPW with KL+PPL measurement (halts on error).
 
-To locate exllamav3 utility scripts robustly, ezexl3 attempts runtime package discovery and supports overriding with:
-
-```bash
-EXLLAMAV3_ROOT=/path/to/exllamav3 ezexl3 repo -m /path/to/model -b 4.07
-```
+To locate exllamav3 utility scripts, ezexl3 uses bundled vendored copies (no manual path configuration needed).
 
 ### 7. Headless Mode
 For automated pipelines, use the `--no-prompt` (or `-np`) flag to skip interactive metadata collection for the README. It will use sensible defaults based on the model directory name and your environment.
