@@ -212,6 +212,7 @@ class InterleavedPipelineTests(unittest.TestCase):
         return {
             "quant_run_one": patch("ezexl3.repo.quant_run_one", return_value=True),
             "run_measure_single_bpw": patch("ezexl3.repo.run_measure_single_bpw", return_value=0),
+            "run_measure_stage": patch("ezexl3.repo.run_measure_stage", return_value=0),
             "_run_optimized_opt_stage": patch("ezexl3.repo._run_optimized_opt_stage"),
             "_init_measure_db": patch("ezexl3.repo._init_measure_db", return_value=("/tmp/m.db", "/tmp/m.csv")),
             "export_csv": patch("ezexl3.repo.export_csv"),
@@ -404,6 +405,58 @@ class InterleavedPipelineTests(unittest.TestCase):
         # All 4 GPUs passed to measure
         for c in mocks["run_measure_single_bpw"].call_args_list:
             self.assertEqual(c.kwargs["devices"], [0, 1, 2, 3])
+
+    def test_verify_always_runs_measure_stage_as_safety_net(self):
+        """run_measure_stage is always called after interleaved verification, even without catbench."""
+        patches = self._base_patches()
+        mocks = {k: p.start() for k, p in patches.items()}
+        try:
+            rc = repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["2", "4"],
+                devices=[0, 1],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=True,
+                catbench_n=0,
+            )
+        finally:
+            for p in patches.values():
+                p.stop()
+
+        self.assertEqual(rc, 0)
+        # run_measure_stage called exactly once as safety net
+        mocks["run_measure_stage"].assert_called_once()
+        # catbench_n=0 passed through
+        self.assertEqual(mocks["run_measure_stage"].call_args.kwargs["catbench_n"], 0)
+
+    def test_verify_safety_net_halts_on_measure_stage_failure(self):
+        """If the safety-net measure stage fails, run_repo returns non-zero."""
+        patches = self._base_patches()
+        mocks = {k: p.start() for k, p in patches.items()}
+        mocks["run_measure_stage"].return_value = 1  # safety net finds a gap and fails
+        try:
+            rc = repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["2"],
+                devices=[0],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=True,
+            )
+        finally:
+            for p in patches.values():
+                p.stop()
+
+        self.assertEqual(rc, 1)
 
 
 if __name__ == "__main__":

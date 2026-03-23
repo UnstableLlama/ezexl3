@@ -1697,18 +1697,20 @@ def run_repo(
         export_csv(db_path, out_csv)
         print(f"\n✅ All verifications passed. CSV: {out_csv}")
 
-        # Catbench phase — run_measure_stage will skip all KL/PPL (already in DB)
-        if catbench_n > 0:
-            rc = run_measure_stage(
-                model_dir=model_dir,
-                bpws=measure_bpws,
-                devices=devices,
-                write_logs=write_logs,
-                measure_args=measure_args,
-                catbench_n=catbench_n,
-            )
-            if rc != 0:
-                return rc
+        # Final measurement stage as safety net — fills any gaps in DB
+        # (e.g. interrupted runs, manual DB edits, missing GiB values).
+        # If everything was already verified inline, this hits the early
+        # exit ("Nothing to do") and returns immediately.
+        rc = run_measure_stage(
+            model_dir=model_dir,
+            bpws=measure_bpws,
+            devices=measure_devices,
+            write_logs=write_logs,
+            measure_args=measure_args,
+            catbench_n=catbench_n,
+        )
+        if rc != 0:
+            return rc
 
     else:
         # --- LEGACY MODE (--no-verify, or --no-measurement, or quant-only) ---
