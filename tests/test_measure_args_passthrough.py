@@ -2,7 +2,7 @@ import csv
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, call, MagicMock
 
 from ezexl3 import cli
 from ezexl3 import repo
@@ -202,6 +202,208 @@ class MeasureCheckpointingTests(unittest.TestCase):
             self.assertIn("bf16", rows)
             self.assertIn("3", rows)
             self.assertEqual(rows["3"]["KL Div"], "0.08")
+
+
+class InterleavedPipelineTests(unittest.TestCase):
+    """Tests for the verify=True (default) interleaved quant→measure pipeline."""
+
+    def _base_patches(self):
+        """Common patches for run_repo tests."""
+        return {
+            "quant_run_one": patch("ezexl3.repo.quant_run_one", return_value=True),
+            "run_measure_single_bpw": patch("ezexl3.repo.run_measure_single_bpw", return_value=0),
+            "_run_optimized_opt_stage": patch("ezexl3.repo._run_optimized_opt_stage"),
+            "_init_measure_db": patch("ezexl3.repo._init_measure_db", return_value=("/tmp/m.db", "/tmp/m.csv")),
+            "export_csv": patch("ezexl3.repo.export_csv"),
+        }
+
+    def test_verify_true_calls_quant_then_measure_per_bpw(self):
+        """With verify=True, each BPW is quantized then immediately measured."""
+        patches = self._base_patches()
+        mocks = {k: p.start() for k, p in patches.items()}
+        try:
+            rc = repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["2", "4"],
+                devices=[0, 1],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=True,
+            )
+        finally:
+            for p in patches.values():
+                p.stop()
+
+        self.assertEqual(rc, 0)
+        # quant_run_one called once per integer BPW
+        quant_calls = mocks["quant_run_one"].call_args_list
+        quant_bpws = [c.args[1] for c in quant_calls]
+        self.assertIn("2", quant_bpws)
+        self.assertIn("4", quant_bpws)
+
+        # run_measure_single_bpw called once per BPW
+        measure_calls = mocks["run_measure_single_bpw"].call_args_list
+        measure_bpws = [c.kwargs["bpw"] for c in measure_calls]
+        self.assertIn("2", measure_bpws)
+        self.assertIn("4", measure_bpws)
+
+        # First BPW verification includes base PPL
+        first_call = measure_calls[0]
+        self.assertTrue(first_call.kwargs["include_base_ppl"])
+
+    def test_verify_true_halts_on_quant_failure(self):
+        """Pipeline halts immediately if a quantization fails."""
+        patches = self._base_patches()
+        mocks = {k: p.start() for k, p in patches.items()}
+        mocks["quant_run_one"].return_value = False  # quant fails
+        try:
+            rc = repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["2", "4"],
+                devices=[0],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=True,
+            )
+        finally:
+            for p in patches.values():
+                p.stop()
+
+        self.assertEqual(rc, 1)
+        # Only one quant attempted before halting
+        self.assertEqual(mocks["quant_run_one"].call_count, 1)
+        mocks["run_measure_single_bpw"].assert_not_called()
+
+    def test_verify_true_halts_on_measure_failure(self):
+        """Pipeline halts immediately if measurement verification fails."""
+        patches = self._base_patches()
+        mocks = {k: p.start() for k, p in patches.items()}
+        mocks["run_measure_single_bpw"].return_value = 1  # measure fails
+        try:
+            rc = repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["2", "4"],
+                devices=[0],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=True,
+            )
+        finally:
+            for p in patches.values():
+                p.stop()
+
+        self.assertEqual(rc, 1)
+        # Quant succeeded for first BPW, measure failed, no second BPW attempted
+        self.assertEqual(mocks["quant_run_one"].call_count, 1)
+        self.assertEqual(mocks["run_measure_single_bpw"].call_count, 1)
+
+    def test_verify_false_uses_legacy_pipeline(self):
+        """With verify=False (--no-verify), uses batch quant then batch measure."""
+        with patch("ezexl3.repo.run_quant_stage", return_value=0) as mock_quant, \
+             patch("ezexl3.repo.run_measure_stage", return_value=0) as mock_measure:
+            rc = repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["2", "4"],
+                devices=[0],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=False,
+            )
+
+        self.assertEqual(rc, 0)
+        mock_quant.assert_called_once()
+        mock_measure.assert_called_once()
+
+    def test_no_verify_cli_flag_passes_verify_false(self):
+        """--no-verify flag results in verify=False passed to run_repo."""
+        argv = [
+            "repo", "-m", "/tmp/model", "-b", "2",
+            "--no-readme", "--no-verify",
+        ]
+        with patch("ezexl3.repo.run_repo", return_value=0) as mock_run_repo:
+            cli.main(argv)
+
+        self.assertFalse(mock_run_repo.call_args.kwargs["verify"])
+
+    def test_verify_default_is_true(self):
+        """Without --no-verify, verify defaults to True."""
+        argv = [
+            "repo", "-m", "/tmp/model", "-b", "2",
+            "--no-readme",
+        ]
+        with patch("ezexl3.repo.run_repo", return_value=0) as mock_run_repo:
+            cli.main(argv)
+
+        self.assertTrue(mock_run_repo.call_args.kwargs["verify"])
+
+    def test_verify_with_optimized_bpws(self):
+        """Optimized (fractional) BPWs are measured after optimize stage."""
+        patches = self._base_patches()
+        mocks = {k: p.start() for k, p in patches.items()}
+        try:
+            rc = repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["3.5"],  # fractional → needs integer 3,4 + optimized 3.5
+                devices=[0, 1],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=True,
+            )
+        finally:
+            for p in patches.values():
+                p.stop()
+
+        self.assertEqual(rc, 0)
+        # Optimized stage was called
+        mocks["_run_optimized_opt_stage"].assert_called_once()
+        # Optimized BPW 3.5 was measured
+        measure_bpws = [c.kwargs["bpw"] for c in mocks["run_measure_single_bpw"].call_args_list]
+        self.assertIn("3.5", measure_bpws)
+
+    def test_verify_uses_all_available_gpus(self):
+        """run_measure_single_bpw receives the full device list for multi-GPU measurement."""
+        patches = self._base_patches()
+        mocks = {k: p.start() for k, p in patches.items()}
+        try:
+            repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["2"],
+                devices=[0, 1, 2, 3],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=True,
+            )
+        finally:
+            for p in patches.values():
+                p.stop()
+
+        # All 4 GPUs passed to measure
+        for c in mocks["run_measure_single_bpw"].call_args_list:
+            self.assertEqual(c.kwargs["devices"], [0, 1, 2, 3])
 
 
 if __name__ == "__main__":

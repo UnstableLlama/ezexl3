@@ -14,7 +14,7 @@ import time
 from multiprocessing import Process, Queue
 from typing import Dict, IO, List, Optional, Tuple
 
-from ezexl3.quantize import run as quant_run
+from ezexl3.quantize import run as quant_run, run_one as quant_run_one
 from ezexl3.measure import (
     _MODEL_DIFF_SCRIPT,
     default_csv_path,
@@ -1083,6 +1083,33 @@ def _parse_measure_args(measure_args: List[str], default_devices: List[int]) -> 
     return ppl_rows, devices
 
 
+def _init_measure_db(model_dir: str, devices: List[int]) -> Tuple[str, str]:
+    """Set up SQLite DB, migrate legacy CSVs. Returns (db_path, out_csv)."""
+    out_csv = default_csv_path(model_dir)
+    db_path = default_db_path(model_dir)
+    if os.path.exists(out_csv):
+        migrate_csv_to_db(out_csv, db_path)
+    for d in devices:
+        legacy_shard = os.path.join(model_dir, f"{os.path.basename(model_dir)}Measured.gpu{d}.csv")
+        if os.path.exists(legacy_shard):
+            migrate_csv_to_db(legacy_shard, db_path)
+    return db_path, out_csv
+
+
+def _build_quant_forwarded(
+    quant_args: List[str],
+    devices: List[int],
+    device_ratios: Optional[str],
+) -> List[str]:
+    """Build the forwarded arg list for quantize, injecting devices/ratios."""
+    forwarded = list(quant_args)
+    if devices and ("-d" not in forwarded and "--devices" not in forwarded):
+        forwarded += ["-d", ",".join(str(d) for d in devices)]
+    if device_ratios and ("-dr" not in forwarded and "--device-ratios" not in forwarded):
+        forwarded += ["-dr", device_ratios]
+    return forwarded
+
+
 def run_quant_stage(
     model_dir: str,
     bpws: List[str],
@@ -1102,22 +1129,10 @@ def run_quant_stage(
     bpws = [str(b) for b in bpws]
     devices = list(devices)
 
-
-    models = [model_dir]
-    forwarded = list(quant_args)
-
-    # Inject devices if not already in quant_args
-    if devices and ("-d" not in forwarded and "--devices" not in forwarded):
-        devices_str = ",".join(str(d) for d in devices)
-        forwarded += ["-d", devices_str]
-
-    # If device ratios were supplied via main flags, and user didn't also pass -dr in quant_args,
-    # we can inject it (but keep it minimal and non-magical).
-    if device_ratios and ("-dr" not in forwarded and "--device-ratios" not in forwarded):
-        forwarded += ["-dr", device_ratios]
+    forwarded = _build_quant_forwarded(quant_args, devices, device_ratios)
 
     rc = quant_run(
-        models=models,
+        models=[model_dir],
         bpws=bpws,
         forwarded=forwarded,
         out_template=out_template,
@@ -1126,6 +1141,115 @@ def run_quant_stage(
         continue_on_error=continue_on_error,
     )
     return rc
+
+
+def run_measure_single_bpw(
+    model_dir: str,
+    bpw: str,
+    devices: List[int],
+    db_path: str,
+    ppl_rows: int = 100,
+    write_logs: bool = True,
+    include_base_ppl: bool = False,
+) -> int:
+    """Measure KL + PPL for a single BPW with halt-on-error.
+
+    Uses the same multi-GPU worker queue as run_measure_stage: spawns up to
+    min(len(devices), num_tasks) workers so KL and PPL run in parallel when
+    there are 2+ GPUs available.
+
+    Returns 0 on success, 1 on any failure.
+    """
+    label = _task_to_csv_label(bpw)
+    existing_rows = _read_db_rows(db_path)
+
+    # Build task list (at most 3: base PPL, KL, PPL)
+    all_tasks: List[dict] = []
+
+    if include_base_ppl:
+        base_row = existing_rows.get("bf16", {})
+        if not (base_row.get("PPL r-100") or "").strip():
+            all_tasks.append({"label": "base", "phase": "ppl"})
+
+    row = existing_rows.get(label, {})
+    has_kl = bool((row.get("KL Div") or "").strip())
+    has_ppl = bool((row.get("PPL r-100") or "").strip())
+
+    if bpw != "base" and not has_kl:
+        all_tasks.append({"label": bpw, "phase": "kl"})
+    if not has_ppl:
+        all_tasks.append({"label": bpw, "phase": "ppl"})
+
+    if not all_tasks:
+        print(f"  🟦 {label}: already measured, skipping verification")
+        return 0
+
+    # Use as many GPUs as we have tasks (no point in idle workers)
+    n_workers = min(len(devices), len(all_tasks))
+    worker_devices = devices[:n_workers]
+
+    tasks_q: Queue = Queue()
+    results_q: Queue = Queue()
+
+    for t in all_tasks:
+        tasks_q.put(t)
+    for _ in worker_devices:
+        tasks_q.put(None)  # sentinels
+
+    log_paths = []
+    for d in worker_devices:
+        if write_logs:
+            log_paths.append(os.path.join(model_dir, "logs", f"verify_gpu{d}_bpw{label}.log"))
+        else:
+            log_paths.append(None)
+
+    procs: List[Process] = []
+    for d, logp in zip(worker_devices, log_paths):
+        p = Process(target=_worker_measure, args=(model_dir, d, db_path, tasks_q, results_q, logp, ppl_rows))
+        p.daemon = False
+        p.start()
+        procs.append(p)
+        if len(worker_devices) > 1:
+            time.sleep(2.0)
+
+    task_descs = [f"{_task_to_csv_label(t['label'])} {t['phase'].upper()}" for t in all_tasks]
+    print(f"  🔍 Verifying {label}: {', '.join(task_descs)} on {n_workers} GPU(s)...")
+
+    # Result listener
+    active_workers = n_workers
+    failures = 0
+
+    while active_workers > 0:
+        res = results_q.get()
+        if res is None:
+            active_workers -= 1
+            continue
+
+        event = res["event"]
+        if event == "progress":
+            continue  # skip progress events for per-BPW verification
+
+        res_label = res.get("label", "")
+        phase = res.get("phase", "")
+
+        if event == "done":
+            row = res["row"]
+            if phase == "kl":
+                print(f"    ✅ {res_label} KL: {row.get('KL Div', 'N/A')}")
+            else:
+                print(f"    ✅ {res_label} PPL: {row.get('PPL r-100', 'N/A')}")
+        elif event == "error":
+            failures += 1
+            print(f"    🔴 FAIL {res_label} {phase.upper()}: {res['error']}")
+
+    for p in procs:
+        p.join()
+
+    if failures:
+        print(f"  ❌ Verification failed for {label} with {failures} error(s)")
+        return 1
+
+    return 0
 
 
 def run_measure_stage(
@@ -1143,20 +1267,11 @@ def run_measure_stage(
     if not devices:
         raise ValueError("No CUDA devices available for measure stage. Provide -d/--devices.")
 
-    out_csv = default_csv_path(model_dir)
-    db_path = default_db_path(model_dir)
+    db_path, out_csv = _init_measure_db(model_dir, devices)
 
     log_paths = []
     for d in devices:
         log_paths.append(os.path.join(model_dir, "logs", f"measure_gpu{d}.log") if write_logs else None)
-
-    # Migrate any legacy CSV or shard CSVs into the database for resume.
-    if os.path.exists(out_csv):
-        migrate_csv_to_db(out_csv, db_path)
-    for d in devices:
-        legacy_shard = os.path.join(model_dir, f"{os.path.basename(model_dir)}Measured.gpu{d}.csv")
-        if os.path.exists(legacy_shard):
-            migrate_csv_to_db(legacy_shard, db_path)
 
     # Per-field checkpointing: read DB and decide which phases to skip.
     existing_rows = _read_db_rows(db_path)
@@ -1485,7 +1600,7 @@ def run_repo(
     devices: List[int],
     device_ratios: Optional[str],
     quant_args: List[str],
-    measure_args: List[str],  # reserved for later; keep but unused in v0
+    measure_args: List[str],
     do_quant: bool = True,
     do_measure: bool = True,
     do_readme: bool = True,
@@ -1497,6 +1612,7 @@ def run_repo(
     include_measurements: bool = True,
     optimized_measure_layers: int = 2,
     catbench_n: int = 0,
+    verify: bool = True,
 ) -> int:
     bpw_plan = _plan_repo_bpws(bpws)
     quant_bpws = bpw_plan["quant_integer_queue"]
@@ -1510,40 +1626,127 @@ def run_repo(
             + ", ".join(auto_added)
         )
 
-    # --- Stage 1: quantize ---
-    if do_quant:
-        rc = run_quant_stage(
-            model_dir=model_dir,
-            bpws=quant_bpws,
-            devices=devices,
-            device_ratios=device_ratios,
-            quant_args=quant_args,
-        )
-        if rc != 0:
-            return rc
+    if verify and do_quant and do_measure:
+        # --- INTERLEAVED MODE (default) ---
+        # Quantize each BPW then immediately verify KL+PPL before proceeding.
+        model_dir = os.path.abspath(model_dir)
+        ppl_rows, measure_devices = _parse_measure_args(measure_args or [], devices)
+        db_path, out_csv = _init_measure_db(model_dir, measure_devices)
+        forwarded = _build_quant_forwarded(quant_args, devices, device_ratios)
 
-    # --- Stage 2: optimized optimize ---
-    if do_quant and optimized_bpws:
-        _run_optimized_opt_stage(
-            model_dir=model_dir,
-            optimized_bpws=optimized_bpws,
-            devices=devices,
-            layers=optimized_measure_layers,
-            write_logs=write_logs,
-        )
+        print("\n============================================================")
+        print("🔁 Interleaved Quantize → Verify Pipeline")
+        print(f"   {len(quant_bpws)} integer BPW(s), {len(optimized_bpws)} optimized BPW(s)")
+        print(f"   {len(devices)} GPU(s) for quantization, {len(measure_devices)} GPU(s) for verification")
+        print("============================================================")
 
-    # --- Stage 3: measure (sharded, dynamic queue) ---
-    if do_measure or catbench_n > 0:
-        rc = run_measure_stage(
-            model_dir=model_dir,
-            bpws=measure_bpws,
-            devices=devices,
-            write_logs=write_logs,
-            measure_args=measure_args,
-            catbench_n=catbench_n,
-        )
-        if rc != 0:
-            return rc
+        # Stage 1+3 interleaved: for each integer BPW, quantize then verify
+        for i, bpw in enumerate(quant_bpws):
+            print(f"\n--- [{i+1}/{len(quant_bpws)}] BPW {bpw} ---")
+
+            ok = quant_run_one(
+                model_dir, str(bpw), forwarded,
+                out_tmpl="{model}/{bpw}",
+                w_tmpl="{model}/w-{bpw}",
+                dry_run=False,
+            )
+            if not ok:
+                print(f"🔴 Quantization failed for BPW {bpw}")
+                return 1
+
+            rc = run_measure_single_bpw(
+                model_dir=model_dir,
+                bpw=str(bpw),
+                devices=measure_devices,
+                db_path=db_path,
+                ppl_rows=ppl_rows,
+                write_logs=write_logs,
+                include_base_ppl=(i == 0),
+            )
+            if rc != 0:
+                print(f"🔴 Verification failed for BPW {bpw} — halting pipeline")
+                return 1
+
+        # Stage 2: optimized optimize (needs all integer quants done)
+        if optimized_bpws:
+            _run_optimized_opt_stage(
+                model_dir=model_dir,
+                optimized_bpws=optimized_bpws,
+                devices=devices,
+                layers=optimized_measure_layers,
+                write_logs=write_logs,
+            )
+
+            # Verify each optimized BPW
+            for bpw in optimized_bpws:
+                print(f"\n--- Optimized BPW {bpw} ---")
+                rc = run_measure_single_bpw(
+                    model_dir=model_dir,
+                    bpw=str(bpw),
+                    devices=measure_devices,
+                    db_path=db_path,
+                    ppl_rows=ppl_rows,
+                    write_logs=write_logs,
+                    include_base_ppl=False,
+                )
+                if rc != 0:
+                    print(f"🔴 Verification failed for optimized BPW {bpw} — halting pipeline")
+                    return 1
+
+        # Export CSV for downstream consumers (readme, graph_svg)
+        export_csv(db_path, out_csv)
+        print(f"\n✅ All verifications passed. CSV: {out_csv}")
+
+        # Catbench phase — run_measure_stage will skip all KL/PPL (already in DB)
+        if catbench_n > 0:
+            rc = run_measure_stage(
+                model_dir=model_dir,
+                bpws=measure_bpws,
+                devices=devices,
+                write_logs=write_logs,
+                measure_args=measure_args,
+                catbench_n=catbench_n,
+            )
+            if rc != 0:
+                return rc
+
+    else:
+        # --- LEGACY MODE (--no-verify, or --no-measurement, or quant-only) ---
+
+        # Stage 1: quantize all
+        if do_quant:
+            rc = run_quant_stage(
+                model_dir=model_dir,
+                bpws=quant_bpws,
+                devices=devices,
+                device_ratios=device_ratios,
+                quant_args=quant_args,
+            )
+            if rc != 0:
+                return rc
+
+        # Stage 2: optimized optimize
+        if do_quant and optimized_bpws:
+            _run_optimized_opt_stage(
+                model_dir=model_dir,
+                optimized_bpws=optimized_bpws,
+                devices=devices,
+                layers=optimized_measure_layers,
+                write_logs=write_logs,
+            )
+
+        # Stage 3: measure all
+        if do_measure or catbench_n > 0:
+            rc = run_measure_stage(
+                model_dir=model_dir,
+                bpws=measure_bpws,
+                devices=devices,
+                write_logs=write_logs,
+                measure_args=measure_args,
+                catbench_n=catbench_n,
+            )
+            if rc != 0:
+                return rc
 
     # --- Stage 4: README generation ---
     if do_readme:
