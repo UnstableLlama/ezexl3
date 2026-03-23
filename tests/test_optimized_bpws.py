@@ -111,6 +111,7 @@ class OptimizedStageTests(unittest.TestCase):
                 quant_args=[],
                 measure_args=[],
                 do_readme=False,
+                verify=False,
             )
 
         self.assertEqual(rc, 0)

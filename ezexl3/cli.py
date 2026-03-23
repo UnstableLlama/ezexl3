@@ -178,6 +178,8 @@ def build_parser() -> argparse.ArgumentParser:
         p_sub.add_argument("-l", "--layers", type=int, default=2, choices=[1, 2, 3], help="Layers used by optimized comparative measure stage (1-3, default: 2)")
         p_sub.add_argument("-cb", "--catbench", type=int, default=0, nargs="?", const=3,
                            help="Run SVG Catbench with N samples per model (default: 3 when flag present)")
+        p_sub.add_argument("--no-verify", "-nv", action="store_true",
+                           help="Skip per-BPW verification (batch all quants, then batch all measures)")
 
     # --- repo (main command) ---
     repo = sub.add_parser("repo", help="Generate an EXL3 repo (quantize -> measure -> README)")
@@ -290,6 +292,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     template=args.template,
                     optimized_measure_layers=layers,
                     catbench_n=getattr(args, "catbench", 0) or 0,
+                    verify=(not args.no_verify),
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
