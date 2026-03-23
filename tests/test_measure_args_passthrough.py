@@ -211,12 +211,15 @@ class InterleavedPipelineTests(unittest.TestCase):
         """Common patches for run_repo tests."""
         return {
             "quant_run_one": patch("ezexl3.repo.quant_run_one", return_value=True),
+            "run_measure_single_bpw": patch("ezexl3.repo.run_measure_single_bpw", return_value=0),
             "run_measure_stage": patch("ezexl3.repo.run_measure_stage", return_value=0),
             "_run_optimized_opt_stage": patch("ezexl3.repo._run_optimized_opt_stage"),
+            "_init_measure_db": patch("ezexl3.repo._init_measure_db", return_value=("/tmp/db.sqlite", "/tmp/out.csv")),
+            "export_csv": patch("ezexl3.repo.export_csv"),
         }
 
-    def test_verify_true_quants_per_bpw_then_batches_measurement(self):
-        """With verify=True, each BPW is quantized individually, then all measured in one batch."""
+    def test_verify_true_quants_and_verifies_per_bpw(self):
+        """With verify=True, each BPW is quantized then immediately verified."""
         patches = self._base_patches()
         mocks = {k: p.start() for k, p in patches.items()}
         try:
@@ -243,11 +246,14 @@ class InterleavedPipelineTests(unittest.TestCase):
         self.assertIn("2", quant_bpws)
         self.assertIn("4", quant_bpws)
 
-        # run_measure_stage called once with ALL BPWs for batched multi-GPU measurement
-        mocks["run_measure_stage"].assert_called_once()
-        measure_bpws = mocks["run_measure_stage"].call_args.kwargs["bpws"]
-        self.assertIn("2", measure_bpws)
-        self.assertIn("4", measure_bpws)
+        # run_measure_single_bpw called once per BPW (interleaved verification)
+        measure_calls = mocks["run_measure_single_bpw"].call_args_list
+        measured_bpws = [c.kwargs["bpw"] for c in measure_calls]
+        self.assertIn("2", measured_bpws)
+        self.assertIn("4", measured_bpws)
+
+        # run_measure_stage NOT called (no catbench)
+        mocks["run_measure_stage"].assert_not_called()
 
     def test_verify_true_halts_on_quant_failure(self):
         """Pipeline halts immediately if a quantization fails."""
@@ -274,14 +280,14 @@ class InterleavedPipelineTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         # Only one quant attempted before halting
         self.assertEqual(mocks["quant_run_one"].call_count, 1)
-        # Measurement stage never reached
-        mocks["run_measure_stage"].assert_not_called()
+        # Verification never reached
+        mocks["run_measure_single_bpw"].assert_not_called()
 
-    def test_verify_true_halts_on_measure_stage_failure(self):
-        """Pipeline halts if batched measurement stage fails."""
+    def test_verify_true_halts_on_verification_failure(self):
+        """Pipeline halts if per-BPW verification fails."""
         patches = self._base_patches()
         mocks = {k: p.start() for k, p in patches.items()}
-        mocks["run_measure_stage"].return_value = 1  # measure fails
+        mocks["run_measure_single_bpw"].return_value = 1  # verify fails
         try:
             rc = repo.run_repo(
                 model_dir="/tmp/model",
@@ -300,10 +306,10 @@ class InterleavedPipelineTests(unittest.TestCase):
                 p.stop()
 
         self.assertEqual(rc, 1)
-        # All quants completed (they succeeded)
-        self.assertEqual(mocks["quant_run_one"].call_count, 2)
-        # Measurement stage was called and failed
-        mocks["run_measure_stage"].assert_called_once()
+        # First quant succeeded but verification failed, so only 1 quant attempted
+        self.assertEqual(mocks["quant_run_one"].call_count, 1)
+        # Verification was called once and failed
+        self.assertEqual(mocks["run_measure_single_bpw"].call_count, 1)
 
     def test_verify_false_uses_legacy_pipeline(self):
         """With verify=False (--no-verify), uses batch quant then batch measure."""
@@ -349,7 +355,7 @@ class InterleavedPipelineTests(unittest.TestCase):
         self.assertTrue(mock_run_repo.call_args.kwargs["verify"])
 
     def test_verify_with_optimized_bpws(self):
-        """Optimized (fractional) BPWs are quantized, optimized, then all measured in one batch."""
+        """Optimized (fractional) BPWs are quantized, optimized, then verified."""
         patches = self._base_patches()
         mocks = {k: p.start() for k, p in patches.items()}
         try:
@@ -372,12 +378,12 @@ class InterleavedPipelineTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         # Optimized stage was called
         mocks["_run_optimized_opt_stage"].assert_called_once()
-        # run_measure_stage called with all BPWs including 3.5
-        measure_bpws = mocks["run_measure_stage"].call_args.kwargs["bpws"]
-        self.assertIn("3.5", measure_bpws)
+        # run_measure_single_bpw called for integer BPWs AND optimized 3.5
+        measured_bpws = [c.kwargs["bpw"] for c in mocks["run_measure_single_bpw"].call_args_list]
+        self.assertIn("3.5", measured_bpws)
 
-    def test_verify_passes_all_gpus_to_measure_stage(self):
-        """run_measure_stage receives all devices for multi-GPU measurement."""
+    def test_verify_passes_all_gpus_to_single_bpw_measure(self):
+        """run_measure_single_bpw receives all devices for multi-GPU measurement."""
         patches = self._base_patches()
         mocks = {k: p.start() for k, p in patches.items()}
         try:
@@ -397,8 +403,8 @@ class InterleavedPipelineTests(unittest.TestCase):
             for p in patches.values():
                 p.stop()
 
-        # All 4 GPUs passed to measure stage
-        self.assertEqual(mocks["run_measure_stage"].call_args.kwargs["devices"], [0, 1, 2, 3])
+        # All 4 GPUs passed to per-BPW verification
+        self.assertEqual(mocks["run_measure_single_bpw"].call_args.kwargs["devices"], [0, 1, 2, 3])
 
     def test_verify_measure_stage_receives_catbench_n(self):
         """catbench_n is forwarded to run_measure_stage in interleaved mode."""
@@ -422,6 +428,8 @@ class InterleavedPipelineTests(unittest.TestCase):
             for p in patches.values():
                 p.stop()
 
+        # With catbench_n > 0, run_measure_stage is called for catbench
+        mocks["run_measure_stage"].assert_called_once()
         self.assertEqual(mocks["run_measure_stage"].call_args.kwargs["catbench_n"], 5)
 
 
