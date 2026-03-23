@@ -5,7 +5,7 @@ import types
 import unittest
 from unittest.mock import patch, MagicMock
 
-from ezexl3.quantize import _ensure_exl3_cal_data, _CAL_FILES
+from ezexl3.quantize import _ensure_exl3_cal_data, _CAL_FILES, _CAL_BASE_URLS
 
 
 def _install_fake_exl3_module(tmpdir):
@@ -79,7 +79,8 @@ class EnsureCalDataTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             cleanup = _install_fake_exl3_module(tmpdir)
             try:
-                with patch("ezexl3.quantize.urllib.request.urlretrieve", side_effect=OSError("network error")):
+                with patch("ezexl3.quantize.urllib.request.urlretrieve", side_effect=OSError("network error")), \
+                     patch("ezexl3.quantize.time.sleep"):
                     with self.assertRaises(RuntimeError) as ctx:
                         _ensure_exl3_cal_data()
                     self.assertIn("Failed to download", str(ctx.exception))
@@ -109,6 +110,34 @@ class EnsureCalDataTests(unittest.TestCase):
 
                 # Only the first file should have been downloaded
                 self.assertEqual(downloaded, [_CAL_FILES[0]])
+            finally:
+                cleanup()
+
+
+    def test_falls_back_to_second_url(self):
+        """If the first mirror 404s, the second mirror is tried."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cleanup = _install_fake_exl3_module(tmpdir)
+            try:
+                call_urls = []
+
+                def fake_urlretrieve(url, dest):
+                    call_urls.append(url)
+                    if _CAL_BASE_URLS[0] in url:
+                        raise OSError("404")
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    with open(dest, "w") as f:
+                        f.write("data")
+
+                with patch("ezexl3.quantize.urllib.request.urlretrieve", side_effect=fake_urlretrieve), \
+                     patch("ezexl3.quantize.time.sleep"):
+                    _ensure_exl3_cal_data()
+
+                # Should have tried the first URL (3 retries) then succeeded on second
+                first_mirror_calls = [u for u in call_urls if _CAL_BASE_URLS[0] in u]
+                second_mirror_calls = [u for u in call_urls if _CAL_BASE_URLS[1] in u]
+                self.assertGreater(len(first_mirror_calls), 0)
+                self.assertGreater(len(second_mirror_calls), 0)
             finally:
                 cleanup()
 

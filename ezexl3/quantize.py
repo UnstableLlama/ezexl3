@@ -18,7 +18,26 @@ def _get_exl3_convert():
 
 
 _CAL_FILES = ["c4.utf8", "code.utf8", "multilingual.utf8", "technical.utf8", "wiki.utf8", "tiny.utf8"]
-_CAL_BASE_URL = "https://raw.githubusercontent.com/turboderp/exllamav3/master/exllamav3/conversion/standard_cal_data"
+_CAL_BASE_URLS = [
+    "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/exllamav3/conversion/standard_cal_data",
+    "https://raw.githubusercontent.com/turboderp/exllamav3/master/exllamav3/conversion/standard_cal_data",
+]
+_CAL_MAX_RETRIES = 3
+
+
+def _download_with_retries(urls: list[str], dest: str) -> None:
+    """Try each URL with retries and exponential backoff."""
+    last_err = None
+    for url in urls:
+        for attempt in range(_CAL_MAX_RETRIES):
+            try:
+                urllib.request.urlretrieve(url, dest)
+                return
+            except Exception as e:
+                last_err = e
+                if attempt < _CAL_MAX_RETRIES - 1:
+                    time.sleep(2 ** attempt)
+    raise last_err  # type: ignore[misc]
 
 
 def _ensure_exl3_cal_data() -> None:
@@ -43,15 +62,15 @@ def _ensure_exl3_cal_data() -> None:
         dest = os.path.join(cal_dir, fname)
         if os.path.exists(dest):
             continue
-        url = f"{_CAL_BASE_URL}/{fname}"
+        urls = [f"{base}/{fname}" for base in _CAL_BASE_URLS]
         try:
-            urllib.request.urlretrieve(url, dest)
+            _download_with_retries(urls, dest)
             print(f"  {fname}")
         except Exception as e:
             raise RuntimeError(
-                f"Failed to download calibration file {fname} from {url}: {e}\n\n"
+                f"Failed to download calibration file {fname} after trying all mirrors: {e}\n\n"
                 f"You can manually download from:\n"
-                f"  {_CAL_BASE_URL}/\n\n"
+                f"  {_CAL_BASE_URLS[0]}/\n\n"
                 f"And place the .utf8 files in:\n"
                 f"  {cal_dir}/"
             ) from e
