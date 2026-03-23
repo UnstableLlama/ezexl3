@@ -3,17 +3,19 @@
 **ezexl3** is a single-command quantization and measurement pipeline that generates high-quality, HuggingFace-ready exl3 repos automatically.
 
 It wraps the exllamav3 quantization and evaluation workflow into a tool that has:
-- Runs batched quantization (multi-gpu supported)
+- Interleaved quantize → verify pipeline: each BPW is quantized then immediately verified (KL + PPL) before proceeding, halting on error
+- Multi-GPU acceleration for both quantization and verification — KL and PPL run in parallel on 2+ GPUs
 - Supports optimized BPWs, (2.1 bpw, 3.5 bpw etc.)
 - Measures KL divergence + PPL @ 200k tokens, recording data to CSV
 - Generates a HuggingFace-ready `README.md` with your measurements using customizable templates
 - Embeds an SVG graph from the measurement CSV in the README
+- Optional catbench integration — generates SVG kitten drawings at each BPW and assembles them into a grid
 - Checkpoints and resumes intelligently
 all from one command.
 
 # Pipeline:
 <p align="center">
-model → quantize → optimize → measure (KL + PPL) → graph → README
+model → [quantize → verify KL+PPL] per BPW → optimize → catbench → graph → README
 </p>
 
 ---
@@ -36,15 +38,15 @@ pip install -e .
 ## Usage
 
 ### 1. Quantize a full repository
-Run the entire pipeline (quantize → measure → README):
+Run the entire pipeline (quantize → verify → README):
 ```bash
 ezexl3 repo -m /path/to/base_model -b 2,2.5,3,4,5,6 -d 0,1 -t basic
 ```
 Then ezexl3 automatically:
 
-- Quantizes the model to all indicated bitrates, saved under subdirectories in the base model folder.
+- Quantizes each BPW one at a time, immediately running KL divergence and perplexity verification after each one. If verification fails, the pipeline halts — no time wasted quantizing remaining BPWs on top of a bad quant. With 2+ GPUs, KL and PPL run in parallel during verification.
 
-- Measures PPL and KL div and saves to modelNameMeasured.csv in the base model folder, and makes a stylish dark mode SVG graph with the data.
+- Saves measurements to modelNameMeasured.csv in the base model folder, and makes a stylish dark mode SVG graph with the data.
 
 - Generates a README.md for a HuggingFace repo in the base model folder. (with optional customizable templates)
 
@@ -101,7 +103,22 @@ ezexl3 repo -m /path/to/base_model -t mynew -b 2,3,4,5,6 -d 0,1
   <img src="ezexl3/templates/greenTemplate.png" width="45%" />
 </p>
 
-### 4. Advanced: Passthrough Flags
+### 4. Catbench
+SVG Catbench is available as a measurement option via the `-cb` flag. It runs catbench inference at every BPW level (including optimized fractionals), extracts SVGs, and assembles them into a grid in the final README.
+
+```bash
+ezexl3 repo -m /path/to/base_model -b 2,3,4,5,6,8 -d 0,1 -t punk -cb
+```
+
+- `-cb` alone runs 3 samples per BPW (default), `-cb 5` runs 5
+- Catbench runs as a batch pass after all per-BPW verification completes, using the multi-GPU queue
+- VRAM pre-flight check before each catbench load — skips gracefully if model won't fit, automatically uses multi-GPU for large models
+- Best valid SVG is selected from N samples for the grid
+- SVG extraction and grid assembly happen in a batch pass after all inference completes
+- Catbench results are checkpointed like everything else — rerunning skips completed samples
+- bf16 baseline included when VRAM allows
+
+### 5. Advanced: Passthrough Flags
 You can pass custom arguments directly to the underlying quantization (`multiConvert`) or measurement scripts using the `--quant-args` and `--measure-args` flags.
 
 **Important**: These flags require a double-dash `--` delimiter to separate the passthrough block from the rest of the arguments.
@@ -120,17 +137,25 @@ Common Use Cases:
 
 Note: passthrough blocks consume remaining args until another passthrough block starts, so keep normal CLI flags (like `--no-readme`) before `--measure-args -- ...`
 
+### 6. `--no-verify` (Legacy Batch Mode)
+By default, ezexl3 interleaves quantization with KL/PPL verification per BPW. Use `--no-verify` (or `-nv`) to revert to the old batch pipeline (all quants first, then all measurements):
+
+```bash
+ezexl3 repo -m /path/to/model -b 2,3,4,5,6 -d 0,1 --no-verify
+```
+
+This is useful if you're confident in your quantization setup and want to let everything run unattended without per-BPW halting.
 
 ### Optimized BPW workflow
 
-If you request a optimized BPW (for example `4.07`), ezexl3 now executes the following order:
+If you request an optimized BPW (for example `4.07`), ezexl3 executes the following order:
 
 1. Detect optimized targets and remove them from the initial integer quant queue.
 2. Ensure required neighboring integers exist in the quant queue (`4` and `5` for `4.07`).
-3. Run normal integer quantization.
+3. Quantize each integer BPW one at a time, verifying KL+PPL immediately after each (halts on error). With 2+ GPUs, KL and PPL run in parallel during verification.
 4. Run exllamav3 `util/measure.py` in a dynamic multi-GPU queue for required integer pairs (resume-safe: skips if `measurements/<low>-<high>_measurement.json` exists), with terminal logs when jobs are assigned and completed per GPU.
 5. Run exllamav3 `util/optimize.py` to build the optimized output directory.
-6. Run normal ezexl3 KL/PPL measurement over all produced targets (integers + optimizeds).
+6. Verify each optimized BPW with KL+PPL measurement (halts on error).
 
 To locate exllamav3 utility scripts robustly, ezexl3 attempts runtime package discovery and supports overriding with:
 
@@ -138,7 +163,7 @@ To locate exllamav3 utility scripts robustly, ezexl3 attempts runtime package di
 EXLLAMAV3_ROOT=/path/to/exllamav3 ezexl3 repo -m /path/to/model -b 4.07
 ```
 
-### 5. Headless Mode
+### 7. Headless Mode
 For automated pipelines, use the `--no-prompt` (or `-np`) flag to skip interactive metadata collection for the README. It will use sensible defaults based on the model directory name and your environment.
 
 ```bash

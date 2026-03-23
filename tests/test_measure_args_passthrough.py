@@ -1,10 +1,12 @@
 import csv
+import os
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, call, MagicMock
 
 from ezexl3 import cli
 from ezexl3 import repo
+from ezexl3 import measure_db
 
 
 class MeasureArgsPassthroughTests(unittest.TestCase):
@@ -117,8 +119,8 @@ class MeasureCheckpointingTests(unittest.TestCase):
             "2": {"weights": "2", "KL Div": "0.1", "PPL r-100": "11.0", "GiB": "4.2"},
             "bf16": {"weights": "bf16", "KL Div": "0.0", "PPL r-100": "10.0", "GiB": "12.3"},
         }
-        with patch("ezexl3.repo._merge_csvs"), \
-             patch("ezexl3.repo._read_csv_rows", return_value=full_rows), \
+        with patch("ezexl3.repo._read_db_rows", return_value=full_rows), \
+             patch("ezexl3.repo.migrate_csv_to_db"), \
              patch("ezexl3.repo.Process") as mock_process:
             rc = repo.run_measure_stage(
                 model_dir="/tmp/model",
@@ -131,52 +133,35 @@ class MeasureCheckpointingTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         mock_process.assert_not_called()
 
-    def test_merge_csvs_preserves_existing_checkpoint_rows(self):
+    def test_upsert_preserves_existing_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
-            out_csv = f"{tmp}/ModelMeasured.csv"
-            shard_csv = f"{tmp}/ModelMeasured.gpu0.csv"
-            fields = ["weights", "KL Div", "PPL r-100", "GiB"]
+            db_path = os.path.join(tmp, "ModelMeasured.db")
+            csv_path = os.path.join(tmp, "ModelMeasured.csv")
 
-            with open(out_csv, "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=fields)
-                w.writeheader()
-                w.writerow({"weights": "bf16", "KL Div": "0.0", "PPL r-100": "10.0", "GiB": "12.3"})
+            measure_db.upsert_row(db_path, weights="bf16", kl_div="0.0", ppl="10.0", gib="12.3")
+            measure_db.upsert_row(db_path, weights="2", kl_div="0.1", ppl="11.0", gib="4.2")
 
-            with open(shard_csv, "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=fields)
-                w.writeheader()
-                w.writerow({"weights": "2", "KL Div": "0.1", "PPL r-100": "11.0", "GiB": "4.2"})
-
-            repo._merge_csvs(out_csv, [shard_csv])
-
-            with open(out_csv, "r", newline="") as f:
+            measure_db.export_csv(db_path, csv_path)
+            with open(csv_path, "r", newline="") as f:
                 rows = list(csv.DictReader(f))
 
         labels = [r["weights"] for r in rows]
-        self.assertEqual(labels, ["bf16", "2"])
+        # Sorted numerically: 2 first, then bf16 (non-numeric sorts last)
+        self.assertEqual(labels, ["2", "bf16"])
 
-    def test_merge_csvs_combines_partial_rows(self):
-        """KL-only and PPL-only rows for the same label merge into one complete row."""
+    def test_upsert_combines_partial_rows(self):
+        """KL-only and PPL-only upserts for the same label merge into one complete row."""
         with tempfile.TemporaryDirectory() as tmp:
-            out_csv = f"{tmp}/ModelMeasured.csv"
-            shard_a = f"{tmp}/ModelMeasured.gpu0.csv"
-            shard_b = f"{tmp}/ModelMeasured.gpu1.csv"
-            fields = ["weights", "KL Div", "PPL r-100", "GiB"]
+            db_path = os.path.join(tmp, "ModelMeasured.db")
+            csv_path = os.path.join(tmp, "ModelMeasured.csv")
 
-            # No existing output CSV
-            with open(shard_a, "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=fields)
-                w.writeheader()
-                w.writerow({"weights": "4", "KL Div": "0.05", "PPL r-100": "", "GiB": "6.0"})
+            # Simulate GPU 0 writing KL only
+            measure_db.upsert_row(db_path, weights="4", kl_div="0.05", gib="6.0")
+            # Simulate GPU 1 writing PPL only
+            measure_db.upsert_row(db_path, weights="4", ppl="9.8", gib="6.0")
 
-            with open(shard_b, "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=fields)
-                w.writeheader()
-                w.writerow({"weights": "4", "KL Div": "", "PPL r-100": "9.8", "GiB": "6.0"})
-
-            repo._merge_csvs(out_csv, [shard_a, shard_b])
-
-            with open(out_csv, "r", newline="") as f:
+            measure_db.export_csv(db_path, csv_path)
+            with open(csv_path, "r", newline="") as f:
                 rows = list(csv.DictReader(f))
 
         self.assertEqual(len(rows), 1)
@@ -184,30 +169,310 @@ class MeasureCheckpointingTests(unittest.TestCase):
         self.assertEqual(rows[0]["KL Div"], "0.05")
         self.assertEqual(rows[0]["PPL r-100"], "9.8")
 
-    def test_merge_csvs_prefers_newer_shard_rows_for_duplicates(self):
+    def test_upsert_overwrites_with_newer_values(self):
         with tempfile.TemporaryDirectory() as tmp:
-            out_csv = f"{tmp}/ModelMeasured.csv"
-            shard_csv = f"{tmp}/ModelMeasured.gpu0.csv"
-            fields = ["weights", "KL Div", "PPL r-100", "GiB"]
+            db_path = os.path.join(tmp, "ModelMeasured.db")
 
-            with open(out_csv, "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=fields)
-                w.writeheader()
-                w.writerow({"weights": "2", "KL Div": "9.9", "PPL r-100": "99.0", "GiB": "4.0"})
+            measure_db.upsert_row(db_path, weights="2", kl_div="9.9", ppl="99.0", gib="4.0")
+            measure_db.upsert_row(db_path, weights="2", kl_div="0.2", ppl="12.0", gib="4.1")
 
-            with open(shard_csv, "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=fields)
-                w.writeheader()
-                w.writerow({"weights": "2", "KL Div": "0.2", "PPL r-100": "12.0", "GiB": "4.1"})
-
-            repo._merge_csvs(out_csv, [shard_csv])
-
-            with open(out_csv, "r", newline="") as f:
-                rows = list(csv.DictReader(f))
+            rows = measure_db.read_all_rows(db_path)
 
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["weights"], "2")
-        self.assertEqual(rows[0]["KL Div"], "0.2")
+        self.assertEqual(rows["2"]["KL Div"], "0.2")
+        self.assertEqual(rows["2"]["PPL r-100"], "12.0")
+
+    def test_migrate_csv_to_db(self):
+        """Legacy CSV data is imported into the database."""
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path = os.path.join(tmp, "ModelMeasured.csv")
+            db_path = os.path.join(tmp, "ModelMeasured.db")
+            fields = ["weights", "KL Div", "PPL r-100", "GiB"]
+
+            with open(csv_path, "w", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=fields)
+                w.writeheader()
+                w.writerow({"weights": "bf16", "KL Div": "0.0", "PPL r-100": "10.0", "GiB": "12.3"})
+                w.writerow({"weights": "3", "KL Div": "0.08", "PPL r-100": "9.5", "GiB": "5.1"})
+
+            count = measure_db.migrate_csv_to_db(csv_path, db_path)
+            self.assertEqual(count, 2)
+
+            rows = measure_db.read_all_rows(db_path)
+            self.assertIn("bf16", rows)
+            self.assertIn("3", rows)
+            self.assertEqual(rows["3"]["KL Div"], "0.08")
+
+
+class InterleavedPipelineTests(unittest.TestCase):
+    """Tests for the verify=True (default) interleaved quant→measure pipeline."""
+
+    def _base_patches(self):
+        """Common patches for run_repo tests."""
+        return {
+            "quant_run_one": patch("ezexl3.repo.quant_run_one", return_value=True),
+            "run_measure_stage": patch("ezexl3.repo.run_measure_stage", return_value=0),
+            "_run_optimized_opt_stage": patch("ezexl3.repo._run_optimized_opt_stage"),
+        }
+
+    def test_verify_true_quants_per_bpw_then_batches_measurement(self):
+        """With verify=True, each BPW is quantized individually, then all measured in one batch."""
+        patches = self._base_patches()
+        mocks = {k: p.start() for k, p in patches.items()}
+        try:
+            rc = repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["2", "4"],
+                devices=[0, 1],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=True,
+            )
+        finally:
+            for p in patches.values():
+                p.stop()
+
+        self.assertEqual(rc, 0)
+        # quant_run_one called once per integer BPW
+        quant_calls = mocks["quant_run_one"].call_args_list
+        quant_bpws = [c.args[1] for c in quant_calls]
+        self.assertIn("2", quant_bpws)
+        self.assertIn("4", quant_bpws)
+
+        # run_measure_stage called once with ALL BPWs for batched multi-GPU measurement
+        mocks["run_measure_stage"].assert_called_once()
+        measure_bpws = mocks["run_measure_stage"].call_args.kwargs["bpws"]
+        self.assertIn("2", measure_bpws)
+        self.assertIn("4", measure_bpws)
+
+    def test_verify_true_halts_on_quant_failure(self):
+        """Pipeline halts immediately if a quantization fails."""
+        patches = self._base_patches()
+        mocks = {k: p.start() for k, p in patches.items()}
+        mocks["quant_run_one"].return_value = False  # quant fails
+        try:
+            rc = repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["2", "4"],
+                devices=[0],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=True,
+            )
+        finally:
+            for p in patches.values():
+                p.stop()
+
+        self.assertEqual(rc, 1)
+        # Only one quant attempted before halting
+        self.assertEqual(mocks["quant_run_one"].call_count, 1)
+        # Measurement stage never reached
+        mocks["run_measure_stage"].assert_not_called()
+
+    def test_verify_true_halts_on_measure_stage_failure(self):
+        """Pipeline halts if batched measurement stage fails."""
+        patches = self._base_patches()
+        mocks = {k: p.start() for k, p in patches.items()}
+        mocks["run_measure_stage"].return_value = 1  # measure fails
+        try:
+            rc = repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["2", "4"],
+                devices=[0],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=True,
+            )
+        finally:
+            for p in patches.values():
+                p.stop()
+
+        self.assertEqual(rc, 1)
+        # All quants completed (they succeeded)
+        self.assertEqual(mocks["quant_run_one"].call_count, 2)
+        # Measurement stage was called and failed
+        mocks["run_measure_stage"].assert_called_once()
+
+    def test_verify_false_uses_legacy_pipeline(self):
+        """With verify=False (--no-verify), uses batch quant then batch measure."""
+        with patch("ezexl3.repo.run_quant_stage", return_value=0) as mock_quant, \
+             patch("ezexl3.repo.run_measure_stage", return_value=0) as mock_measure:
+            rc = repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["2", "4"],
+                devices=[0],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=False,
+            )
+
+        self.assertEqual(rc, 0)
+        mock_quant.assert_called_once()
+        mock_measure.assert_called_once()
+
+    def test_no_verify_cli_flag_passes_verify_false(self):
+        """--no-verify flag results in verify=False passed to run_repo."""
+        argv = [
+            "repo", "-m", "/tmp/model", "-b", "2",
+            "--no-readme", "--no-verify",
+        ]
+        with patch("ezexl3.repo.run_repo", return_value=0) as mock_run_repo:
+            cli.main(argv)
+
+        self.assertFalse(mock_run_repo.call_args.kwargs["verify"])
+
+    def test_verify_default_is_true(self):
+        """Without --no-verify, verify defaults to True."""
+        argv = [
+            "repo", "-m", "/tmp/model", "-b", "2",
+            "--no-readme",
+        ]
+        with patch("ezexl3.repo.run_repo", return_value=0) as mock_run_repo:
+            cli.main(argv)
+
+        self.assertTrue(mock_run_repo.call_args.kwargs["verify"])
+
+    def test_verify_with_optimized_bpws(self):
+        """Optimized (fractional) BPWs are quantized, optimized, then all measured in one batch."""
+        patches = self._base_patches()
+        mocks = {k: p.start() for k, p in patches.items()}
+        try:
+            rc = repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["3.5"],  # fractional → needs integer 3,4 + optimized 3.5
+                devices=[0, 1],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=True,
+            )
+        finally:
+            for p in patches.values():
+                p.stop()
+
+        self.assertEqual(rc, 0)
+        # Optimized stage was called
+        mocks["_run_optimized_opt_stage"].assert_called_once()
+        # run_measure_stage called with all BPWs including 3.5
+        measure_bpws = mocks["run_measure_stage"].call_args.kwargs["bpws"]
+        self.assertIn("3.5", measure_bpws)
+
+    def test_verify_passes_all_gpus_to_measure_stage(self):
+        """run_measure_stage receives all devices for multi-GPU measurement."""
+        patches = self._base_patches()
+        mocks = {k: p.start() for k, p in patches.items()}
+        try:
+            repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["2"],
+                devices=[0, 1, 2, 3],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=True,
+            )
+        finally:
+            for p in patches.values():
+                p.stop()
+
+        # All 4 GPUs passed to measure stage
+        self.assertEqual(mocks["run_measure_stage"].call_args.kwargs["devices"], [0, 1, 2, 3])
+
+    def test_verify_measure_stage_receives_catbench_n(self):
+        """catbench_n is forwarded to run_measure_stage in interleaved mode."""
+        patches = self._base_patches()
+        mocks = {k: p.start() for k, p in patches.items()}
+        try:
+            repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["2"],
+                devices=[0],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=True,
+                catbench_n=5,
+            )
+        finally:
+            for p in patches.values():
+                p.stop()
+
+        self.assertEqual(mocks["run_measure_stage"].call_args.kwargs["catbench_n"], 5)
+
+
+class GiBGapFillTests(unittest.TestCase):
+    """Tests for GiB gap detection and filling in run_measure_stage."""
+
+    def test_gib_gaps_filled_before_measurement(self):
+        """Missing GiB values are filled from filesystem before GPU work starts."""
+        full_rows = {
+            "2": {"weights": "2", "KL Div": "0.1", "PPL r-100": "11.0", "GiB": ""},
+            "bf16": {"weights": "bf16", "KL Div": "0.0", "PPL r-100": "10.0", "GiB": "12.3"},
+        }
+        with patch("ezexl3.repo._read_db_rows", return_value=full_rows), \
+             patch("ezexl3.repo.migrate_csv_to_db"), \
+             patch("ezexl3.repo.file_size_gib", return_value=4.2) as mock_gib, \
+             patch("ezexl3.repo.upsert_row") as mock_upsert, \
+             patch("ezexl3.repo.Process"):
+            repo.run_measure_stage(
+                model_dir="/tmp/model",
+                bpws=["2"],
+                devices=[0],
+                write_logs=False,
+                measure_args=[],
+            )
+
+        # file_size_gib called for the BPW with missing GiB
+        mock_gib.assert_any_call("/tmp/model/2")
+        # upsert_row called to fill the GiB gap
+        mock_upsert.assert_any_call("/tmp/model/modelMeasured.db", weights="2", gib="4.2")
+
+    def test_gib_gaps_not_filled_when_present(self):
+        """No upsert when GiB values are already present."""
+        full_rows = {
+            "2": {"weights": "2", "KL Div": "0.1", "PPL r-100": "11.0", "GiB": "4.2"},
+            "bf16": {"weights": "bf16", "KL Div": "0.0", "PPL r-100": "10.0", "GiB": "12.3"},
+        }
+        with patch("ezexl3.repo._read_db_rows", return_value=full_rows), \
+             patch("ezexl3.repo.migrate_csv_to_db"), \
+             patch("ezexl3.repo.file_size_gib") as mock_gib, \
+             patch("ezexl3.repo.upsert_row") as mock_upsert, \
+             patch("ezexl3.repo.Process"):
+            repo.run_measure_stage(
+                model_dir="/tmp/model",
+                bpws=["2"],
+                devices=[0],
+                write_logs=False,
+                measure_args=[],
+            )
+
+        # file_size_gib never called — no gaps to fill
+        mock_gib.assert_not_called()
 
 
 if __name__ == "__main__":
