@@ -1645,18 +1645,20 @@ def run_repo(
 
     if verify and do_quant and do_measure:
         # --- INTERLEAVED MODE (default) ---
-        # Quantize each BPW one at a time (halt on failure), then measure
-        # ALL gaps in one batched multi-GPU pass via run_measure_stage.
+        # Quantize each integer BPW, then immediately verify KL+PPL
+        # before moving to the next. Halts on any failure.
         model_dir = os.path.abspath(model_dir)
         forwarded = _build_quant_forwarded(quant_args, devices, device_ratios)
+        ppl_rows, measure_devices = _parse_measure_args(measure_args or [], devices)
+        db_path, _out_csv = _init_measure_db(model_dir, measure_devices)
 
         print("\n============================================================")
-        print("🔁 Interleaved Quantize → Measure Pipeline")
+        print("🔁 Interleaved Quantize → Verify Pipeline")
         print(f"   {len(quant_bpws)} integer BPW(s), {len(optimized_bpws)} optimized BPW(s)")
         print(f"   {len(devices)} GPU(s) for quantization and measurement")
         print("============================================================")
 
-        # Stage 1: quantize each integer BPW, halt on failure
+        # Stage 1: quantize + verify each integer BPW
         for i, bpw in enumerate(quant_bpws):
             print(f"\n--- [{i+1}/{len(quant_bpws)}] BPW {bpw} ---")
 
@@ -1670,6 +1672,20 @@ def run_repo(
                 print(f"🔴 Quantization failed for BPW {bpw}")
                 return 1
 
+            # Verify immediately: KL + PPL (parallel on 2+ GPUs)
+            rc = run_measure_single_bpw(
+                model_dir=model_dir,
+                bpw=str(bpw),
+                devices=measure_devices,
+                db_path=db_path,
+                ppl_rows=ppl_rows,
+                write_logs=write_logs,
+                include_base_ppl=(i == 0),
+            )
+            if rc != 0:
+                print(f"🔴 Verification failed for BPW {bpw}")
+                return 1
+
         # Stage 2: optimized optimize (needs all integer quants done)
         if optimized_bpws:
             _run_optimized_opt_stage(
@@ -1679,21 +1695,35 @@ def run_repo(
                 layers=optimized_measure_layers,
                 write_logs=write_logs,
             )
+            # Verify each optimized BPW
+            for opt_bpw in optimized_bpws:
+                rc = run_measure_single_bpw(
+                    model_dir=model_dir,
+                    bpw=str(opt_bpw),
+                    devices=measure_devices,
+                    db_path=db_path,
+                    ppl_rows=ppl_rows,
+                    write_logs=write_logs,
+                )
+                if rc != 0:
+                    print(f"🔴 Verification failed for optimized BPW {opt_bpw}")
+                    return 1
 
-        # Stage 3: measure ALL BPWs in one batched multi-GPU pass.
-        # run_measure_stage scans the DB for ALL gaps (KL, PPL, GiB),
-        # fills GiB inline, then queues ALL KL + PPL jobs into the
-        # multi-GPU worker queue so they run in parallel.
-        rc = run_measure_stage(
-            model_dir=model_dir,
-            bpws=measure_bpws,
-            devices=devices,
-            write_logs=write_logs,
-            measure_args=measure_args,
-            catbench_n=catbench_n,
-        )
-        if rc != 0:
-            return rc
+        # Export DB to CSV for downstream (readme, graph)
+        export_csv(db_path, _out_csv)
+
+        # Catbench runs after all verification is done
+        if catbench_n > 0:
+            rc = run_measure_stage(
+                model_dir=model_dir,
+                bpws=measure_bpws,
+                devices=measure_devices,
+                write_logs=write_logs,
+                measure_args=measure_args,
+                catbench_n=catbench_n,
+            )
+            if rc != 0:
+                return rc
 
     else:
         # --- LEGACY MODE (--no-verify, or --no-measurement, or quant-only) ---
