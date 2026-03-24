@@ -16,10 +16,8 @@ dependencies = [
     "numpy",
     "pandas",
     "matplotlib",
+    "aiohttp>=3.9",
 ]
-
-[project.optional-dependencies]
-chat = ["aiohttp>=3.9"]
 
 [project.scripts]
 ezexl3 = "ezexl3.cli:main"

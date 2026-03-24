@@ -246,11 +246,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     import os
 
     if cmd == "chat":
-        try:
-            from ezexl3.chat.server import run_server
-        except ImportError:
-            print("Chat UI requires aiohttp. Install with: pip install ezexl3[chat]")
-            return 1
+        from ezexl3.chat.server import run_server
         chat_devices = [int(d.strip()) for d in str(args.devices).split(",") if d.strip()]
         dr = args.device_ratios
         if dr:
