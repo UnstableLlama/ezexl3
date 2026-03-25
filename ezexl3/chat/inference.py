@@ -317,9 +317,8 @@ class ChatEngine:
             prompt_tokens = r.get("prompt_tokens", 0) if r else 0
             cached_tokens = r.get("cached_tokens", 0) if r else 0
             tps = new_tokens / elapsed if elapsed > 0 else 0
-            prefill_tokens = prompt_tokens - cached_tokens
             prefill_tps = (
-                prefill_tokens / r["time_prefill"]
+                prompt_tokens / r["time_prefill"]
                 if r and r.get("time_prefill", 0) > 0
                 else 0
             )
