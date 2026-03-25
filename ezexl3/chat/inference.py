@@ -389,18 +389,17 @@ def _build_model_args(
     import argparse
     from exllamav3 import model_init
 
-    # Create a parser with model_init's expected args, then override
+    # Build the parser to discover defaults, then feed it the required args
     parser = argparse.ArgumentParser()
     model_init.add_args(parser, cache=True)
-    # Parse with defaults
-    args = parser.parse_args([])
 
-    # Override with our values
-    args.model = model_dir
-    args.gpu_split = ",".join(str(d) for d in devices) if len(devices) > 1 else None
+    # Start with the required model_dir, add gpu_split / context_length if set
+    argv = ["-m", model_dir]
+    if len(devices) > 1:
+        argv += ["-gs", ",".join(str(d) for d in devices)]
     if device_ratios:
-        args.gpu_split = device_ratios
+        argv += ["-gs", device_ratios]
     if context_length:
-        args.context_length = context_length
+        argv += ["-cs", str(context_length)]
 
-    return args
+    return parser.parse_args(argv)
