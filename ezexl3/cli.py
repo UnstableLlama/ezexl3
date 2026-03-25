@@ -247,10 +247,11 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if cmd == "chat":
         from ezexl3.chat.server import run_server
-        chat_devices = [int(d.strip()) for d in str(args.devices).split(",") if d.strip()]
+        # args.devices is already a list of strings from the normalization above
+        chat_devices = [int(d) for d in args.devices]
         dr = args.device_ratios
         if dr:
-            dr = ",".join(x.strip() for x in dr.split(",") if x.strip())
+            dr = ",".join(dr) if isinstance(dr, list) else dr
         run_server(
             model_dir=args.model,
             devices=chat_devices,
