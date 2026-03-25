@@ -707,10 +707,13 @@ async function sendMessage() {
   if (tpsData) {
     const badge = document.createElement('div');
     badge.className = 'msg-tps';
-    badge.textContent = `${tpsData.new_tokens} tokens · ${tpsData.tps} t/s · ${tpsData.elapsed}s`;
-    if (tpsData.prefill_tps) {
-      badge.textContent += ` · prefill ${tpsData.prefill_tps} t/s`;
-    }
+    const ctx = tpsData.prompt_tokens ? `${tpsData.prompt_tokens.toLocaleString()} ctx` : '';
+    const cached = tpsData.cached_tokens ? ` (${tpsData.cached_tokens.toLocaleString()} cached)` : '';
+    let parts = [];
+    if (ctx) parts.push(ctx + cached);
+    parts.push(`${tpsData.new_tokens} gen · ${tpsData.tps} t/s · ${tpsData.elapsed}s`);
+    if (tpsData.prefill_tps) parts.push(`prefill ${tpsData.prefill_tps} t/s`);
+    badge.textContent = parts.join(' · ');
     assistantEl.appendChild(badge);
   }
 
