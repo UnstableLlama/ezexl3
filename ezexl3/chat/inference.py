@@ -101,6 +101,9 @@ class ChatEngine:
         """Load model synchronously (called at startup)."""
         from exllamav3 import Generator, model_init
 
+        # Set visible devices before model_init touches CUDA
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(d) for d in self._devices)
+
         # Build a minimal args namespace that model_init.init() expects
         args = _build_model_args(
             self.model_dir,
@@ -402,10 +405,12 @@ def _build_model_args(
     model_init.add_args(parser, cache=True)
 
     argv = ["-m", model_dir]
-    if len(devices) > 1:
-        argv += ["-gs", ",".join(str(d) for d in devices)]
     if device_ratios:
+        # User-provided GB ratios per device, e.g. "20,20"
         argv += ["-gs", device_ratios]
+    elif len(devices) > 1:
+        # Multi-GPU: let exllamav3 auto-split across visible devices
+        argv += ["-gs", "auto"]
     if cache_size:
         argv += ["-cs", str(cache_size)]
     if cache_quant:
