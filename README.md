@@ -70,32 +70,24 @@ ezexl3 readme -m /path/to/base_model -t fire
 
 ### 3. Template System
 You can customize the generated README by providing a template name via `--template` or `-t`.
-Templates are stored in the `/ezexl3/templates/` directory.
+Templates are stored in the `/ezexl3/templates/` directory — just use the short name:
 
-The system is flexible with naming. For example, `-t fire` will search for:
-- `templates/fire.md`
-- `templates/fireTemplateREADME.md`
-- `templates/fireREADME.md`
-- `templates/fireTemplate.md`
+```bash
+ezexl3 repo -m /path/to/base_model -t fire -b 2,3,4,5,6 -d 0,1
+```
 
-If no template is specified, it defaults to `basicTemplateREADME.md`.
+If no template is specified, it defaults to `basic`.
 
 **Easily generate your own custom template with AI assistance!**
 
-Copy and paste any TemplateREADME.md into your favorite LLM (Gemini, Claude, ChatGPT) along with this example prompt, followed by your own description:
+Copy and paste any template from `/ezexl3/templates/` into your favorite LLM (Gemini, Claude, ChatGPT) along with this example prompt, followed by your own description:
 
 ```bash
 Take this template, keep the main layout and variables, and modify it aesthetically based on my following prompts. Preserve all of the labels and title strings, only change the aesthetic, not the words or numbers:
 
 *Make it dark and understated, high contrast, professional, metallic.*
 ```
-Then save the resulting output in /ezexl3/templates/ as mynewTemplateREADME.md
-
-Use your template with
-
-```bash
-ezexl3 repo -m /path/to/base_model -t mynew -b 2,3,4,5,6 -d 0,1
-```
+Then save the result in `/ezexl3/templates/` and use it with `-t yourname`.
 <p align="center">
   <img src="ezexl3/templates/basicTemplate.png" width="35%" />
   <img src="ezexl3/templates/punkTemplate.png" width="35%" />
@@ -165,3 +157,12 @@ For automated pipelines, use the `--no-prompt` (or `-np`) flag to skip interacti
 ```bash
 ezexl3 repo -m /path/to/model -b 4.0 --no-prompt
 ```
+
+### 8. Inference Evaluation with WebUI
+ezexl3 includes a lightweight chat interface for quickly testing quantized models. It wraps exllamav3's Generator with paged attention caching and streaming output:
+
+```bash
+ezexl3 chat -m /path/to/quantized_model -d 0
+```
+
+Supports multi-GPU (`-d 0,1`), configurable cache size (`-cs 32768`), and cache quantization (`-cq 6,6`). Auto-detects prompt format from the model name. Useful for spot-checking quant quality at different BPW levels before uploading.
