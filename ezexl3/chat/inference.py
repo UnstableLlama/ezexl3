@@ -180,32 +180,24 @@ class ChatEngine:
         return stop_conditions
 
     def _get_sampler(self):
-        from exllamav3 import Sampler
+        from exllamav3 import model_init
+        import argparse
 
-        sampler = Sampler()
         s = self.settings
-        sampler.temperature = s.temperature
-        sampler.top_k = s.top_k
-        sampler.top_p = s.top_p
-        sampler.min_p = s.min_p
-        if s.repetition_penalty != 1.0:
-            sampler.repetition_penalty = s.repetition_penalty
-
-        # Ensure Sampler.forward accepts logit_mask (needed by banned_strings).
-        # Older exllamav3 builds lack this parameter; patch it in so the
-        # generator can pass logit_mask without crashing.
-        import inspect
-        sig = inspect.signature(sampler.forward)
-        if "logit_mask" not in sig.parameters:
-            _orig_forward = sampler.forward
-            def _patched_forward(*args, logit_mask=None, **kwargs):
-                # Apply mask to logits BEFORE sampling
-                if logit_mask is not None and len(args) > 0:
-                    args[0][logit_mask] = float("-inf")
-                return _orig_forward(*args, **kwargs)
-            sampler.forward = _patched_forward
-
-        return sampler
+        ns = argparse.Namespace(
+            temperature=s.temperature,
+            top_k=s.top_k,
+            top_p=s.top_p,
+            min_p=s.min_p,
+            repetition_penalty=s.repetition_penalty,
+            presence_penalty=0.0,
+            frequency_penalty=0.0,
+            penalty_range=1024,
+            temperature_first=False,
+            adaptive_target=1.0,
+            adaptive_decay=0.9,
+        )
+        return model_init.get_arg_sampler(ns)
 
     def _build_input_ids(self, prompt_format, prefix: str = ""):
         """Tokenize full context, trimming from head if too long."""
