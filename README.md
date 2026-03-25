@@ -37,7 +37,7 @@ pip install -e .
 
 ## Usage
 
-### 1. Quantize a full repository
+### Quantize a full repository
 Run the entire pipeline (quantize → verify → README):
 ```bash
 ezexl3 repo -m /path/to/base_model -b 2,2.5,3,4,5,6 -d 0,1 -t basic
@@ -50,7 +50,7 @@ Then ezexl3 automatically:
 
 - Generates a README.md for a HuggingFace repo in the base model folder. (with optional customizable templates)
 
-### 2. Single-stage subcommands
+### Single-stage subcommands
 If you only want to run specific stages:
 ```bash
 # Quantize only
@@ -68,7 +68,7 @@ ezexl3 readme -m /path/to/base_model -t fire
 (but really everything is checkpointed so it usually doesn't hurt to just run the "repo" command every time)
 ```
 
-### 3. Template System
+### Template System
 You can customize the generated README by providing a template name via `--template` or `-t`.
 Templates are stored in the `/ezexl3/templates/` directory — just use the short name:
 
@@ -95,7 +95,7 @@ Then save the result in `/ezexl3/templates/` and use it with `-t yourname`.
   <img src="ezexl3/templates/greenTemplate.png" width="45%" />
 </p>
 
-### 4. Catbench
+###  Catbench
 SVG Catbench is available as a measurement option via the `-cb` flag. It runs catbench inference at every BPW level (including optimized fractionals), extracts SVGs, and assembles them into a grid in the final README.
 
 ```bash
@@ -110,7 +110,14 @@ ezexl3 repo -m /path/to/base_model -b 2,3,4,5,6,8 -d 0,1 -t punk -cb
 - Catbench results are checkpointed like everything else — rerunning skips completed samples
 - bf16 baseline included when VRAM allows
 
-### 5. Advanced: Passthrough Flags
+###  Inference Evaluation with WebUI
+ezexl3 includes a lightweight chat web interface for quickly testing quantized models. Exllama native, based on chat.py and the generator.
+
+```bash
+ezexl3 chat -m /path/to/quantized_model -d 0
+```
+
+### Advanced: Passthrough Flags
 You can pass custom arguments directly to the underlying quantization (`multiConvert`) or measurement scripts using the `--quant-args` and `--measure-args` flags.
 
 **Important**: These flags require a double-dash `--` delimiter to separate the passthrough block from the rest of the arguments.
@@ -129,7 +136,7 @@ Common Use Cases:
 
 Note: passthrough blocks consume remaining args until another passthrough block starts, so keep normal CLI flags (like `--no-readme`) before `--measure-args -- ...`
 
-### 6. `--no-verify` (Legacy Batch Mode)
+###  `--no-verify` (Legacy Batch Mode)
 By default, ezexl3 interleaves quantization with KL/PPL verification per BPW. Use `--no-verify` (or `-nv`) to revert to the old batch pipeline (all quants first, then all measurements):
 
 ```bash
@@ -151,18 +158,11 @@ If you request an optimized BPW (for example `4.07`), ezexl3 executes the follow
 
 To locate exllamav3 utility scripts, ezexl3 uses bundled vendored copies (no manual path configuration needed).
 
-### 7. Headless Mode
+###  Headless Mode
 For automated pipelines, use the `--no-prompt` (or `-np`) flag to skip interactive metadata collection for the README. It will use sensible defaults based on the model directory name and your environment.
 
 ```bash
 ezexl3 repo -m /path/to/model -b 4.0 --no-prompt
-```
-
-### 8. Inference Evaluation with WebUI
-ezexl3 includes a lightweight chat interface for quickly testing quantized models. It wraps exllamav3's Generator with paged attention caching and streaming output:
-
-```bash
-ezexl3 chat -m /path/to/quantized_model -d 0
 ```
 
 Supports multi-GPU (`-d 0,1`), configurable cache size (`-cs 32768`), and cache quantization (`-cq 6,6`). Auto-detects prompt format from the model name. Useful for spot-checking quant quality at different BPW levels before uploading.
