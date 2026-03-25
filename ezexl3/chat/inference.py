@@ -120,6 +120,7 @@ class ChatEngine:
             model=self.model,
             cache=self.cache,
             tokenizer=self.tokenizer,
+            max_chunk_size=4096,
         )
 
         # Set default mode/system prompt based on model
