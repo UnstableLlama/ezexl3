@@ -179,8 +179,6 @@ class ChatEngine:
             stop_conditions += self.config.eos_token_id_list
         return stop_conditions
 
-    _banned_strings_supported: bool | None = None
-
     def _get_sampler(self):
         from exllamav3 import Sampler
 
@@ -192,18 +190,27 @@ class ChatEngine:
         sampler.min_p = s.min_p
         if s.repetition_penalty != 1.0:
             sampler.repetition_penalty = s.repetition_penalty
-        return sampler
 
-    @classmethod
-    def _check_banned_strings_support(cls):
-        """Check if the installed exllamav3 Sampler supports logit_mask."""
-        if cls._banned_strings_supported is not None:
-            return cls._banned_strings_supported
+        # Ensure Sampler.forward accepts logit_mask (needed by banned_strings).
+        # Older exllamav3 builds lack this parameter; patch it in so the
+        # generator can pass logit_mask without crashing.
         import inspect
-        from exllamav3 import Sampler
-        sig = inspect.signature(Sampler.forward)
-        cls._banned_strings_supported = "logit_mask" in sig.parameters
-        return cls._banned_strings_supported
+        sig = inspect.signature(sampler.forward)
+        if "logit_mask" not in sig.parameters:
+            _orig_forward = sampler.forward
+            def _patched_forward(*args, logit_mask=None, **kwargs):
+                result = _orig_forward(*args, **kwargs)
+                if logit_mask is not None:
+                    # Apply mask: set banned positions to -inf before sampling
+                    if isinstance(result, tuple):
+                        logits = result[0]
+                        logits[logit_mask] = float("-inf")
+                    else:
+                        result[logit_mask] = float("-inf")
+                return result
+            sampler.forward = _patched_forward
+
+        return sampler
 
     def _build_input_ids(self, prompt_format, prefix: str = ""):
         """Tokenize full context, trimming from head if too long."""
@@ -276,7 +283,7 @@ class ChatEngine:
             sampler = self._get_sampler()
             ids = self._build_input_ids(prompt_format)
 
-            # Banned strings (requires logit_mask support in Sampler)
+            # Banned strings
             banned = list(self.settings.banned_strings)
             if self.settings.no_think:
                 tt = prompt_format.thinktag()
@@ -285,22 +292,13 @@ class ChatEngine:
                 if tt[1]:
                     banned.append(tt[1])
 
-            use_banned = banned and self._check_banned_strings_support()
-
-            job_kwargs = dict(
+            job = Job(
                 input_ids=ids,
                 max_new_tokens=self.settings.max_response_tokens,
                 stop_conditions=stop_conditions,
                 sampler=sampler,
+                banned_strings=banned if banned else None,
             )
-            if use_banned:
-                job_kwargs["banned_strings"] = banned
-            try:
-                job = Job(**job_kwargs)
-            except TypeError:
-                # banned_strings not supported for this model/config
-                job_kwargs.pop("banned_strings", None)
-                job = Job(**job_kwargs)
             self._current_job = job
             self.generator.enqueue(job)
 
