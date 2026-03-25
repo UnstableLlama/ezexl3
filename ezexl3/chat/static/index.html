@@ -4,317 +4,238 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ezexl3 chat</title>
-<script>/* marked.js v15 (MIT) - https://github.com/markedjs/marked */
-!function(e,t){"object"==typeof exports&&typeof module<"u"?module.exports=t():"function"==typeof define&&define.amd?define("marked",t):e.marked=t()}(typeof globalThis<"u"?globalThis:typeof self<"u"?self:this,function(){var e,t={},n=t,s={exports:t},r=Object.defineProperty,i=Object.getOwnPropertyDescriptor,l=Object.getOwnPropertyNames,o=Object.prototype.hasOwnProperty,a={};function c(){return{async:!1,breaks:!1,extensions:null,gfm:!0,hooks:null,pedantic:!1,renderer:null,silent:!1,tokenizer:null,walkTokens:null}}((e,t)=>{for(var n in t)r(e,n,{get:t[n],enumerable:!0})})(a,{Hooks:()=>xe,Lexer:()=>ge,Marked:()=>be,Parser:()=>de,Renderer:()=>ke,TextRenderer:()=>fe,Tokenizer:()=>ue,defaults:()=>h,getDefaults:()=>c,lexer:()=>_e,marked:()=>we,options:()=>ye,parse:()=>ze,parseInline:()=>Te,parser:()=>Ae,setOptions:()=>$e,use:()=>Re,walkTokens:()=>Se}),s.exports=(e=a,((e,t,n,s)=>{if(t&&"object"==typeof t||"function"==typeof t)for(let a of l(t))o.call(e,a)||a===n||r(e,a,{get:()=>t[a],enumerable:!(s=i(t,a))||s.enumerable});return e})(r({},"__esModule",{value:!0}),e));var h={async:!1,breaks:!1,extensions:null,gfm:!0,hooks:null,pedantic:!1,renderer:null,silent:!1,tokenizer:null,walkTokens:null};function p(e){h=e}var u={exec:()=>null};function g(e,t=""){let n="string"==typeof e?e:e.source;const s={replace:(e,t)=>{let r="string"==typeof t?t:t.source;return r=r.replace(k.caret,"$1"),n=n.replace(e,r),s},getRegex:()=>new RegExp(n,t)};return s}var k={codeRemoveIndent:/^(?: {1,4}| {0,3}\t)/gm,outputLinkReplace:/\\([\[\]])/g,indentCodeCompensation:/^(\s+)(?:```)/,beginningSpace:/^\s+/,endingHash:/#$/,startingSpaceChar:/^ /,endingSpaceChar:/ $/,nonSpaceChar:/[^ ]/,newLineCharGlobal:/\n/g,tabCharGlobal:/\t/g,multipleSpaceGlobal:/\s+/g,blankLine:/^[ \t]*$/,doubleBlankLine:/\n[ \t]*\n[ \t]*$/,blockquoteStart:/^ {0,3}>/,blockquoteSetextReplace:/\n {0,3}((?:=+|-+) *)(?=\n|$)/g,blockquoteSetextReplace2:/^ {0,3}>[ \t]?/gm,listReplaceTabs:/^\t+/,listReplaceNesting:/^ {1,4}(?=( {4})*[^ ])/g,listIsTask:/^\[[ xX]\] /,listReplaceTask:/^\[[ xX]\] +/,anyLine:/\n.*\n/,hrefBrackets:/^<(.*)>$/,tableDelimiter:/[:|]/,tableAlignChars:/^\||\| *$/g,tableRowBlankLine:/\n[ \t]*$/,tableAlignRight:/^ *-+: *$/,tableAlignCenter:/^ *:-+: *$/,tableAlignLeft:/^ *:-+ *$/,startATag:/^<a /i,endATag:/^<\/a>/i,startPreScriptTag:/^<(pre|code|kbd|script)(\s|>)/i,endPreScriptTag:/^<\/(pre|code|kbd|script)(\s|>)/i,startAngleBracket:/^</,endAngleBracket:/>$/,pedanticHrefTitle:/^([^'"]*[^\s])\s+(['"])(.*)\2/,unicodeAlphaNumeric:/[\p{L}\p{N}]/u,escapeTest:/[&<>"']/,escapeReplace:/[&<>"']/g,escapeTestNoEncode:/[<>"']|&(?!(#\d{1,7}|#[Xx][a-fA-F0-9]{1,6}|\w+);)/,escapeReplaceNoEncode:/[<>"']|&(?!(#\d{1,7}|#[Xx][a-fA-F0-9]{1,6}|\w+);)/g,unescapeTest:/&(#(?:\d+)|(?:#x[0-9A-Fa-f]+)|(?:\w+));?/gi,caret:/(^|[^\[])\^/g,percentDecode:/%25/g,findPipe:/\|/g,splitPipe:/ \|/,slashPipe:/\\\|/g,carriageReturn:/\r\n|\r/g,spaceLine:/^ +$/gm,notSpaceStart:/^\S*/,endingNewline:/\n$/,listItemRegex:e=>new RegExp(`^( {0,3}${e})((?:[\t ][^\\n]*)?(?:\\n|$))`),nextBulletRegex:e=>new RegExp(`^ {0,${Math.min(3,e-1)}}(?:[*+-]|\\d{1,9}[.)])((?:[ \t][^\\n]*)?(?:\\n|$))`),hrRegex:e=>new RegExp(`^ {0,${Math.min(3,e-1)}}((?:- *){3,}|(?:_ *){3,}|(?:\\* *){3,})(?:\\n+|$)`),fencesBeginRegex:e=>new RegExp(`^ {0,${Math.min(3,e-1)}}(?:\`\`\`|~~~)`),headingBeginRegex:e=>new RegExp(`^ {0,${Math.min(3,e-1)}}#`),htmlBeginRegex:e=>new RegExp(`^ {0,${Math.min(3,e-1)}}<(?:[a-z].*>|!--)`,"i")},f=/^ {0,3}((?:-[\t ]*){3,}|(?:_[ \t]*){3,}|(?:\*[ \t]*){3,})(?:\n+|$)/,d=/(?:[*+-]|\d{1,9}[.)])/,x=/^(?!bull |blockCode|fences|blockquote|heading|html|table)((?:.|\n(?!\s*?\n|bull |blockCode|fences|blockquote|heading|html|table))+?)\n {0,3}(=+|-+) *(?:\n+|$)/,b=g(x).replace(/bull/g,d).replace(/blockCode/g,/(?: {4}| {0,3}\t)/).replace(/fences/g,/ {0,3}(?:`{3,}|~{3,})/).replace(/blockquote/g,/ {0,3}>/).replace(/heading/g,/ {0,3}#{1,6}/).replace(/html/g,/ {0,3}<[^\n>]+>\n/).replace(/\|table/g,"").getRegex(),m=g(x).replace(/bull/g,d).replace(/blockCode/g,/(?: {4}| {0,3}\t)/).replace(/fences/g,/ {0,3}(?:`{3,}|~{3,})/).replace(/blockquote/g,/ {0,3}>/).replace(/heading/g,/ {0,3}#{1,6}/).replace(/html/g,/ {0,3}<[^\n>]+>\n/).replace(/table/g,/ {0,3}\|?(?:[:\- ]*\|)+[\:\- ]*\n/).getRegex(),w=/^([^\n]+(?:\n(?!hr|heading|lheading|blockquote|fences|list|html|table| +\n)[^\n]+)*)/,y=/(?!\s*\])(?:\\.|[^\[\]\\])+/,$=g(/^ {0,3}\[(label)\]: *(?:\n[ \t]*)?([^<\s][^\s]*|<.*?>)(?:(?: +(?:\n[ \t]*)?| *\n[ \t]*)(title))? *(?:\n+|$)/).replace("label",y).replace("title",/(?:"(?:\\"?|[^"\\])*"|'[^'\n]*(?:\n[^'\n]+)*\n?'|\([^()]*\))/).getRegex(),R=g(/^( {0,3}bull)([ \t][^\n]+?)?(?:\n|$)/).replace(/bull/g,d).getRegex(),S="address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|meta|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul",T=/<!--(?:-?>|[\s\S]*?(?:-->|$))/,z=g("^ {0,3}(?:<(script|pre|style|textarea)[\\s>][\\s\\S]*?(?:</\\1>[^\\n]*\\n+|$)|comment[^\\n]*(\\n+|$)|<\\?[\\s\\S]*?(?:\\?>\\n*|$)|<![A-Z][\\s\\S]*?(?:>\\n*|$)|<!\\[CDATA\\[[\\s\\S]*?(?:\\]\\]>\\n*|$)|</?(tag)(?: +|\\n|/?>)[\\s\\S]*?(?:(?:\\n[ \t]*)+\\n|$)|<(?!script|pre|style|textarea)([a-z][\\w-]*)(?:attribute)*? */?>(?=[ \\t]*(?:\\n|$))[\\s\\S]*?(?:(?:\\n[ \t]*)+\\n|$)|</(?!script|pre|style|textarea)[a-z][\\w-]*\\s*>(?=[ \\t]*(?:\\n|$))[\\s\\S]*?(?:(?:\\n[ \t]*)+\\n|$))","i").replace("comment",T).replace("tag",S).replace("attribute",/ +[a-zA-Z:_][\w.:-]*(?: *= *"[^"\n]*"| *= *'[^'\n]*'| *= *[^\s"'=<>`]+)?/).getRegex(),A=g(w).replace("hr",f).replace("heading"," {0,3}#{1,6}(?:\\s|$)").replace("|lheading","").replace("|table","").replace("blockquote"," {0,3}>").replace("fences"," {0,3}(?:`{3,}(?=[^`\\n]*\\n)|~{3,})[^\\n]*\\n").replace("list"," {0,3}(?:[*+-]|1[.)]) ").replace("html","</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|textarea|!--)").replace("tag",S).getRegex(),_={blockquote:g(/^( {0,3}> ?(paragraph|[^\n]*)(?:\n|$))+/).replace("paragraph",A).getRegex(),code:/^((?: {4}| {0,3}\t)[^\n]+(?:\n(?:[ \t]*(?:\n|$))*)?)+/,def:$,fences:/^ {0,3}(`{3,}(?=[^`\n]*(?:\n|$))|~{3,})([^\n]*)(?:\n|$)(?:|([\s\S]*?)(?:\n|$))(?: {0,3}\1[~`]* *(?=\n|$)|$)/,heading:/^ {0,3}(#{1,6})(?=\s|$)(.*)(?:\n+|$)/,hr:f,html:z,lheading:b,list:R,newline:/^(?:[ \t]*(?:\n|$))+/,paragraph:A,table:u,text:/^[^\n]+/},P=g("^ *([^\\n ].*)\\n {0,3}((?:\\| *)?:?-+:? *(?:\\| *:?-+:? *)*(?:\\| *)?)(?:\\n((?:(?! *\\n|hr|heading|blockquote|code|fences|list|html).*(?:\\n|$))*)\\n*|$)").replace("hr",f).replace("heading"," {0,3}#{1,6}(?:\\s|$)").replace("blockquote"," {0,3}>").replace("code","(?: {4}| {0,3}\t)[^\\n]").replace("fences"," {0,3}(?:`{3,}(?=[^`\\n]*\\n)|~{3,})[^\\n]*\\n").replace("list"," {0,3}(?:[*+-]|1[.)]) ").replace("html","</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|textarea|!--)").replace("tag",S).getRegex(),I={..._,lheading:m,table:P,paragraph:g(w).replace("hr",f).replace("heading"," {0,3}#{1,6}(?:\\s|$)").replace("|lheading","").replace("table",P).replace("blockquote"," {0,3}>").replace("fences"," {0,3}(?:`{3,}(?=[^`\\n]*\\n)|~{3,})[^\\n]*\\n").replace("list"," {0,3}(?:[*+-]|1[.)]) ").replace("html","</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|textarea|!--)").replace("tag",S).getRegex()},L={..._,html:g("^ *(?:comment *(?:\\n|\\s*$)|<(tag)[\\s\\S]+?</\\1> *(?:\\n{2,}|\\s*$)|<tag(?:\"[^\"]*\"|'[^']*'|\\s[^'\"/>\\s]*)*?/?> *(?:\\n{2,}|\\s*$))").replace("comment",T).replace(/tag/g,"(?!(?:a|em|strong|small|s|cite|q|dfn|abbr|data|time|code|var|samp|kbd|sub|sup|i|b|u|mark|ruby|rt|rp|bdi|bdo|span|br|wbr|ins|del|img)\\b)\\w+(?!:|[^\\w\\s@]*@)\\b").getRegex(),def:/^ *\[([^\]]+)\]: *<?([^\s>]+)>?(?: +(["(][^\n]+[")]))? *(?:\n+|$)/,heading:/^(#{1,6})(.*)(?:\n+|$)/,fences:u,lheading:/^(.+?)\n {0,3}(=+|-+) *(?:\n+|$)/,paragraph:g(w).replace("hr",f).replace("heading"," *#{1,6} *[^\n]").replace("lheading",b).replace("|table","").replace("blockquote"," {0,3}>").replace("|fences","").replace("|list","").replace("|html","").replace("|tag","").getRegex()},B=/^( {2,}|\\)\n(?!\s*$)/,C=/[\p{P}\p{S}]/u,q=/[\s\p{P}\p{S}]/u,E=/[^\s\p{P}\p{S}]/u,v=g(/^((?![*_])punctSpace)/,"u").replace(/punctSpace/g,q).getRegex(),Z=/(?!~)[\p{P}\p{S}]/u,O=/^(?:\*+(?:((?!\*)punct)|[^\s*]))|^_+(?:((?!_)punct)|([^\s_]))/,D=g(O,"u").replace(/punct/g,C).getRegex(),j=g(O,"u").replace(/punct/g,Z).getRegex(),M="^[^_*]*?__[^_*]*?\\*[^_*]*?(?=__)|[^*]+(?=[^*])|(?!\\*)punct(\\*+)(?=[\\s]|$)|notPunctSpace(\\*+)(?!\\*)(?=punctSpace|$)|(?!\\*)punctSpace(\\*+)(?=notPunctSpace)|[\\s](\\*+)(?!\\*)(?=punct)|(?!\\*)punct(\\*+)(?!\\*)(?=punct)|notPunctSpace(\\*+)(?=notPunctSpace)",N=g(M,"gu").replace(/notPunctSpace/g,E).replace(/punctSpace/g,q).replace(/punct/g,C).getRegex(),Q=g(M,"gu").replace(/notPunctSpace/g,/(?:[^\s\p{P}\p{S}]|~)/u).replace(/punctSpace/g,/(?!~)[\s\p{P}\p{S}]/u).replace(/punct/g,Z).getRegex(),G=g("^[^_*]*?\\*\\*[^_*]*?_[^_*]*?(?=\\*\\*)|[^_]+(?=[^_])|(?!_)punct(_+)(?=[\\s]|$)|notPunctSpace(_+)(?!_)(?=punctSpace|$)|(?!_)punctSpace(_+)(?=notPunctSpace)|[\\s](_+)(?!_)(?=punct)|(?!_)punct(_+)(?!_)(?=punct)","gu").replace(/notPunctSpace/g,E).replace(/punctSpace/g,q).replace(/punct/g,C).getRegex(),H=g(/\\(punct)/,"gu").replace(/punct/g,C).getRegex(),X=g(/^<(scheme:[^\s\x00-\x1f<>]*|email)>/).replace("scheme",/[a-zA-Z][a-zA-Z0-9+.-]{1,31}/).replace("email",/[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+(@)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+(?![-_])/).getRegex(),F=g(T).replace("(?:--\x3e|$)","--\x3e").getRegex(),U=g("^comment|^</[a-zA-Z][\\w:-]*\\s*>|^<[a-zA-Z][\\w-]*(?:attribute)*?\\s*/?>|^<\\?[\\s\\S]*?\\?>|^<![a-zA-Z]+\\s[\\s\\S]*?>|^<!\\[CDATA\\[[\\s\\S]*?\\]\\]>").replace("comment",F).replace("attribute",/\s+[a-zA-Z:_][\w.:-]*(?:\s*=\s*"[^"]*"|\s*=\s*'[^']*'|\s*=\s*[^\s"'=<>`]+)?/).getRegex(),J=/(?:\[(?:\\.|[^\[\]\\])*\]|\\.|`[^`]*`|[^\[\]\\`])*?/,K=g(/^!?\[(label)\]\(\s*(href)(?:(?:[ \t]*(?:\n[ \t]*)?)(title))?\s*\)/).replace("label",J).replace("href",/<(?:\\.|[^\n<>\\])+>|[^ \t\n\x00-\x1f]*/).replace("title",/"(?:\\"?|[^"\\])*"|'(?:\\'?|[^'\\])*'|\((?:\\\)?|[^)\\])*\)/).getRegex(),V=g(/^!?\[(label)\]\[(ref)\]/).replace("label",J).replace("ref",y).getRegex(),W=g(/^!?\[(ref)\](?:\[\])?/).replace("ref",y).getRegex(),Y={_backpedal:u,anyPunctuation:H,autolink:X,blockSkip:/\[[^[\]]*?\]\((?:\\.|[^\\\(\)]|\((?:\\.|[^\\\(\)])*\))*\)|`[^`]*?`|<[^<>]*?>/g,br:B,code:/^(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/,del:u,emStrongLDelim:D,emStrongRDelimAst:N,emStrongRDelimUnd:G,escape:/^\\([!"#$%&'()*+,\-./:;<=>?@\[\]\\^_`{|}~])/,link:K,nolink:W,punctuation:v,reflink:V,reflinkSearch:g("reflink|nolink(?!\\()","g").replace("reflink",V).replace("nolink",W).getRegex(),tag:U,text:/^(`+|[^`])(?:(?= {2,}\n)|[\s\S]*?(?:(?=[\\<!\[`*_]|\b_|$)|[^ ](?= {2,}\n)))/,url:u},ee={...Y,link:g(/^!?\[(label)\]\((.*?)\)/).replace("label",J).getRegex(),reflink:g(/^!?\[(label)\]\s*\[([^\]]*)\]/).replace("label",J).getRegex()},te={...Y,emStrongRDelimAst:Q,emStrongLDelim:j,url:g(/^((?:ftp|https?):\/\/|www\.)(?:[a-zA-Z0-9\-]+\.?)+[^\s<]*|^email/,"i").replace("email",/[A-Za-z0-9._+-]+(@)[a-zA-Z0-9-_]+(?:\.[a-zA-Z0-9-_]*[a-zA-Z0-9])+(?![-_])/).getRegex(),_backpedal:/(?:[^?!.,:;*_'"~()&]+|\([^)]*\)|&(?![a-zA-Z0-9]+;$)|[?!.,:;*_'"~)]+(?!$))+/,del:/^(~~?)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/,text:/^([`~]+|[^`~])(?:(?= {2,}\n)|(?=[a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-]+@)|[\s\S]*?(?:(?=[\\<!\[`*~_]|\b_|https?:\/\/|ftp:\/\/|www\.|$)|[^ ](?= {2,}\n)|[^a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-](?=[a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-]+@)))/},ne={...te,br:g(B).replace("{2,}","*").getRegex(),text:g(te.text).replace("\\b_","\\b_| {2,}\\n").replace(/\{2,\}/g,"*").getRegex()},se={normal:_,gfm:I,pedantic:L},re={normal:Y,gfm:te,breaks:ne,pedantic:ee},ie={"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"},le=e=>ie[e];function oe(e,t){if(t){if(k.escapeTest.test(e))return e.replace(k.escapeReplace,le)}else if(k.escapeTestNoEncode.test(e))return e.replace(k.escapeReplaceNoEncode,le);return e}function ae(e){try{e=encodeURI(e).replace(k.percentDecode,"%")}catch{return null}return e}function ce(e,t){const n=e.replace(k.findPipe,(e,t,n)=>{let s=!1,r=t;for(;--r>=0&&"\\"===n[r];)s=!s;return s?"|":" |"}).split(k.splitPipe);let s=0;if(n[0].trim()||n.shift(),n.length>0&&!n.at(-1)?.trim()&&n.pop(),t)if(n.length>t)n.splice(t);else for(;n.length<t;)n.push("");for(;s<n.length;s++)n[s]=n[s].trim().replace(k.slashPipe,"|");return n}function he(e,t,n){const s=e.length;if(0===s)return"";let r=0;for(;r<s;){const i=e.charAt(s-r-1);if(i!==t||n){if(i===t||!n)break;r++}else r++}return e.slice(0,s-r)}function pe(e,t,n,s,r){const i=t.href,l=t.title||null,o=e[1].replace(r.other.outputLinkReplace,"$1");s.state.inLink=!0;const a={type:"!"===e[0].charAt(0)?"image":"link",raw:n,href:i,title:l,text:o,tokens:s.inlineTokens(o)};return s.state.inLink=!1,a}var ue=class{options;rules;lexer;constructor(e){this.options=e||h}space(e){const t=this.rules.block.newline.exec(e);if(t&&t[0].length>0)return{type:"space",raw:t[0]}}code(e){const t=this.rules.block.code.exec(e);if(t){const e=t[0].replace(this.rules.other.codeRemoveIndent,"");return{type:"code",raw:t[0],codeBlockStyle:"indented",text:this.options.pedantic?e:he(e,"\n")}}}fences(e){const t=this.rules.block.fences.exec(e);if(t){const e=t[0],n=function(e,t,n){const s=e.match(n.other.indentCodeCompensation);if(null===s)return t;const r=s[1];return t.split("\n").map(e=>{const t=e.match(n.other.beginningSpace);if(null===t)return e;const[s]=t;return s.length>=r.length?e.slice(r.length):e}).join("\n")}(e,t[3]||"",this.rules);return{type:"code",raw:e,lang:t[2]?t[2].trim().replace(this.rules.inline.anyPunctuation,"$1"):t[2],text:n}}}heading(e){const t=this.rules.block.heading.exec(e);if(t){let e=t[2].trim();if(this.rules.other.endingHash.test(e)){const t=he(e,"#");this.options.pedantic?e=t.trim():t&&!this.rules.other.endingSpaceChar.test(t)||(e=t.trim())}return{type:"heading",raw:t[0],depth:t[1].length,text:e,tokens:this.lexer.inline(e)}}}hr(e){const t=this.rules.block.hr.exec(e);if(t)return{type:"hr",raw:he(t[0],"\n")}}blockquote(e){const t=this.rules.block.blockquote.exec(e);if(t){let e=he(t[0],"\n").split("\n"),n="",s="";const r=[];for(;e.length>0;){let t=!1;const i=[];let l;for(l=0;l<e.length;l++)if(this.rules.other.blockquoteStart.test(e[l]))i.push(e[l]),t=!0;else{if(t)break;i.push(e[l])}e=e.slice(l);const o=i.join("\n"),a=o.replace(this.rules.other.blockquoteSetextReplace,"\n    $1").replace(this.rules.other.blockquoteSetextReplace2,"");n=n?`${n}\n${o}`:o,s=s?`${s}\n${a}`:a;const c=this.lexer.state.top;if(this.lexer.state.top=!0,this.lexer.blockTokens(a,r,!0),this.lexer.state.top=c,0===e.length)break;const h=r.at(-1);if("code"===h?.type)break;if("blockquote"===h?.type){const t=h,i=t.raw+"\n"+e.join("\n"),l=this.blockquote(i);r[r.length-1]=l,n=n.substring(0,n.length-t.raw.length)+l.raw,s=s.substring(0,s.length-t.text.length)+l.text;break}if("list"===h?.type){const t=h,i=t.raw+"\n"+e.join("\n"),l=this.list(i);r[r.length-1]=l,n=n.substring(0,n.length-h.raw.length)+l.raw,s=s.substring(0,s.length-t.raw.length)+l.raw,e=i.substring(r.at(-1).raw.length).split("\n");continue}}return{type:"blockquote",raw:n,tokens:r,text:s}}}list(e){let t=this.rules.block.list.exec(e);if(t){let n=t[1].trim();const s=n.length>1,r={type:"list",raw:"",ordered:s,start:s?+n.slice(0,-1):"",loose:!1,items:[]};n=s?`\\d{1,9}\\${n.slice(-1)}`:`\\${n}`,this.options.pedantic&&(n=s?n:"[*+-]");const i=this.rules.other.listItemRegex(n);let l=!1;for(;e;){let n=!1,s="",o="";if(!(t=i.exec(e)))break;if(this.rules.block.hr.test(e))break;s=t[0],e=e.substring(s.length);let a=t[2].split("\n",1)[0].replace(this.rules.other.listReplaceTabs,e=>" ".repeat(3*e.length)),c=e.split("\n",1)[0],h=!a.trim(),p=0;if(this.options.pedantic?(p=2,o=a.trimStart()):h?p=t[1].length+1:(p=t[2].search(this.rules.other.nonSpaceChar),p=p>4?1:p,o=a.slice(p),p+=t[1].length),h&&this.rules.other.blankLine.test(c)&&(s+=c+"\n",e=e.substring(c.length+1),n=!0),!n){const t=this.rules.other.nextBulletRegex(p),n=this.rules.other.hrRegex(p),r=this.rules.other.fencesBeginRegex(p),i=this.rules.other.headingBeginRegex(p),l=this.rules.other.htmlBeginRegex(p);for(;e;){const u=e.split("\n",1)[0];let g;if(c=u,this.options.pedantic?(c=c.replace(this.rules.other.listReplaceNesting,"  "),g=c):g=c.replace(this.rules.other.tabCharGlobal,"    "),r.test(c))break;if(i.test(c))break;if(l.test(c))break;if(t.test(c))break;if(n.test(c))break;if(g.search(this.rules.other.nonSpaceChar)>=p||!c.trim())o+="\n"+g.slice(p);else{if(h)break;if(a.replace(this.rules.other.tabCharGlobal,"    ").search(this.rules.other.nonSpaceChar)>=4)break;if(r.test(a))break;if(i.test(a))break;if(n.test(a))break;o+="\n"+c}h||c.trim()||(h=!0),s+=u+"\n",e=e.substring(u.length+1),a=g.slice(p)}}r.loose||(l?r.loose=!0:this.rules.other.doubleBlankLine.test(s)&&(l=!0));let u,g=null;this.options.gfm&&(g=this.rules.other.listIsTask.exec(o),g&&(u="[ ] "!==g[0],o=o.replace(this.rules.other.listReplaceTask,""))),r.items.push({type:"list_item",raw:s,task:!!g,checked:u,loose:!1,text:o,tokens:[]}),r.raw+=s}const o=r.items.at(-1);if(!o)return;o.raw=o.raw.trimEnd(),o.text=o.text.trimEnd(),r.raw=r.raw.trimEnd();for(let e=0;e<r.items.length;e++)if(this.lexer.state.top=!1,r.items[e].tokens=this.lexer.blockTokens(r.items[e].text,[]),!r.loose){const t=r.items[e].tokens.filter(e=>"space"===e.type),n=t.length>0&&t.some(e=>this.rules.other.anyLine.test(e.raw));r.loose=n}if(r.loose)for(let e=0;e<r.items.length;e++)r.items[e].loose=!0;return r}}html(e){const t=this.rules.block.html.exec(e);if(t){return{type:"html",block:!0,raw:t[0],pre:"pre"===t[1]||"script"===t[1]||"style"===t[1],text:t[0]}}}def(e){const t=this.rules.block.def.exec(e);if(t){const e=t[1].toLowerCase().replace(this.rules.other.multipleSpaceGlobal," "),n=t[2]?t[2].replace(this.rules.other.hrefBrackets,"$1").replace(this.rules.inline.anyPunctuation,"$1"):"",s=t[3]?t[3].substring(1,t[3].length-1).replace(this.rules.inline.anyPunctuation,"$1"):t[3];return{type:"def",tag:e,raw:t[0],href:n,title:s}}}table(e){const t=this.rules.block.table.exec(e);if(!t)return;if(!this.rules.other.tableDelimiter.test(t[2]))return;const n=ce(t[1]),s=t[2].replace(this.rules.other.tableAlignChars,"").split("|"),r=t[3]?.trim()?t[3].replace(this.rules.other.tableRowBlankLine,"").split("\n"):[],i={type:"table",raw:t[0],header:[],align:[],rows:[]};if(n.length===s.length){for(const e of s)this.rules.other.tableAlignRight.test(e)?i.align.push("right"):this.rules.other.tableAlignCenter.test(e)?i.align.push("center"):this.rules.other.tableAlignLeft.test(e)?i.align.push("left"):i.align.push(null);for(let e=0;e<n.length;e++)i.header.push({text:n[e],tokens:this.lexer.inline(n[e]),header:!0,align:i.align[e]});for(const e of r)i.rows.push(ce(e,i.header.length).map((e,t)=>({text:e,tokens:this.lexer.inline(e),header:!1,align:i.align[t]})));return i}}lheading(e){const t=this.rules.block.lheading.exec(e);if(t)return{type:"heading",raw:t[0],depth:"="===t[2].charAt(0)?1:2,text:t[1],tokens:this.lexer.inline(t[1])}}paragraph(e){const t=this.rules.block.paragraph.exec(e);if(t){const e="\n"===t[1].charAt(t[1].length-1)?t[1].slice(0,-1):t[1];return{type:"paragraph",raw:t[0],text:e,tokens:this.lexer.inline(e)}}}text(e){const t=this.rules.block.text.exec(e);if(t)return{type:"text",raw:t[0],text:t[0],tokens:this.lexer.inline(t[0])}}escape(e){const t=this.rules.inline.escape.exec(e);if(t)return{type:"escape",raw:t[0],text:t[1]}}tag(e){const t=this.rules.inline.tag.exec(e);if(t)return!this.lexer.state.inLink&&this.rules.other.startATag.test(t[0])?this.lexer.state.inLink=!0:this.lexer.state.inLink&&this.rules.other.endATag.test(t[0])&&(this.lexer.state.inLink=!1),!this.lexer.state.inRawBlock&&this.rules.other.startPreScriptTag.test(t[0])?this.lexer.state.inRawBlock=!0:this.lexer.state.inRawBlock&&this.rules.other.endPreScriptTag.test(t[0])&&(this.lexer.state.inRawBlock=!1),{type:"html",raw:t[0],inLink:this.lexer.state.inLink,inRawBlock:this.lexer.state.inRawBlock,block:!1,text:t[0]}}link(e){const t=this.rules.inline.link.exec(e);if(t){const e=t[2].trim();if(!this.options.pedantic&&this.rules.other.startAngleBracket.test(e)){if(!this.rules.other.endAngleBracket.test(e))return;const t=he(e.slice(0,-1),"\\");if((e.length-t.length)%2==0)return}else{const e=function(e,t){if(-1===e.indexOf(t[1]))return-1;let n=0;for(let s=0;s<e.length;s++)if("\\"===e[s])s++;else if(e[s]===t[0])n++;else if(e[s]===t[1]&&(n--,n<0))return s;return n>0?-2:-1}(t[2],"()");if(-2===e)return;if(e>-1){const n=(0===t[0].indexOf("!")?5:4)+t[1].length+e;t[2]=t[2].substring(0,e),t[0]=t[0].substring(0,n).trim(),t[3]=""}}let n=t[2],s="";if(this.options.pedantic){const e=this.rules.other.pedanticHrefTitle.exec(n);e&&(n=e[1],s=e[3])}else s=t[3]?t[3].slice(1,-1):"";return n=n.trim(),this.rules.other.startAngleBracket.test(n)&&(n=this.options.pedantic&&!this.rules.other.endAngleBracket.test(e)?n.slice(1):n.slice(1,-1)),pe(t,{href:n?n.replace(this.rules.inline.anyPunctuation,"$1"):n,title:s?s.replace(this.rules.inline.anyPunctuation,"$1"):s},t[0],this.lexer,this.rules)}}reflink(e,t){let n;if((n=this.rules.inline.reflink.exec(e))||(n=this.rules.inline.nolink.exec(e))){const e=t[(n[2]||n[1]).replace(this.rules.other.multipleSpaceGlobal," ").toLowerCase()];if(!e){const e=n[0].charAt(0);return{type:"text",raw:e,text:e}}return pe(n,e,n[0],this.lexer,this.rules)}}emStrong(e,t,n=""){let s=this.rules.inline.emStrongLDelim.exec(e);if(!s)return;if(s[3]&&n.match(this.rules.other.unicodeAlphaNumeric))return;if(!(s[1]||s[2]||"")||!n||this.rules.inline.punctuation.exec(n)){const n=[...s[0]].length-1;let r,i,l=n,o=0;const a="*"===s[0][0]?this.rules.inline.emStrongRDelimAst:this.rules.inline.emStrongRDelimUnd;for(a.lastIndex=0,t=t.slice(-1*e.length+n);null!=(s=a.exec(t));){if(r=s[1]||s[2]||s[3]||s[4]||s[5]||s[6],!r)continue;if(i=[...r].length,s[3]||s[4]){l+=i;continue}if((s[5]||s[6])&&n%3&&!((n+i)%3)){o+=i;continue}if(l-=i,l>0)continue;i=Math.min(i,i+l+o);const t=[...s[0]][0].length,a=e.slice(0,n+s.index+t+i);if(Math.min(n,i)%2){const e=a.slice(1,-1);return{type:"em",raw:a,text:e,tokens:this.lexer.inlineTokens(e)}}const c=a.slice(2,-2);return{type:"strong",raw:a,text:c,tokens:this.lexer.inlineTokens(c)}}}}codespan(e){const t=this.rules.inline.code.exec(e);if(t){let e=t[2].replace(this.rules.other.newLineCharGlobal," ");const n=this.rules.other.nonSpaceChar.test(e),s=this.rules.other.startingSpaceChar.test(e)&&this.rules.other.endingSpaceChar.test(e);return n&&s&&(e=e.substring(1,e.length-1)),{type:"codespan",raw:t[0],text:e}}}br(e){const t=this.rules.inline.br.exec(e);if(t)return{type:"br",raw:t[0]}}del(e){const t=this.rules.inline.del.exec(e);if(t)return{type:"del",raw:t[0],text:t[2],tokens:this.lexer.inlineTokens(t[2])}}autolink(e){const t=this.rules.inline.autolink.exec(e);if(t){let e,n;return"@"===t[2]?(e=t[1],n="mailto:"+e):(e=t[1],n=e),{type:"link",raw:t[0],text:e,href:n,tokens:[{type:"text",raw:e,text:e}]}}}url(e){let t;if(t=this.rules.inline.url.exec(e)){let e,n;if("@"===t[2])e=t[0],n="mailto:"+e;else{let s;do{s=t[0],t[0]=this.rules.inline._backpedal.exec(t[0])?.[0]??""}while(s!==t[0]);e=t[0],n="www."===t[1]?"http://"+t[0]:t[0]}return{type:"link",raw:t[0],text:e,href:n,tokens:[{type:"text",raw:e,text:e}]}}}inlineText(e){const t=this.rules.inline.text.exec(e);if(t){const e=this.lexer.state.inRawBlock;return{type:"text",raw:t[0],text:t[0],escaped:e}}}},ge=class e{tokens;options;state;tokenizer;inlineQueue;constructor(e){this.tokens=[],this.tokens.links=Object.create(null),this.options=e||h,this.options.tokenizer=this.options.tokenizer||new ue,this.tokenizer=this.options.tokenizer,this.tokenizer.options=this.options,this.tokenizer.lexer=this,this.inlineQueue=[],this.state={inLink:!1,inRawBlock:!1,top:!0};const t={other:k,block:se.normal,inline:re.normal};this.options.pedantic?(t.block=se.pedantic,t.inline=re.pedantic):this.options.gfm&&(t.block=se.gfm,this.options.breaks?t.inline=re.breaks:t.inline=re.gfm),this.tokenizer.rules=t}static get rules(){return{block:se,inline:re}}static lex(t,n){return new e(n).lex(t)}static lexInline(t,n){return new e(n).inlineTokens(t)}lex(e){e=e.replace(k.carriageReturn,"\n"),this.blockTokens(e,this.tokens);for(let e=0;e<this.inlineQueue.length;e++){const t=this.inlineQueue[e];this.inlineTokens(t.src,t.tokens)}return this.inlineQueue=[],this.tokens}blockTokens(e,t=[],n=!1){for(this.options.pedantic&&(e=e.replace(k.tabCharGlobal,"    ").replace(k.spaceLine,""));e;){let s;if(this.options.extensions?.block?.some(n=>!!(s=n.call({lexer:this},e,t))&&(e=e.substring(s.raw.length),t.push(s),!0)))continue;if(s=this.tokenizer.space(e)){e=e.substring(s.raw.length);const n=t.at(-1);1===s.raw.length&&void 0!==n?n.raw+="\n":t.push(s);continue}if(s=this.tokenizer.code(e)){e=e.substring(s.raw.length);const n=t.at(-1);"paragraph"===n?.type||"text"===n?.type?(n.raw+="\n"+s.raw,n.text+="\n"+s.text,this.inlineQueue.at(-1).src=n.text):t.push(s);continue}if(s=this.tokenizer.fences(e)){e=e.substring(s.raw.length),t.push(s);continue}if(s=this.tokenizer.heading(e)){e=e.substring(s.raw.length),t.push(s);continue}if(s=this.tokenizer.hr(e)){e=e.substring(s.raw.length),t.push(s);continue}if(s=this.tokenizer.blockquote(e)){e=e.substring(s.raw.length),t.push(s);continue}if(s=this.tokenizer.list(e)){e=e.substring(s.raw.length),t.push(s);continue}if(s=this.tokenizer.html(e)){e=e.substring(s.raw.length),t.push(s);continue}if(s=this.tokenizer.def(e)){e=e.substring(s.raw.length);const n=t.at(-1);"paragraph"===n?.type||"text"===n?.type?(n.raw+="\n"+s.raw,n.text+="\n"+s.raw,this.inlineQueue.at(-1).src=n.text):this.tokens.links[s.tag]||(this.tokens.links[s.tag]={href:s.href,title:s.title});continue}if(s=this.tokenizer.table(e)){e=e.substring(s.raw.length),t.push(s);continue}if(s=this.tokenizer.lheading(e)){e=e.substring(s.raw.length),t.push(s);continue}let r=e;if(this.options.extensions?.startBlock){let t=1/0;const n=e.slice(1);let s;this.options.extensions.startBlock.forEach(e=>{s=e.call({lexer:this},n),"number"==typeof s&&s>=0&&(t=Math.min(t,s))}),t<1/0&&t>=0&&(r=e.substring(0,t+1))}if(this.state.top&&(s=this.tokenizer.paragraph(r))){const i=t.at(-1);n&&"paragraph"===i?.type?(i.raw+="\n"+s.raw,i.text+="\n"+s.text,this.inlineQueue.pop(),this.inlineQueue.at(-1).src=i.text):t.push(s),n=r.length!==e.length,e=e.substring(s.raw.length);continue}if(s=this.tokenizer.text(e)){e=e.substring(s.raw.length);const n=t.at(-1);"text"===n?.type?(n.raw+="\n"+s.raw,n.text+="\n"+s.text,this.inlineQueue.pop(),this.inlineQueue.at(-1).src=n.text):t.push(s);continue}if(e){const t="Infinite loop on byte: "+e.charCodeAt(0);if(this.options.silent){console.error(t);break}throw new Error(t)}}return this.state.top=!0,t}inline(e,t=[]){return this.inlineQueue.push({src:e,tokens:t}),t}inlineTokens(e,t=[]){let n=e,s=null;if(this.tokens.links){const e=Object.keys(this.tokens.links);if(e.length>0)for(;null!=(s=this.tokenizer.rules.inline.reflinkSearch.exec(n));)e.includes(s[0].slice(s[0].lastIndexOf("[")+1,-1))&&(n=n.slice(0,s.index)+"["+"a".repeat(s[0].length-2)+"]"+n.slice(this.tokenizer.rules.inline.reflinkSearch.lastIndex))}for(;null!=(s=this.tokenizer.rules.inline.anyPunctuation.exec(n));)n=n.slice(0,s.index)+"++"+n.slice(this.tokenizer.rules.inline.anyPunctuation.lastIndex);for(;null!=(s=this.tokenizer.rules.inline.blockSkip.exec(n));)n=n.slice(0,s.index)+"["+"a".repeat(s[0].length-2)+"]"+n.slice(this.tokenizer.rules.inline.blockSkip.lastIndex);let r=!1,i="";for(;e;){let s;if(r||(i=""),r=!1,this.options.extensions?.inline?.some(n=>!!(s=n.call({lexer:this},e,t))&&(e=e.substring(s.raw.length),t.push(s),!0)))continue;if(s=this.tokenizer.escape(e)){e=e.substring(s.raw.length),t.push(s);continue}if(s=this.tokenizer.tag(e)){e=e.substring(s.raw.length),t.push(s);continue}if(s=this.tokenizer.link(e)){e=e.substring(s.raw.length),t.push(s);continue}if(s=this.tokenizer.reflink(e,this.tokens.links)){e=e.substring(s.raw.length);const n=t.at(-1);"text"===s.type&&"text"===n?.type?(n.raw+=s.raw,n.text+=s.text):t.push(s);continue}if(s=this.tokenizer.emStrong(e,n,i)){e=e.substring(s.raw.length),t.push(s);continue}if(s=this.tokenizer.codespan(e)){e=e.substring(s.raw.length),t.push(s);continue}if(s=this.tokenizer.br(e)){e=e.substring(s.raw.length),t.push(s);continue}if(s=this.tokenizer.del(e)){e=e.substring(s.raw.length),t.push(s);continue}if(s=this.tokenizer.autolink(e)){e=e.substring(s.raw.length),t.push(s);continue}if(!this.state.inLink&&(s=this.tokenizer.url(e))){e=e.substring(s.raw.length),t.push(s);continue}let l=e;if(this.options.extensions?.startInline){let t=1/0;const n=e.slice(1);let s;this.options.extensions.startInline.forEach(e=>{s=e.call({lexer:this},n),"number"==typeof s&&s>=0&&(t=Math.min(t,s))}),t<1/0&&t>=0&&(l=e.substring(0,t+1))}if(s=this.tokenizer.inlineText(l)){e=e.substring(s.raw.length),"_"!==s.raw.slice(-1)&&(i=s.raw.slice(-1)),r=!0;const n=t.at(-1);"text"===n?.type?(n.raw+=s.raw,n.text+=s.text):t.push(s);continue}if(e){const t="Infinite loop on byte: "+e.charCodeAt(0);if(this.options.silent){console.error(t);break}throw new Error(t)}}return t}},ke=class{options;parser;constructor(e){this.options=e||h}space(e){return""}code({text:e,lang:t,escaped:n}){const s=(t||"").match(k.notSpaceStart)?.[0],r=e.replace(k.endingNewline,"")+"\n";return s?'<pre><code class="language-'+oe(s)+'">'+(n?r:oe(r,!0))+"</code></pre>\n":"<pre><code>"+(n?r:oe(r,!0))+"</code></pre>\n"}blockquote({tokens:e}){return`<blockquote>\n${this.parser.parse(e)}</blockquote>\n`}html({text:e}){return e}heading({tokens:e,depth:t}){return`<h${t}>${this.parser.parseInline(e)}</h${t}>\n`}hr(e){return"<hr>\n"}list(e){const t=e.ordered,n=e.start;let s="";for(let t=0;t<e.items.length;t++){const n=e.items[t];s+=this.listitem(n)}const r=t?"ol":"ul";return"<"+r+(t&&1!==n?' start="'+n+'"':"")+">\n"+s+"</"+r+">\n"}listitem(e){let t="";if(e.task){const n=this.checkbox({checked:!!e.checked});e.loose?"paragraph"===e.tokens[0]?.type?(e.tokens[0].text=n+" "+e.tokens[0].text,e.tokens[0].tokens&&e.tokens[0].tokens.length>0&&"text"===e.tokens[0].tokens[0].type&&(e.tokens[0].tokens[0].text=n+" "+oe(e.tokens[0].tokens[0].text),e.tokens[0].tokens[0].escaped=!0)):e.tokens.unshift({type:"text",raw:n+" ",text:n+" ",escaped:!0}):t+=n+" "}return t+=this.parser.parse(e.tokens,!!e.loose),`<li>${t}</li>\n`}checkbox({checked:e}){return"<input "+(e?'checked="" ':"")+'disabled="" type="checkbox">'}paragraph({tokens:e}){return`<p>${this.parser.parseInline(e)}</p>\n`}table(e){let t="",n="";for(let t=0;t<e.header.length;t++)n+=this.tablecell(e.header[t]);t+=this.tablerow({text:n});let s="";for(let t=0;t<e.rows.length;t++){const r=e.rows[t];n="";for(let e=0;e<r.length;e++)n+=this.tablecell(r[e]);s+=this.tablerow({text:n})}return s&&(s=`<tbody>${s}</tbody>`),"<table>\n<thead>\n"+t+"</thead>\n"+s+"</table>\n"}tablerow({text:e}){return`<tr>\n${e}</tr>\n`}tablecell(e){const t=this.parser.parseInline(e.tokens),n=e.header?"th":"td";return(e.align?`<${n} align="${e.align}">`:`<${n}>`)+t+`</${n}>\n`}strong({tokens:e}){return`<strong>${this.parser.parseInline(e)}</strong>`}em({tokens:e}){return`<em>${this.parser.parseInline(e)}</em>`}codespan({text:e}){return`<code>${oe(e,!0)}</code>`}br(e){return"<br>"}del({tokens:e}){return`<del>${this.parser.parseInline(e)}</del>`}link({href:e,title:t,tokens:n}){const s=this.parser.parseInline(n),r=ae(e);if(null===r)return s;let i='<a href="'+(e=r)+'"';return t&&(i+=' title="'+oe(t)+'"'),i+=">"+s+"</a>",i}image({href:e,title:t,text:n,tokens:s}){s&&(n=this.parser.parseInline(s,this.parser.textRenderer));const r=ae(e);if(null===r)return oe(n);let i=`<img src="${e=r}" alt="${n}"`;return t&&(i+=` title="${oe(t)}"`),i+=">",i}text(e){return"tokens"in e&&e.tokens?this.parser.parseInline(e.tokens):"escaped"in e&&e.escaped?e.text:oe(e.text)}},fe=class{strong({text:e}){return e}em({text:e}){return e}codespan({text:e}){return e}del({text:e}){return e}html({text:e}){return e}text({text:e}){return e}link({text:e}){return""+e}image({text:e}){return""+e}br(){return""}},de=class e{options;renderer;textRenderer;constructor(e){this.options=e||h,this.options.renderer=this.options.renderer||new ke,this.renderer=this.options.renderer,this.renderer.options=this.options,this.renderer.parser=this,this.textRenderer=new fe}static parse(t,n){return new e(n).parse(t)}static parseInline(t,n){return new e(n).parseInline(t)}parse(e,t=!0){let n="";for(let s=0;s<e.length;s++){const r=e[s];if(this.options.extensions?.renderers?.[r.type]){const e=r,t=this.options.extensions.renderers[e.type].call({parser:this},e);if(!1!==t||!["space","hr","heading","code","table","blockquote","list","html","paragraph","text"].includes(e.type)){n+=t||"";continue}}const i=r;switch(i.type){case"space":n+=this.renderer.space(i);continue;case"hr":n+=this.renderer.hr(i);continue;case"heading":n+=this.renderer.heading(i);continue;case"code":n+=this.renderer.code(i);continue;case"table":n+=this.renderer.table(i);continue;case"blockquote":n+=this.renderer.blockquote(i);continue;case"list":n+=this.renderer.list(i);continue;case"html":n+=this.renderer.html(i);continue;case"paragraph":n+=this.renderer.paragraph(i);continue;case"text":{let r=i,l=this.renderer.text(r);for(;s+1<e.length&&"text"===e[s+1].type;)r=e[++s],l+="\n"+this.renderer.text(r);n+=t?this.renderer.paragraph({type:"paragraph",raw:l,text:l,tokens:[{type:"text",raw:l,text:l,escaped:!0}]}):l;continue}default:{const e='Token with "'+i.type+'" type was not found.';if(this.options.silent)return console.error(e),"";throw new Error(e)}}}return n}parseInline(e,t=this.renderer){let n="";for(let s=0;s<e.length;s++){const r=e[s];if(this.options.extensions?.renderers?.[r.type]){const e=this.options.extensions.renderers[r.type].call({parser:this},r);if(!1!==e||!["escape","html","link","image","strong","em","codespan","br","del","text"].includes(r.type)){n+=e||"";continue}}const i=r;switch(i.type){case"escape":case"text":n+=t.text(i);break;case"html":n+=t.html(i);break;case"link":n+=t.link(i);break;case"image":n+=t.image(i);break;case"strong":n+=t.strong(i);break;case"em":n+=t.em(i);break;case"codespan":n+=t.codespan(i);break;case"br":n+=t.br(i);break;case"del":n+=t.del(i);break;default:{const e='Token with "'+i.type+'" type was not found.';if(this.options.silent)return console.error(e),"";throw new Error(e)}}}return n}},xe=class{options;block;constructor(e){this.options=e||h}static passThroughHooks=new Set(["preprocess","postprocess","processAllTokens"]);preprocess(e){return e}postprocess(e){return e}processAllTokens(e){return e}provideLexer(){return this.block?ge.lex:ge.lexInline}provideParser(){return this.block?de.parse:de.parseInline}},be=class{defaults={async:!1,breaks:!1,extensions:null,gfm:!0,hooks:null,pedantic:!1,renderer:null,silent:!1,tokenizer:null,walkTokens:null};options=this.setOptions;parse=this.parseMarkdown(!0);parseInline=this.parseMarkdown(!1);Parser=de;Renderer=ke;TextRenderer=fe;Lexer=ge;Tokenizer=ue;Hooks=xe;constructor(...e){this.use(...e)}walkTokens(e,t){let n=[];for(const s of e)switch(n=n.concat(t.call(this,s)),s.type){case"table":{const e=s;for(const s of e.header)n=n.concat(this.walkTokens(s.tokens,t));for(const s of e.rows)for(const e of s)n=n.concat(this.walkTokens(e.tokens,t));break}case"list":{const e=s;n=n.concat(this.walkTokens(e.items,t));break}default:{const e=s;this.defaults.extensions?.childTokens?.[e.type]?this.defaults.extensions.childTokens[e.type].forEach(s=>{const r=e[s].flat(1/0);n=n.concat(this.walkTokens(r,t))}):e.tokens&&(n=n.concat(this.walkTokens(e.tokens,t)))}}return n}use(...e){const t=this.defaults.extensions||{renderers:{},childTokens:{}};return e.forEach(e=>{const n={...e};if(n.async=this.defaults.async||n.async||!1,e.extensions&&(e.extensions.forEach(e=>{if(!e.name)throw new Error("extension name required");if("renderer"in e){const n=t.renderers[e.name];t.renderers[e.name]=n?function(...t){let s=e.renderer.apply(this,t);return!1===s&&(s=n.apply(this,t)),s}:e.renderer}if("tokenizer"in e){if(!e.level||"block"!==e.level&&"inline"!==e.level)throw new Error("extension level must be 'block' or 'inline'");const n=t[e.level];n?n.unshift(e.tokenizer):t[e.level]=[e.tokenizer],e.start&&("block"===e.level?t.startBlock?t.startBlock.push(e.start):t.startBlock=[e.start]:"inline"===e.level&&(t.startInline?t.startInline.push(e.start):t.startInline=[e.start]))}"childTokens"in e&&e.childTokens&&(t.childTokens[e.name]=e.childTokens)}),n.extensions=t),e.renderer){const t=this.defaults.renderer||new ke(this.defaults);for(const n in e.renderer){if(!(n in t))throw new Error(`renderer '${n}' does not exist`);if(["options","parser"].includes(n))continue;const s=n,r=e.renderer[s],i=t[s];t[s]=(...e)=>{let n=r.apply(t,e);return!1===n&&(n=i.apply(t,e)),n||""}}n.renderer=t}if(e.tokenizer){const t=this.defaults.tokenizer||new ue(this.defaults);for(const n in e.tokenizer){if(!(n in t))throw new Error(`tokenizer '${n}' does not exist`);if(["options","rules","lexer"].includes(n))continue;const s=n,r=e.tokenizer[s],i=t[s];t[s]=(...e)=>{let n=r.apply(t,e);return!1===n&&(n=i.apply(t,e)),n}}n.tokenizer=t}if(e.hooks){const t=this.defaults.hooks||new xe;for(const n in e.hooks){if(!(n in t))throw new Error(`hook '${n}' does not exist`);if(["options","block"].includes(n))continue;const s=n,r=e.hooks[s],i=t[s];xe.passThroughHooks.has(n)?t[s]=e=>{if(this.defaults.async)return Promise.resolve(r.call(t,e)).then(e=>i.call(t,e));const n=r.call(t,e);return i.call(t,n)}:t[s]=(...e)=>{let n=r.apply(t,e);return!1===n&&(n=i.apply(t,e)),n}}n.hooks=t}if(e.walkTokens){const t=this.defaults.walkTokens,s=e.walkTokens;n.walkTokens=function(e){let n=[];return n.push(s.call(this,e)),t&&(n=n.concat(t.call(this,e))),n}}this.defaults={...this.defaults,...n}}),this}setOptions(e){return this.defaults={...this.defaults,...e},this}lexer(e,t){return ge.lex(e,t??this.defaults)}parser(e,t){return de.parse(e,t??this.defaults)}parseMarkdown(e){return(t,n)=>{const s={...n},r={...this.defaults,...s},i=this.onError(!!r.silent,!!r.async);if(!0===this.defaults.async&&!1===s.async)return i(new Error("marked(): The async option was set to true by an extension. Remove async: false from the parse options object to return a Promise."));if(null==t)return i(new Error("marked(): input parameter is undefined or null"));if("string"!=typeof t)return i(new Error("marked(): input parameter is of type "+Object.prototype.toString.call(t)+", string expected"));r.hooks&&(r.hooks.options=r,r.hooks.block=e);const l=r.hooks?r.hooks.provideLexer():e?ge.lex:ge.lexInline,o=r.hooks?r.hooks.provideParser():e?de.parse:de.parseInline;if(r.async)return Promise.resolve(r.hooks?r.hooks.preprocess(t):t).then(e=>l(e,r)).then(e=>r.hooks?r.hooks.processAllTokens(e):e).then(e=>r.walkTokens?Promise.all(this.walkTokens(e,r.walkTokens)).then(()=>e):e).then(e=>o(e,r)).then(e=>r.hooks?r.hooks.postprocess(e):e).catch(i);try{r.hooks&&(t=r.hooks.preprocess(t));let e=l(t,r);r.hooks&&(e=r.hooks.processAllTokens(e)),r.walkTokens&&this.walkTokens(e,r.walkTokens);let n=o(e,r);return r.hooks&&(n=r.hooks.postprocess(n)),n}catch(e){return i(e)}}}onError(e,t){return n=>{if(n.message+="\nPlease report this to https://github.com/markedjs/marked.",e){const e="<p>An error occurred:</p><pre>"+oe(n.message+"",!0)+"</pre>";return t?Promise.resolve(e):e}if(t)return Promise.reject(n);throw n}}},me=new be;function we(e,t){return me.parse(e,t)}we.options=we.setOptions=function(e){return me.setOptions(e),we.defaults=me.defaults,p(we.defaults),we},we.getDefaults=c,we.defaults=h,we.use=function(...e){return me.use(...e),we.defaults=me.defaults,p(we.defaults),we},we.walkTokens=function(e,t){return me.walkTokens(e,t)},we.parseInline=me.parseInline,we.Parser=de,we.parser=de.parse,we.Renderer=ke,we.TextRenderer=fe,we.Lexer=ge,we.lexer=ge.lex,we.Tokenizer=ue,we.Hooks=xe,we.parse=we;var ye=we.options,$e=we.setOptions,Re=we.use,Se=we.walkTokens,Te=we.parseInline,ze=we,Ae=de.parse,_e=ge.lex;return n!=t&&(s.exports=t),s.exports});</script>
+<script src="marked.min.js"></script>
 <style>
-/* ── Reset & base ───────────────────────────────────────────────── */
+/* ── Reset & variables ─────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --bg-primary:   #0d0d0d;
-  --bg-secondary: #1a1a1a;
-  --bg-surface:   #242424;
-  --bg-hover:     #2e2e2e;
-  --bg-user:      #1e1e2e;
-  --text-primary: #e8e8e8;
-  --text-muted:   #888;
-  --text-dim:     #555;
-  --accent:       #6366f1;
-  --accent-hover: #818cf8;
-  --accent-dim:   #4f46e5;
-  --border:       #2a2a2a;
-  --border-light: #333;
-  --red:          #ef4444;
-  --green:        #22c55e;
-  --font:         -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --mono:         "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
-  --sidebar-w:    340px;
-  --radius:       10px;
-  --radius-sm:    6px;
+  --bg-primary: #0a0a0a; --bg-secondary: #111; --bg-surface: #1a1a1a;
+  --border: #222; --border-light: #333;
+  --text-primary: #e5e5e5; --text-muted: #999; --text-dim: #555;
+  --accent: #3b82f6; --accent-hover: #2563eb;
+  --green: #22c55e; --red: #ef4444; --yellow: #eab308;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --mono: "SF Mono", "Cascadia Code", "Fira Code", monospace;
+  --radius: 8px; --radius-sm: 6px;
+  --sidebar-w: 320px;
 }
 html, body { height: 100%; }
 body {
-  font-family: var(--font);
-  font-size: 14px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  display: flex;
-  overflow: hidden;
+  font-family: var(--font); background: var(--bg-primary); color: var(--text-primary);
+  display: flex; overflow: hidden;
 }
 
-/* ── Sidebar ────────────────────────────────────────────────────── */
+/* ── Sidebar ───────────────────────────────────────────────────── */
 #sidebar {
-  width: var(--sidebar-w);
-  min-width: var(--sidebar-w);
-  background: var(--bg-secondary);
+  width: var(--sidebar-w); background: var(--bg-secondary);
   border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  transition: margin-left .25s ease;
+  overflow-y: auto; padding: 16px; flex-shrink: 0;
+  transition: margin-left .2s;
 }
 #sidebar.hidden { margin-left: calc(-1 * var(--sidebar-w)); }
-#sidebar h2 {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: .06em;
-  padding: 16px 16px 8px;
-}
-.sb-section { padding: 8px 16px 16px; border-bottom: 1px solid var(--border); }
-.sb-section:last-child { border-bottom: none; }
+#sidebar h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-dim); margin: 16px 0 8px; }
+#sidebar h2:first-child { margin-top: 0; }
+.sb-section { margin-bottom: 8px; }
 .sb-row { margin-bottom: 10px; }
-.sb-row:last-child { margin-bottom: 0; }
-label.sb-label {
-  display: block;
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-bottom: 4px;
+.sb-label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+.sb-textarea, #sidebar input[type=text], #sidebar input[type=number], #sidebar select {
+  width: 100%; background: var(--bg-surface); border: 1px solid var(--border);
+  color: var(--text-primary); border-radius: var(--radius-sm);
+  padding: 8px 10px; font-size: 13px; font-family: var(--font); outline: none;
 }
-
-/* Inputs */
-select, input[type="number"], input[type="text"], textarea.sb-textarea {
-  width: 100%;
-  background: var(--bg-surface);
-  color: var(--text-primary);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-sm);
-  padding: 7px 10px;
-  font-size: 13px;
-  font-family: var(--font);
-  outline: none;
-  transition: border-color .15s;
-}
-select:focus, input:focus, textarea.sb-textarea:focus {
-  border-color: var(--accent);
-}
-textarea.sb-textarea { resize: vertical; min-height: 70px; font-size: 12px; }
-
-/* Range sliders */
-.slider-row { display: flex; align-items: center; gap: 8px; }
-.slider-row input[type="range"] { flex: 1; accent-color: var(--accent); }
-.slider-val {
-  font-size: 12px;
-  color: var(--text-muted);
-  min-width: 36px;
-  text-align: right;
-  font-family: var(--mono);
-}
-
-/* Toggle switches */
-.toggle-row { display: flex; align-items: center; justify-content: space-between; }
-.toggle-row span { font-size: 13px; }
+.sb-textarea:focus, #sidebar input:focus, #sidebar select:focus { border-color: var(--accent); }
+.slider-row { display: flex; align-items: center; gap: 10px; }
+.slider-row input[type=range] { flex: 1; accent-color: var(--accent); }
+.slider-val { font-size: 12px; color: var(--text-muted); font-family: var(--mono); min-width: 40px; text-align: right; }
+.toggle-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--text-muted); }
 .toggle {
-  position: relative; width: 38px; height: 20px;
-  background: var(--bg-surface); border-radius: 10px;
-  cursor: pointer; border: 1px solid var(--border-light);
-  transition: background .2s;
+  width: 36px; height: 20px; border-radius: 10px; background: var(--border-light);
+  cursor: pointer; position: relative; transition: background .15s;
 }
-.toggle.on { background: var(--accent); border-color: var(--accent); }
 .toggle::after {
-  content: ''; position: absolute; top: 2px; left: 2px;
-  width: 14px; height: 14px; border-radius: 50%;
-  background: var(--text-primary); transition: transform .2s;
+  content: ''; position: absolute; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--text-muted); top: 2px; left: 2px; transition: transform .15s, background .15s;
 }
-.toggle.on::after { transform: translateX(18px); }
-
-/* Buttons */
+.toggle.on { background: var(--accent); }
+.toggle.on::after { transform: translateX(16px); background: #fff; }
 .sb-btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  background: var(--bg-surface); color: var(--text-primary);
-  border: 1px solid var(--border-light); border-radius: var(--radius-sm);
-  padding: 7px 14px; font-size: 12px; cursor: pointer;
-  transition: background .15s, border-color .15s;
-  font-family: var(--font);
+  background: var(--bg-surface); border: 1px solid var(--border);
+  color: var(--text-muted); padding: 6px 12px; border-radius: var(--radius-sm);
+  cursor: pointer; font-size: 12px; font-family: var(--font); transition: all .15s;
 }
-.sb-btn:hover { background: var(--bg-hover); border-color: var(--accent); }
+.sb-btn:hover { border-color: var(--accent); color: var(--text-primary); }
 .sb-btn.danger:hover { border-color: var(--red); color: var(--red); }
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
-
-/* Chips for banned strings */
-.chip-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.chip-list { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip {
-  background: var(--bg-surface); border: 1px solid var(--border-light);
-  border-radius: 12px; padding: 3px 10px; font-size: 11px;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 2px 8px; font-size: 12px;
   display: flex; align-items: center; gap: 4px;
 }
-.chip .x {
-  cursor: pointer; color: var(--text-dim);
-  font-size: 13px; line-height: 1;
-}
+.chip .x { cursor: pointer; color: var(--text-dim); font-size: 14px; }
 .chip .x:hover { color: var(--red); }
-
-/* Model info */
-.model-info {
-  font-size: 12px; color: var(--text-muted);
-  line-height: 1.6; word-break: break-all;
-}
+.model-info { font-size: 12px; color: var(--text-muted); line-height: 1.6; word-break: break-all; }
 .model-info strong { color: var(--text-primary); font-weight: 500; }
 
-/* ── Main area ──────────────────────────────────────────────────── */
+/* ── Main area ─────────────────────────────────────────────────── */
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-
-/* Header */
 #header {
-  display: flex; align-items: center;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
-  gap: 12px;
-  min-height: 48px;
+  display: flex; align-items: center; padding: 10px 16px;
+  border-bottom: 1px solid var(--border); background: var(--bg-secondary);
+  gap: 12px; min-height: 48px;
 }
-#toggle-sidebar {
-  background: none; border: none; color: var(--text-muted);
-  cursor: pointer; font-size: 18px; padding: 4px;
-  line-height: 1; transition: color .15s;
-}
+#toggle-sidebar { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 18px; padding: 4px; line-height: 1; transition: color .15s; }
 #toggle-sidebar:hover { color: var(--text-primary); }
 #header-title { font-size: 14px; font-weight: 500; color: var(--text-muted); }
 #header-model { font-size: 13px; color: var(--text-dim); margin-left: auto; font-family: var(--mono); }
 
-/* Chat area */
-#chat-area {
-  flex: 1; overflow-y: auto; padding: 24px 0;
-  display: flex; flex-direction: column;
+/* Auto-scroll indicator */
+#auto-scroll-btn {
+  background: none; border: 1px solid var(--border); color: var(--text-dim);
+  cursor: pointer; font-size: 11px; padding: 3px 8px; border-radius: 12px;
+  font-family: var(--font); transition: all .15s;
 }
+#auto-scroll-btn.active { border-color: var(--accent); color: var(--accent); }
+#auto-scroll-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+
+/* Chat area */
+#chat-area { flex: 1; overflow-y: auto; padding: 24px 0; display: flex; flex-direction: column; }
 #messages { max-width: 780px; width: 100%; margin: 0 auto; padding: 0 24px; }
 
 /* Messages */
-.msg { margin-bottom: 24px; animation: fadeIn .2s ease; }
+.msg { margin-bottom: 24px; animation: fadeIn .2s ease; position: relative; }
+.msg:hover .msg-actions { opacity: 1; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
-.msg-role {
-  font-size: 12px; font-weight: 600; text-transform: uppercase;
-  letter-spacing: .04em; margin-bottom: 6px;
-}
+.msg-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.msg-role { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 .msg-role.user { color: var(--accent); }
 .msg-role.assistant { color: var(--green); }
-.msg-body {
-  font-size: 14px; line-height: 1.7;
-  color: var(--text-primary);
-}
+.msg-body { font-size: 14px; line-height: 1.7; color: var(--text-primary); }
 .msg-body p { margin-bottom: 10px; }
 .msg-body p:last-child { margin-bottom: 0; }
 .msg-body ul, .msg-body ol { margin: 8px 0 8px 20px; }
 .msg-body li { margin-bottom: 4px; }
 .msg-body strong { font-weight: 600; }
 
+/* Message actions */
+.msg-actions {
+  display: flex; gap: 4px; opacity: 0; transition: opacity .15s;
+  margin-left: auto;
+}
+.msg-action-btn {
+  background: none; border: 1px solid transparent; color: var(--text-dim);
+  cursor: pointer; font-size: 13px; padding: 2px 6px; border-radius: 4px;
+  font-family: var(--font); transition: all .1s; line-height: 1;
+}
+.msg-action-btn:hover { color: var(--text-primary); border-color: var(--border-light); }
+.msg-action-btn.danger:hover { color: var(--red); }
+
+/* Branch navigation */
+.branch-nav {
+  display: inline-flex; align-items: center; gap: 2px;
+  font-size: 11px; color: var(--text-dim); font-family: var(--mono);
+  margin-left: 8px;
+}
+.branch-nav button {
+  background: none; border: none; color: var(--text-dim); cursor: pointer;
+  font-size: 13px; padding: 0 2px; line-height: 1; transition: color .1s;
+}
+.branch-nav button:hover { color: var(--text-primary); }
+.branch-nav button:disabled { cursor: default; opacity: .3; }
+
 /* Code blocks */
 .msg-body pre {
-  background: #111;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-sm);
-  padding: 14px 16px;
-  overflow-x: auto;
-  margin: 10px 0;
-  font-size: 13px;
-  line-height: 1.5;
+  background: #111; border: 1px solid var(--border-light); border-radius: var(--radius-sm);
+  padding: 14px 16px; overflow-x: auto; margin: 10px 0; font-size: 13px; line-height: 1.5;
 }
-.msg-body code {
-  font-family: var(--mono);
-  font-size: 0.9em;
-}
+.msg-body code { font-family: var(--mono); font-size: 0.9em; }
 .msg-body :not(pre) > code {
-  background: var(--bg-surface);
-  padding: 2px 6px;
-  border-radius: 3px;
-  border: 1px solid var(--border);
+  background: var(--bg-surface); padding: 2px 6px; border-radius: 3px; border: 1px solid var(--border);
 }
 
 /* Think blocks */
-.think-block {
-  border-left: 2px solid var(--border-light);
-  margin: 8px 0;
-  padding: 0;
-}
+.think-block { border-left: 2px solid var(--border-light); margin: 8px 0; padding: 0; }
 .think-toggle {
-  background: none; border: none; color: var(--text-dim);
-  cursor: pointer; font-size: 12px; padding: 4px 8px;
-  font-family: var(--font);
+  background: none; border: none; color: var(--text-dim); cursor: pointer;
+  font-size: 12px; padding: 4px 8px; font-family: var(--font);
 }
 .think-toggle:hover { color: var(--text-muted); }
-.think-content {
-  padding: 8px 12px;
-  color: var(--text-dim);
-  font-size: 13px;
-  line-height: 1.6;
-  display: none;
-}
+.think-content { padding: 8px 12px; color: var(--text-dim); font-size: 13px; line-height: 1.6; display: none; }
 .think-content.open { display: block; }
 
 /* TPS badge */
-.msg-tps {
-  font-size: 11px; color: var(--text-dim);
-  margin-top: 8px; font-family: var(--mono);
-}
+.msg-tps { font-size: 11px; color: var(--text-dim); margin-top: 8px; font-family: var(--mono); }
 
 /* Streaming cursor */
 .cursor {
-  display: inline-block; width: 7px; height: 16px;
-  background: var(--accent); margin-left: 2px;
-  animation: blink .6s infinite;
-  vertical-align: text-bottom;
+  display: inline-block; width: 7px; height: 16px; background: var(--accent);
+  margin-left: 2px; animation: blink .6s infinite; vertical-align: text-bottom;
 }
 @keyframes blink { 50% { opacity: 0; } }
 
 /* Empty state */
 #empty-state {
-  flex: 1; display: flex; flex-direction: column;
-  align-items: center; justify-content: center;
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
   color: var(--text-dim); gap: 8px;
 }
 #empty-state .logo { font-size: 32px; opacity: .3; }
 #empty-state .hint { font-size: 13px; }
 
-/* ── Input area ─────────────────────────────────────────────────── */
-#input-area {
-  padding: 12px 24px 16px;
-  background: var(--bg-primary);
-  border-top: 1px solid var(--border);
+/* Keyboard shortcuts hint */
+.shortcuts-hint { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+.shortcuts-hint kbd {
+  background: var(--bg-surface); border: 1px solid var(--border); border-radius: 3px;
+  padding: 1px 5px; font-family: var(--mono); font-size: 10px;
 }
-#input-wrap {
-  max-width: 780px; margin: 0 auto;
-  display: flex; align-items: flex-end; gap: 10px;
+
+/* Edit textarea */
+.msg-edit-area {
+  width: 100%; background: var(--bg-surface); border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm); padding: 10px 14px; color: var(--text-primary);
+  font-size: 14px; font-family: var(--font); resize: vertical; min-height: 60px;
+  outline: none; line-height: 1.5;
 }
+.msg-edit-area:focus { border-color: var(--accent); }
+.msg-edit-actions { display: flex; gap: 6px; margin-top: 6px; }
+.msg-edit-actions button {
+  padding: 4px 12px; border-radius: var(--radius-sm); font-size: 12px;
+  cursor: pointer; font-family: var(--font); border: 1px solid var(--border);
+  transition: all .15s;
+}
+.msg-edit-save { background: var(--accent); color: #fff; border-color: var(--accent); }
+.msg-edit-save:hover { background: var(--accent-hover); }
+.msg-edit-cancel { background: var(--bg-surface); color: var(--text-muted); }
+.msg-edit-cancel:hover { color: var(--text-primary); }
+
+/* ── Input area ────────────────────────────────────────────────── */
+#input-area { padding: 12px 24px 16px; background: var(--bg-primary); border-top: 1px solid var(--border); }
+#input-wrap { max-width: 780px; margin: 0 auto; display: flex; align-items: flex-end; gap: 10px; }
 #input-box {
-  flex: 1; background: var(--bg-surface);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius);
-  padding: 12px 16px;
-  color: var(--text-primary);
-  font-size: 14px; font-family: var(--font);
-  resize: none; outline: none;
-  min-height: 44px; max-height: 200px;
-  line-height: 1.5;
-  transition: border-color .15s;
+  flex: 1; background: var(--bg-surface); border: 1px solid var(--border-light);
+  border-radius: var(--radius); padding: 12px 16px; color: var(--text-primary);
+  font-size: 14px; font-family: var(--font); resize: none; outline: none;
+  min-height: 44px; max-height: 200px; line-height: 1.5; transition: border-color .15s;
 }
 #input-box:focus { border-color: var(--accent); }
 #input-box::placeholder { color: var(--text-dim); }
-
 #send-btn, #stop-btn {
-  width: 42px; height: 42px;
-  border-radius: var(--radius);
-  border: none; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: background .15s;
-  flex-shrink: 0;
+  width: 42px; height: 42px; border-radius: var(--radius); border: none;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: background .15s; flex-shrink: 0;
 }
-#send-btn {
-  background: var(--accent); color: #fff;
-}
+#send-btn { background: var(--accent); color: #fff; }
 #send-btn:hover { background: var(--accent-hover); }
 #send-btn:disabled { background: var(--bg-surface); color: var(--text-dim); cursor: default; }
-#stop-btn {
-  background: var(--red); color: #fff; display: none;
-}
+#stop-btn { background: var(--red); color: #fff; display: none; }
 #stop-btn:hover { background: #dc2626; }
 
-/* ── Scrollbar ──────────────────────────────────────────────────── */
+/* ── Scrollbar ─────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
 
-/* ── Responsive ─────────────────────────────────────────────────── */
+/* ── Responsive ────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   :root { --sidebar-w: 280px; }
   #sidebar { position: fixed; left: 0; top: 0; bottom: 0; z-index: 100; }
@@ -326,10 +247,9 @@ textarea.sb-textarea { resize: vertical; min-height: 70px; font-size: 12px; }
 </head>
 <body>
 
-<!-- ── Sidebar ──────────────────────────────────────────────────── -->
+<!-- Sidebar -->
 <div id="sidebar">
   <h2>Settings</h2>
-
   <div class="sb-section">
     <div class="sb-row">
       <label class="sb-label">Prompt Mode</label>
@@ -422,9 +342,10 @@ textarea.sb-textarea { resize: vertical; min-height: 70px; font-size: 12px; }
   <h2>Session</h2>
   <div class="sb-section">
     <div class="btn-row">
-      <button class="sb-btn" onclick="saveSession()">&#x1F4BE; Save</button>
-      <button class="sb-btn" onclick="loadSession()">&#x1F4C2; Load</button>
-      <button class="sb-btn danger" onclick="clearContext()">&#x1F5D1; Clear</button>
+      <button class="sb-btn" onclick="saveSession()">Save</button>
+      <button class="sb-btn" onclick="loadSession()">Load</button>
+      <button class="sb-btn" onclick="exportMarkdown()">Export MD</button>
+      <button class="sb-btn danger" onclick="clearContext()">Clear</button>
     </div>
   </div>
 
@@ -434,11 +355,12 @@ textarea.sb-textarea { resize: vertical; min-height: 70px; font-size: 12px; }
   </div>
 </div>
 
-<!-- ── Main ─────────────────────────────────────────────────────── -->
+<!-- Main -->
 <div id="main">
   <div id="header">
     <button id="toggle-sidebar" title="Toggle settings">&#9776;</button>
     <span id="header-title">ezexl3 chat</span>
+    <button id="auto-scroll-btn" class="active" title="Toggle auto-scroll">Auto-scroll</button>
     <span id="header-model"></span>
   </div>
   <div id="chat-area">
@@ -446,6 +368,10 @@ textarea.sb-textarea { resize: vertical; min-height: 70px; font-size: 12px; }
       <div id="empty-state">
         <div class="logo">&#x2728;</div>
         <div class="hint">Send a message to start chatting</div>
+        <div class="shortcuts-hint">
+          <kbd>Enter</kbd> send &middot; <kbd>Shift+Enter</kbd> newline &middot;
+          <kbd>Ctrl+Shift+Backspace</kbd> stop &middot; <kbd>&#x2191;</kbd> edit last
+        </div>
       </div>
     </div>
   </div>
@@ -458,207 +384,316 @@ textarea.sb-textarea { resize: vertical; min-height: 70px; font-size: 12px; }
   </div>
 </div>
 
-<!-- Hidden file input for session load -->
 <input type="file" id="file-input" accept=".json" style="display:none">
 
 <script>
 // ── State ───────────────────────────────────────────────────────
 let generating = false;
-let abortCtrl = null;
+let tree = { nodes: {}, root_children: [], active_root: -1 };
+let settings = {};
+let modes = {};
+let autoScroll = true;
+let tpsDataMap = {};  // nodeId -> tps data
+
 const msgContainer = document.getElementById('messages');
 const emptyState = document.getElementById('empty-state');
 const inputBox = document.getElementById('input-box');
 const sendBtn = document.getElementById('send-btn');
 const stopBtn = document.getElementById('stop-btn');
 const sidebar = document.getElementById('sidebar');
-let settings = {};
-let modes = {};
+const chatArea = document.getElementById('chat-area');
+const autoScrollBtn = document.getElementById('auto-scroll-btn');
 
 // ── Init ────────────────────────────────────────────────────────
 (async () => {
-  const [statusRes, settingsRes] = await Promise.all([
-    fetch('/api/status'),
-    fetch('/api/settings'),
+  const [statusRes, settingsRes, treeRes] = await Promise.all([
+    fetch('/api/status'), fetch('/api/settings'), fetch('/api/tree'),
   ]);
   const status = await statusRes.json();
   settings = await settingsRes.json();
+  tree = await treeRes.json();
   modes = status.available_modes || {};
   populateUI(status);
+  renderTree();
 })();
 
 function populateUI(status) {
-  // Mode dropdown
   const sel = document.getElementById('s-mode');
   sel.innerHTML = '';
   for (const [k, desc] of Object.entries(modes)) {
     const opt = document.createElement('option');
-    opt.value = k;
-    opt.textContent = `${k} — ${desc}`;
+    opt.value = k; opt.textContent = `${k} — ${desc}`;
     sel.appendChild(opt);
   }
   sel.value = settings.mode || 'chatml';
-
-  // System prompt
   document.getElementById('s-system').value = settings.system_prompt || '';
-
-  // Sliders
-  setSlider('s-temp',  'v-temp',  settings.temperature, v => v.toFixed(2));
-  setSlider('s-topk',  'v-topk',  settings.top_k,       v => String(Math.round(v)));
-  setSlider('s-topp',  'v-topp',  settings.top_p,        v => v.toFixed(2));
-  setSlider('s-minp',  'v-minp',  settings.min_p,        v => v.toFixed(3));
-  setSlider('s-rep',   'v-rep',   settings.repetition_penalty, v => v.toFixed(2));
-  setSlider('s-maxtok','v-maxtok',settings.max_response_tokens, v => String(Math.round(v)));
-
-  // Toggles
-  setToggle('t-think',   settings.think);
+  setSlider('s-temp','v-temp',settings.temperature,v=>v.toFixed(2));
+  setSlider('s-topk','v-topk',settings.top_k,v=>String(Math.round(v)));
+  setSlider('s-topp','v-topp',settings.top_p,v=>v.toFixed(2));
+  setSlider('s-minp','v-minp',settings.min_p,v=>v.toFixed(3));
+  setSlider('s-rep','v-rep',settings.repetition_penalty,v=>v.toFixed(2));
+  setSlider('s-maxtok','v-maxtok',settings.max_response_tokens,v=>String(Math.round(v)));
+  setToggle('t-think', settings.think);
   setToggle('t-nothink', settings.no_think);
   setToggle('t-amnesia', settings.amnesia);
-
-  // Think budget
   const tb = document.getElementById('s-thinkbudget');
   tb.value = settings.think_budget != null ? settings.think_budget : '';
-
-  // Banned strings
   renderBans();
-
-  // Model info
   document.getElementById('model-info').innerHTML =
-    `<strong>${status.model_name}</strong><br>` +
-    `Context: ${(status.context_length || 0).toLocaleString()} tokens<br>` +
-    `${status.model_dir || ''}`;
+    `<strong>${status.model_name}</strong><br>Context: ${(status.context_length||0).toLocaleString()} tokens<br>${status.model_dir||''}`;
   document.getElementById('header-model').textContent = status.model_name || '';
 }
 
-// ── Slider helpers ──────────────────────────────────────────────
-function setSlider(sliderId, valId, value, fmt) {
-  const sl = document.getElementById(sliderId);
-  const vl = document.getElementById(valId);
-  sl.value = value;
-  vl.textContent = fmt(Number(value));
-  sl.oninput = () => { vl.textContent = fmt(Number(sl.value)); };
-  sl.onchange = () => syncSettings();
+// ── Slider / Toggle helpers ─────────────────────────────────────
+function setSlider(sid,vid,value,fmt){
+  const sl=document.getElementById(sid),vl=document.getElementById(vid);
+  sl.value=value; vl.textContent=fmt(Number(value));
+  sl.oninput=()=>{vl.textContent=fmt(Number(sl.value));};
+  sl.onchange=()=>syncSettings();
+}
+function setToggle(id,value){
+  const el=document.getElementById(id);
+  el.classList.toggle('on',!!value);
+  el.onclick=()=>{el.classList.toggle('on');syncSettings();};
 }
 
-// ── Toggle helpers ──────────────────────────────────────────────
-function setToggle(id, value) {
-  const el = document.getElementById(id);
-  el.classList.toggle('on', !!value);
-  el.onclick = () => {
-    el.classList.toggle('on');
-    syncSettings();
-  };
-}
-
-// ── Sync settings to server ─────────────────────────────────────
-let syncTimer = null;
-function syncSettings() {
+// ── Sync settings ───────────────────────────────────────────────
+let syncTimer=null;
+function syncSettings(){
   clearTimeout(syncTimer);
-  syncTimer = setTimeout(async () => {
-    const s = {
-      mode: document.getElementById('s-mode').value,
-      system_prompt: document.getElementById('s-system').value,
-      temperature: parseFloat(document.getElementById('s-temp').value),
-      top_k: parseInt(document.getElementById('s-topk').value),
-      top_p: parseFloat(document.getElementById('s-topp').value),
-      min_p: parseFloat(document.getElementById('s-minp').value),
-      repetition_penalty: parseFloat(document.getElementById('s-rep').value),
-      max_response_tokens: parseInt(document.getElementById('s-maxtok').value),
-      think: document.getElementById('t-think').classList.contains('on'),
-      no_think: document.getElementById('t-nothink').classList.contains('on'),
-      amnesia: document.getElementById('t-amnesia').classList.contains('on'),
-      banned_strings: settings.banned_strings || [],
+  syncTimer=setTimeout(async()=>{
+    const s={
+      mode:document.getElementById('s-mode').value,
+      system_prompt:document.getElementById('s-system').value,
+      temperature:parseFloat(document.getElementById('s-temp').value),
+      top_k:parseInt(document.getElementById('s-topk').value),
+      top_p:parseFloat(document.getElementById('s-topp').value),
+      min_p:parseFloat(document.getElementById('s-minp').value),
+      repetition_penalty:parseFloat(document.getElementById('s-rep').value),
+      max_response_tokens:parseInt(document.getElementById('s-maxtok').value),
+      think:document.getElementById('t-think').classList.contains('on'),
+      no_think:document.getElementById('t-nothink').classList.contains('on'),
+      amnesia:document.getElementById('t-amnesia').classList.contains('on'),
+      banned_strings:settings.banned_strings||[],
     };
-    const tb = document.getElementById('s-thinkbudget').value;
-    s.think_budget = tb ? parseInt(tb) : null;
-    settings = s;
-    await fetch('/api/settings', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(s),
-    });
-  }, 300);
+    const tb=document.getElementById('s-thinkbudget').value;
+    s.think_budget=tb?parseInt(tb):null;
+    settings=s;
+    await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s)});
+  },300);
 }
-
-// Debounced sync for text inputs
-document.getElementById('s-system').addEventListener('input', syncSettings);
-document.getElementById('s-mode').addEventListener('change', syncSettings);
-document.getElementById('s-thinkbudget').addEventListener('input', syncSettings);
+document.getElementById('s-system').addEventListener('input',syncSettings);
+document.getElementById('s-mode').addEventListener('change',syncSettings);
+document.getElementById('s-thinkbudget').addEventListener('input',syncSettings);
 
 // ── Banned strings ──────────────────────────────────────────────
-function renderBans() {
-  const el = document.getElementById('banned-chips');
-  el.innerHTML = '';
-  (settings.banned_strings || []).forEach((s, i) => {
-    const chip = document.createElement('span');
-    chip.className = 'chip';
-    chip.innerHTML = `<span>${escHtml(s)}</span><span class="x" onclick="removeBan(${i})">&times;</span>`;
+function renderBans(){
+  const el=document.getElementById('banned-chips');el.innerHTML='';
+  (settings.banned_strings||[]).forEach((s,i)=>{
+    const chip=document.createElement('span');chip.className='chip';
+    chip.innerHTML=`<span>${escHtml(s)}</span><span class="x" onclick="removeBan(${i})">&times;</span>`;
     el.appendChild(chip);
   });
 }
-function addBan() {
-  const inp = document.getElementById('banned-input');
-  const v = inp.value.trim();
-  if (!v) return;
-  if (!settings.banned_strings) settings.banned_strings = [];
-  settings.banned_strings.push(v);
-  inp.value = '';
-  renderBans();
-  syncSettings();
+function addBan(){
+  const inp=document.getElementById('banned-input');const v=inp.value.trim();
+  if(!v)return;if(!settings.banned_strings)settings.banned_strings=[];
+  settings.banned_strings.push(v);inp.value='';renderBans();syncSettings();
 }
-function removeBan(i) {
-  settings.banned_strings.splice(i, 1);
-  renderBans();
-  syncSettings();
-}
-document.getElementById('banned-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter') { e.preventDefault(); addBan(); }
-});
+function removeBan(i){settings.banned_strings.splice(i,1);renderBans();syncSettings();}
+document.getElementById('banned-input').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addBan();}});
 
 // ── Sidebar toggle ──────────────────────────────────────────────
-document.getElementById('toggle-sidebar').onclick = () => sidebar.classList.toggle('hidden');
+document.getElementById('toggle-sidebar').onclick=()=>sidebar.classList.toggle('hidden');
+
+// ── Auto-scroll toggle ──────────────────────────────────────────
+autoScrollBtn.onclick=()=>{
+  autoScroll=!autoScroll;
+  autoScrollBtn.classList.toggle('active',autoScroll);
+};
+chatArea.addEventListener('scroll',()=>{
+  const atBottom=chatArea.scrollHeight-chatArea.scrollTop-chatArea.clientHeight<50;
+  if(!atBottom&&autoScroll&&generating){autoScroll=false;autoScrollBtn.classList.remove('active');}
+});
 
 // ── Input handling ──────────────────────────────────────────────
-inputBox.addEventListener('input', () => {
-  inputBox.style.height = 'auto';
-  inputBox.style.height = Math.min(inputBox.scrollHeight, 200) + 'px';
-});
-inputBox.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
+inputBox.addEventListener('input',()=>{inputBox.style.height='auto';inputBox.style.height=Math.min(inputBox.scrollHeight,200)+'px';});
+inputBox.addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}
+  // Up arrow when empty -> edit last user message
+  if(e.key==='ArrowUp'&&!inputBox.value.trim()){
+    e.preventDefault();editLastUserMessage();
   }
 });
-sendBtn.onclick = () => sendMessage();
-stopBtn.onclick = () => stopGeneration();
+sendBtn.onclick=()=>sendMessage();
+stopBtn.onclick=()=>stopGeneration();
+
+// Ctrl+Shift+Backspace to stop
+document.addEventListener('keydown',e=>{
+  if(e.ctrlKey&&e.shiftKey&&e.key==='Backspace'){e.preventDefault();stopGeneration();}
+});
+
+// ── Tree rendering ──────────────────────────────────────────────
+function getActivePath() {
+  // Walk the tree and return array of {role, content, nodeId, siblings, siblingIdx}
+  const path = [];
+  if (!tree.root_children.length || tree.active_root < 0) return path;
+  let currentId = tree.root_children[tree.active_root];
+  while (currentId) {
+    const node = tree.nodes[currentId];
+    if (!node) break;
+    // Determine siblings
+    let siblings, sibIdx;
+    if (node.parent_id === null || node.parent_id === undefined) {
+      siblings = tree.root_children;
+      sibIdx = siblings.indexOf(currentId);
+    } else {
+      const parent = tree.nodes[node.parent_id];
+      siblings = parent ? parent.children : [currentId];
+      sibIdx = siblings.indexOf(currentId);
+    }
+    path.push({
+      role: node.role,
+      content: node.content,
+      nodeId: currentId,
+      siblings: siblings,
+      siblingIdx: sibIdx,
+    });
+    // Follow active child
+    if (node.children && node.children.length > 0 && node.active_child >= 0) {
+      currentId = node.children[node.active_child];
+    } else {
+      currentId = null;
+    }
+  }
+  return path;
+}
+
+function renderTree(streamingNodeId, streamingText) {
+  const path = getActivePath();
+  const hasMessages = path.length > 0;
+
+  // Clear and rebuild
+  msgContainer.innerHTML = '';
+  if (!hasMessages && !generating) {
+    msgContainer.appendChild(emptyState);
+    emptyState.style.display = '';
+    return;
+  }
+  emptyState.style.display = 'none';
+
+  for (const entry of path) {
+    const isStreaming = streamingNodeId && entry.nodeId === streamingNodeId;
+    const content = isStreaming ? streamingText : entry.content;
+
+    const msg = document.createElement('div');
+    msg.className = 'msg';
+    msg.dataset.nodeId = entry.nodeId;
+
+    // Header with role, branch nav, and action buttons
+    const header = document.createElement('div');
+    header.className = 'msg-header';
+    const roleEl = document.createElement('div');
+    roleEl.className = `msg-role ${entry.role}`;
+    roleEl.textContent = entry.role;
+    header.appendChild(roleEl);
+
+    // Branch navigation (only if >1 sibling)
+    if (entry.siblings.length > 1) {
+      const nav = document.createElement('span');
+      nav.className = 'branch-nav';
+      const prevBtn = document.createElement('button');
+      prevBtn.textContent = '<';
+      prevBtn.disabled = entry.siblingIdx <= 0;
+      prevBtn.onclick = () => navigateBranch(entry.nodeId, entry.siblingIdx - 1);
+      const label = document.createElement('span');
+      label.textContent = `${entry.siblingIdx + 1}/${entry.siblings.length}`;
+      const nextBtn = document.createElement('button');
+      nextBtn.textContent = '>';
+      nextBtn.disabled = entry.siblingIdx >= entry.siblings.length - 1;
+      nextBtn.onclick = () => navigateBranch(entry.nodeId, entry.siblingIdx + 1);
+      nav.appendChild(prevBtn);
+      nav.appendChild(label);
+      nav.appendChild(nextBtn);
+      header.appendChild(nav);
+    }
+
+    // Action buttons
+    if (!generating) {
+      const actions = document.createElement('div');
+      actions.className = 'msg-actions';
+
+      if (entry.role === 'user') {
+        actions.appendChild(makeActionBtn('Edit', () => startEdit(entry.nodeId)));
+      }
+      if (entry.role === 'assistant' && entry.content) {
+        actions.appendChild(makeActionBtn('Regen', () => regenerateMessage(entry.nodeId)));
+        actions.appendChild(makeActionBtn('Copy', () => copyMessage(entry.content)));
+      }
+      actions.appendChild(makeActionBtn('Del', () => deleteMessage(entry.nodeId), true));
+      header.appendChild(actions);
+    }
+
+    msg.appendChild(header);
+
+    // Body
+    const body = document.createElement('div');
+    body.className = 'msg-body';
+    if (entry.role === 'user') {
+      body.textContent = content || '';
+    } else if (isStreaming) {
+      renderStreamingInto(body, content || '');
+    } else if (content) {
+      renderFinalInto(body, content);
+    }
+    msg.appendChild(body);
+
+    // TPS badge
+    const tps = tpsDataMap[entry.nodeId];
+    if (tps && !isStreaming) {
+      const badge = document.createElement('div');
+      badge.className = 'msg-tps';
+      const ctx = tps.prompt_tokens ? `${tps.prompt_tokens.toLocaleString()} ctx` : '';
+      const cached = tps.cached_tokens ? ` (${tps.cached_tokens.toLocaleString()} cached)` : '';
+      let parts = [];
+      if (ctx) parts.push(ctx + cached);
+      parts.push(`${tps.new_tokens} gen · ${tps.tps} t/s · ${tps.elapsed}s`);
+      if (tps.prefill_tps) parts.push(`prefill ${tps.prefill_tps} t/s`);
+      badge.textContent = parts.join(' · ');
+      msg.appendChild(badge);
+    }
+
+    msgContainer.appendChild(msg);
+  }
+
+  if (autoScroll) scrollToBottom();
+}
+
+function makeActionBtn(label, onclick, danger) {
+  const btn = document.createElement('button');
+  btn.className = 'msg-action-btn' + (danger ? ' danger' : '');
+  btn.textContent = label;
+  btn.onclick = onclick;
+  return btn;
+}
 
 // ── Send message ────────────────────────────────────────────────
 async function sendMessage() {
   const text = inputBox.value.trim();
   if (!text || generating) return;
-
   inputBox.value = '';
   inputBox.style.height = 'auto';
-  emptyState.style.display = 'none';
+  setGenerating(true);
 
-  addMessage('user', text);
-  const assistantEl = addMessage('assistant', '');
-  const bodyEl = assistantEl.querySelector('.msg-body');
-
-  generating = true;
-  sendBtn.style.display = 'none';
-  stopBtn.style.display = 'flex';
-  sendBtn.disabled = true;
-
+  let streamNodeId = null;
   let fullText = '';
-  let tpsData = null;
 
   try {
     const resp = await fetch('/api/chat', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: text}),
+      body: JSON.stringify({ message: text }),
     });
-
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -667,27 +702,30 @@ async function sendMessage() {
       const {done, value} = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, {stream: true});
-
       const lines = buffer.split('\n');
       buffer = lines.pop();
-
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
         const payload = line.slice(6);
         if (payload === '[DONE]') continue;
-
         try {
           const evt = JSON.parse(payload);
           switch (evt.type) {
+            case 'start':
+              streamNodeId = evt.asst_node_id;
+              break;
             case 'token':
               fullText += evt.text;
-              renderStreaming(bodyEl, fullText);
-              scrollToBottom();
+              if (streamNodeId) renderTree(streamNodeId, fullText);
               break;
             case 'tps':
-              tpsData = evt;
+              if (streamNodeId) tpsDataMap[streamNodeId] = evt;
               break;
             case 'done':
+              streamNodeId = streamNodeId || evt.asst_node_id;
+              break;
+            case 'tree':
+              tree = evt.tree;
               break;
             case 'error':
               fullText += `\n\n**Error:** ${evt.message}`;
@@ -700,29 +738,165 @@ async function sendMessage() {
     fullText += `\n\n**Error:** ${e.message}`;
   }
 
-  // Final render (full markdown)
-  renderFinal(bodyEl, fullText);
-
-  // TPS badge
-  if (tpsData) {
-    const badge = document.createElement('div');
-    badge.className = 'msg-tps';
-    const ctx = tpsData.prompt_tokens ? `${tpsData.prompt_tokens.toLocaleString()} ctx` : '';
-    const cached = tpsData.cached_tokens ? ` (${tpsData.cached_tokens.toLocaleString()} cached)` : '';
-    let parts = [];
-    if (ctx) parts.push(ctx + cached);
-    parts.push(`${tpsData.new_tokens} gen · ${tpsData.tps} t/s · ${tpsData.elapsed}s`);
-    if (tpsData.prefill_tps) parts.push(`prefill ${tpsData.prefill_tps} t/s`);
-    badge.textContent = parts.join(' · ');
-    assistantEl.appendChild(badge);
-  }
-
-  generating = false;
-  sendBtn.style.display = 'flex';
-  stopBtn.style.display = 'none';
-  sendBtn.disabled = false;
+  setGenerating(false);
+  renderTree();
   inputBox.focus();
-  scrollToBottom();
+}
+
+// ── Regenerate ──────────────────────────────────────────────────
+async function regenerateMessage(nodeId) {
+  if (generating) return;
+  setGenerating(true);
+  let streamNodeId = null;
+  let fullText = '';
+
+  try {
+    const resp = await fetch('/api/regenerate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ node_id: nodeId }),
+    });
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, {stream: true});
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const payload = line.slice(6);
+        if (payload === '[DONE]') continue;
+        try {
+          const evt = JSON.parse(payload);
+          if (evt.type === 'start') streamNodeId = evt.asst_node_id;
+          if (evt.type === 'token') { fullText += evt.text; if (streamNodeId) renderTree(streamNodeId, fullText); }
+          if (evt.type === 'tps' && streamNodeId) tpsDataMap[streamNodeId] = evt;
+          if (evt.type === 'done' && evt.asst_node_id) streamNodeId = streamNodeId || evt.asst_node_id;
+          if (evt.type === 'tree') tree = evt.tree;
+          if (evt.type === 'error') fullText += `\n\n**Error:** ${evt.message}`;
+        } catch {}
+      }
+    }
+  } catch (e) { fullText += `\n\n**Error:** ${e.message}`; }
+
+  setGenerating(false);
+  renderTree();
+}
+
+// ── Edit message ────────────────────────────────────────────────
+function startEdit(nodeId) {
+  const node = tree.nodes[nodeId];
+  if (!node) return;
+  const msgEl = msgContainer.querySelector(`[data-node-id="${nodeId}"]`);
+  if (!msgEl) return;
+  const body = msgEl.querySelector('.msg-body');
+  const original = node.content || '';
+  body.innerHTML = '';
+  const textarea = document.createElement('textarea');
+  textarea.className = 'msg-edit-area';
+  textarea.value = original;
+  const btns = document.createElement('div');
+  btns.className = 'msg-edit-actions';
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'msg-edit-save';
+  saveBtn.textContent = 'Save & Send';
+  saveBtn.onclick = () => submitEdit(nodeId, textarea.value.trim());
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'msg-edit-cancel';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.onclick = () => renderTree();
+  btns.appendChild(saveBtn);
+  btns.appendChild(cancelBtn);
+  body.appendChild(textarea);
+  body.appendChild(btns);
+  textarea.focus();
+  textarea.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitEdit(nodeId, textarea.value.trim()); }
+    if (e.key === 'Escape') renderTree();
+  });
+}
+
+async function submitEdit(nodeId, content) {
+  if (!content || generating) return;
+  setGenerating(true);
+  let streamNodeId = null;
+  let fullText = '';
+
+  try {
+    const resp = await fetch('/api/edit', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ node_id: nodeId, content: content }),
+    });
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, {stream: true});
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const payload = line.slice(6);
+        if (payload === '[DONE]') continue;
+        try {
+          const evt = JSON.parse(payload);
+          if (evt.type === 'start') streamNodeId = evt.asst_node_id;
+          if (evt.type === 'token') { fullText += evt.text; if (streamNodeId) renderTree(streamNodeId, fullText); }
+          if (evt.type === 'tps' && streamNodeId) tpsDataMap[streamNodeId] = evt;
+          if (evt.type === 'done' && evt.asst_node_id) streamNodeId = streamNodeId || evt.asst_node_id;
+          if (evt.type === 'tree') tree = evt.tree;
+          if (evt.type === 'error') fullText += `\n\n**Error:** ${evt.message}`;
+        } catch {}
+      }
+    }
+  } catch (e) { fullText += `\n\n**Error:** ${e.message}`; }
+
+  setGenerating(false);
+  renderTree();
+}
+
+function editLastUserMessage() {
+  const path = getActivePath();
+  for (let i = path.length - 1; i >= 0; i--) {
+    if (path[i].role === 'user') { startEdit(path[i].nodeId); return; }
+  }
+}
+
+// ── Delete message ──────────────────────────────────────────────
+async function deleteMessage(nodeId) {
+  if (generating) return;
+  const resp = await fetch('/api/delete', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ node_id: nodeId }),
+  });
+  const data = await resp.json();
+  if (data.tree) tree = data.tree;
+  renderTree();
+}
+
+// ── Navigate branch ─────────────────────────────────────────────
+async function navigateBranch(nodeId, newIndex) {
+  if (generating) return;
+  const resp = await fetch('/api/navigate', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ node_id: nodeId, index: newIndex }),
+  });
+  const data = await resp.json();
+  if (data.tree) tree = data.tree;
+  renderTree();
+}
+
+// ── Copy message ────────────────────────────────────────────────
+function copyMessage(text) {
+  navigator.clipboard.writeText(text).catch(() => {});
 }
 
 // ── Stop generation ─────────────────────────────────────────────
@@ -732,10 +906,30 @@ async function stopGeneration() {
 
 // ── Clear context ───────────────────────────────────────────────
 async function clearContext() {
-  await fetch('/api/clear', {method: 'POST'});
-  msgContainer.innerHTML = '';
-  emptyState.style.display = '';
-  msgContainer.appendChild(emptyState);
+  if (generating) return;
+  const resp = await fetch('/api/clear', {method: 'POST'});
+  const data = await resp.json();
+  if (data.tree) tree = data.tree;
+  tpsDataMap = {};
+  renderTree();
+}
+
+// ── UI state helpers ────────────────────────────────────────────
+function setGenerating(v) {
+  generating = v;
+  sendBtn.style.display = v ? 'none' : 'flex';
+  stopBtn.style.display = v ? 'flex' : 'none';
+  sendBtn.disabled = v;
+}
+
+function scrollToBottom() {
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
 }
 
 // ── Save/Load session ───────────────────────────────────────────
@@ -758,79 +952,55 @@ document.getElementById('file-input').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   const text = await file.text();
-  const data = JSON.parse(text);
-  await fetch('/api/session/load', {
+  const resp = await fetch('/api/session/load', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: text,
   });
-  // Reload settings and replay messages
+  const data = await resp.json();
+  if (data.tree) tree = data.tree;
+
+  // Reload settings
   const settingsRes = await fetch('/api/settings');
   settings = await settingsRes.json();
   const statusRes = await fetch('/api/status');
   const status = await statusRes.json();
   populateUI(status);
-
-  // Replay messages
-  msgContainer.innerHTML = '';
-  emptyState.style.display = 'none';
-  if (data.context) {
-    for (const [u, a] of data.context) {
-      addMessage('user', u);
-      if (a != null) {
-        const el = addMessage('assistant', '');
-        renderFinal(el.querySelector('.msg-body'), a);
-      }
-    }
-  }
+  renderTree();
   e.target.value = '';
-  scrollToBottom();
 });
 
-// ── DOM helpers ─────────────────────────────────────────────────
-function addMessage(role, text) {
-  const msg = document.createElement('div');
-  msg.className = 'msg';
-  msg.innerHTML = `<div class="msg-role ${role}">${role}</div><div class="msg-body"></div>`;
-  if (role === 'user') {
-    msg.querySelector('.msg-body').textContent = text;
+// ── Export as Markdown ──────────────────────────────────────────
+function exportMarkdown() {
+  const path = getActivePath();
+  if (!path.length) return;
+  let md = '';
+  for (const entry of path) {
+    const label = entry.role === 'user' ? '**User**' : '**Assistant**';
+    md += `### ${label}\n\n${entry.content || '(empty)'}\n\n---\n\n`;
   }
-  msgContainer.appendChild(msg);
-  scrollToBottom();
-  return msg;
-}
-
-function scrollToBottom() {
-  const area = document.getElementById('chat-area');
-  area.scrollTop = area.scrollHeight;
-}
-
-function escHtml(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
+  const blob = new Blob([md], {type: 'text/markdown'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'conversation.md';
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 // ── Markdown rendering ──────────────────────────────────────────
-// Configure marked
-marked.setOptions({
-  breaks: true,
-  gfm: true,
-});
+marked.setOptions({ breaks: true, gfm: true });
 
-function renderStreaming(el, text) {
-  // During streaming: render with a cursor
-  const {html, thinkOpen} = processThinkTags(text);
+function renderStreamingInto(el, text) {
+  const {html} = processThinkTags(text);
   el.innerHTML = html + '<span class="cursor"></span>';
 }
 
-function renderFinal(el, text) {
+function renderFinalInto(el, text) {
   const {html} = processThinkTags(text);
   el.innerHTML = html;
 }
 
 function processThinkTags(text) {
-  // Extract <think>...</think> blocks and render them as collapsible
   let html = '';
   let remaining = text;
   let thinkOpen = false;
@@ -838,9 +1008,7 @@ function processThinkTags(text) {
   while (remaining.length > 0) {
     const openIdx = remaining.indexOf('<think>');
     if (openIdx === -1) {
-      // No more think tags
       if (thinkOpen) {
-        // Inside unclosed think block (still streaming)
         html += renderThinkContent(remaining, true);
         remaining = '';
         thinkOpen = true;
@@ -849,15 +1017,10 @@ function processThinkTags(text) {
         remaining = '';
       }
     } else {
-      // Text before think tag
-      if (openIdx > 0) {
-        html += renderMarkdown(remaining.substring(0, openIdx));
-      }
+      if (openIdx > 0) html += renderMarkdown(remaining.substring(0, openIdx));
       remaining = remaining.substring(openIdx + 7);
-
       const closeIdx = remaining.indexOf('</think>');
       if (closeIdx === -1) {
-        // Unclosed think block
         html += renderThinkContent(remaining, true);
         remaining = '';
         thinkOpen = true;
@@ -867,7 +1030,6 @@ function processThinkTags(text) {
       }
     }
   }
-
   return {html, thinkOpen};
 }
 
@@ -876,17 +1038,13 @@ function renderThinkContent(text, isOpen) {
   const openClass = isOpen ? ' open' : '';
   return `<div class="think-block">` +
     `<button class="think-toggle" onclick="this.nextElementSibling.classList.toggle('open');this.textContent=this.nextElementSibling.classList.contains('open')?'▼ ${label}':'▶ ${label}'">${isOpen ? '▼' : '▶'} ${label}</button>` +
-    `<div class="think-content${openClass}">${renderMarkdown(text)}</div>` +
-    `</div>`;
+    `<div class="think-content${openClass}">${renderMarkdown(text)}</div></div>`;
 }
 
 function renderMarkdown(text) {
   if (!text.trim()) return '';
-  try {
-    return marked.parse(text);
-  } catch {
-    return `<p>${escHtml(text)}</p>`;
-  }
+  try { return marked.parse(text); }
+  catch { return `<p>${escHtml(text)}</p>`; }
 }
 </script>
 </body>
