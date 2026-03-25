@@ -199,15 +199,10 @@ class ChatEngine:
         if "logit_mask" not in sig.parameters:
             _orig_forward = sampler.forward
             def _patched_forward(*args, logit_mask=None, **kwargs):
-                result = _orig_forward(*args, **kwargs)
-                if logit_mask is not None:
-                    # Apply mask: set banned positions to -inf before sampling
-                    if isinstance(result, tuple):
-                        logits = result[0]
-                        logits[logit_mask] = float("-inf")
-                    else:
-                        result[logit_mask] = float("-inf")
-                return result
+                # Apply mask to logits BEFORE sampling
+                if logit_mask is not None and len(args) > 0:
+                    args[0][logit_mask] = float("-inf")
+                return _orig_forward(*args, **kwargs)
             sampler.forward = _patched_forward
 
         return sampler
