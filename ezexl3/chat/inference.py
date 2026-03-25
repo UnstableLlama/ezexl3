@@ -179,6 +179,8 @@ class ChatEngine:
             stop_conditions += self.config.eos_token_id_list
         return stop_conditions
 
+    _banned_strings_supported: bool | None = None
+
     def _get_sampler(self):
         from exllamav3 import Sampler
 
@@ -191,6 +193,17 @@ class ChatEngine:
         if s.repetition_penalty != 1.0:
             sampler.repetition_penalty = s.repetition_penalty
         return sampler
+
+    @classmethod
+    def _check_banned_strings_support(cls):
+        """Check if the installed exllamav3 Sampler supports logit_mask."""
+        if cls._banned_strings_supported is not None:
+            return cls._banned_strings_supported
+        import inspect
+        from exllamav3 import Sampler
+        sig = inspect.signature(Sampler.forward)
+        cls._banned_strings_supported = "logit_mask" in sig.parameters
+        return cls._banned_strings_supported
 
     def _build_input_ids(self, prompt_format, prefix: str = ""):
         """Tokenize full context, trimming from head if too long."""
@@ -263,7 +276,7 @@ class ChatEngine:
             sampler = self._get_sampler()
             ids = self._build_input_ids(prompt_format)
 
-            # Banned strings
+            # Banned strings (requires logit_mask support in Sampler)
             banned = list(self.settings.banned_strings)
             if self.settings.no_think:
                 tt = prompt_format.thinktag()
@@ -272,13 +285,22 @@ class ChatEngine:
                 if tt[1]:
                     banned.append(tt[1])
 
-            job = Job(
+            use_banned = banned and self._check_banned_strings_support()
+
+            job_kwargs = dict(
                 input_ids=ids,
                 max_new_tokens=self.settings.max_response_tokens,
                 stop_conditions=stop_conditions,
                 sampler=sampler,
-                banned_strings=banned if banned else None,
             )
+            if use_banned:
+                job_kwargs["banned_strings"] = banned
+            try:
+                job = Job(**job_kwargs)
+            except TypeError:
+                # banned_strings not supported for this model/config
+                job_kwargs.pop("banned_strings", None)
+                job = Job(**job_kwargs)
             self._current_job = job
             self.generator.enqueue(job)
 
