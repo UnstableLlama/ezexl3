@@ -128,7 +128,8 @@ def run_server(
     model_dir: str,
     devices: list[int] | None = None,
     device_ratios: str | None = None,
-    context_length: int | None = None,
+    cache_size: int | None = None,
+    cache_quant: str | None = None,
     host: str = "127.0.0.1",
     port: int = 8800,
     open_browser: bool = True,
@@ -138,7 +139,8 @@ def run_server(
         model_dir=model_dir,
         devices=devices,
         device_ratios=device_ratios,
-        context_length=context_length,
+        cache_size=cache_size,
+        cache_quant=cache_quant,
     )
 
     print(f"Loading model from: {model_dir}")

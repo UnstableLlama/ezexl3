@@ -56,17 +56,23 @@ class ChatSettings:
 class ChatEngine:
     """Wraps exllamav3 Generator/Job for streaming chat inference."""
 
+    # Sensible defaults so we don't blow VRAM on a 128k model card context
+    DEFAULT_CACHE_SIZE = 32768      # must be multiple of 256
+    DEFAULT_CACHE_QUANT = "6,6"     # Q6 for both K and V
+
     def __init__(
         self,
         model_dir: str,
         devices: list[int] | None = None,
         device_ratios: str | None = None,
-        context_length: int | None = None,
+        cache_size: int | None = None,
+        cache_quant: str | None = None,
     ):
         self.model_dir = os.path.abspath(model_dir)
         self._devices = devices or [0]
         self._device_ratios = device_ratios
-        self._context_length_override = context_length
+        self._cache_size = cache_size or self.DEFAULT_CACHE_SIZE
+        self._cache_quant = cache_quant or self.DEFAULT_CACHE_QUANT
 
         # Populated by load()
         self.model = None
@@ -100,7 +106,8 @@ class ChatEngine:
             self.model_dir,
             self._devices,
             self._device_ratios,
-            self._context_length_override,
+            self._cache_size,
+            self._cache_quant,
         )
 
         torch.set_grad_enabled(False)
@@ -380,7 +387,8 @@ def _build_model_args(
     model_dir: str,
     devices: list[int],
     device_ratios: str | None,
-    context_length: int | None,
+    cache_size: int | None,
+    cache_quant: str | None,
 ) -> object:
     """
     Build a namespace object mimicking the argparse args that
@@ -393,13 +401,14 @@ def _build_model_args(
     parser = argparse.ArgumentParser()
     model_init.add_args(parser, cache=True)
 
-    # Start with the required model_dir, add gpu_split / context_length if set
     argv = ["-m", model_dir]
     if len(devices) > 1:
         argv += ["-gs", ",".join(str(d) for d in devices)]
     if device_ratios:
         argv += ["-gs", device_ratios]
-    if context_length:
-        argv += ["-cs", str(context_length)]
+    if cache_size:
+        argv += ["-cs", str(cache_size)]
+    if cache_quant:
+        argv += ["-cq", cache_quant]
 
     return parser.parse_args(argv)

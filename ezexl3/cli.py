@@ -204,7 +204,10 @@ def build_parser() -> argparse.ArgumentParser:
     ch.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
     ch.add_argument("--port", type=int, default=8800, help="Port (default: 8800)")
     ch.add_argument("--no-browser", action="store_true", help="Don't auto-open browser")
-    ch.add_argument("-cl", "--context-length", type=int, default=None, help="Context length override")
+    ch.add_argument("-cs", "--cache-size", type=int, default=None,
+                    help="Cache size in tokens (default: 32768). Must be multiple of 256")
+    ch.add_argument("-cq", "--cache-quant", type=str, default=None,
+                    help="Cache quantization bits: kv_bits or k_bits,v_bits (default: 6,6)")
 
     # --- readme ---
     r = sub.add_parser("readme", help="README only (CSV -> README)")
@@ -256,7 +259,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             model_dir=args.model,
             devices=chat_devices,
             device_ratios=dr,
-            context_length=args.context_length,
+            cache_size=args.cache_size,
+            cache_quant=args.cache_quant,
             host=args.host,
             port=args.port,
             open_browser=not args.no_browser,
