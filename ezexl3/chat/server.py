@@ -66,6 +66,8 @@ async def handle_chat(request: web.Request) -> web.Response:
     engine: ChatEngine = request.app["engine"]
     data = await request.json()
     message = data.get("message", "").strip()
+    if "context" in data:
+        engine.context = [tuple(pair) for pair in data["context"]]
     if not message:
         return web.json_response({"error": "Empty message"}, status=400)
 
