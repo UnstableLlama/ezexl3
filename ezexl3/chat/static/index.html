@@ -409,6 +409,29 @@ function scheduleRender(streamNodeId, streamText) {
   }
 }
 
+function addOptimisticMessage(role, text) {
+  emptyState.style.display = 'none';
+  const msg = document.createElement('div');
+  msg.className = 'msg';
+  const header = document.createElement('div');
+  header.className = 'msg-header';
+  const roleEl = document.createElement('div');
+  roleEl.className = `msg-role ${role}`;
+  roleEl.textContent = role;
+  header.appendChild(roleEl);
+  msg.appendChild(header);
+  const body = document.createElement('div');
+  body.className = 'msg-body';
+  if (role === 'user') {
+    body.textContent = text || '';
+  } else {
+    body.innerHTML = '<span class="cursor"></span>';
+  }
+  msg.appendChild(body);
+  msgContainer.appendChild(msg);
+  return msg;
+}
+
 const msgContainer = document.getElementById('messages');
 const emptyState = document.getElementById('empty-state');
 const inputBox = document.getElementById('input-box');
@@ -699,6 +722,12 @@ async function sendMessage() {
   inputBox.style.height = 'auto';
   setGenerating(true);
 
+  // Optimistic UI: show user message + empty assistant immediately
+  addOptimisticMessage('user', text);
+  const asstEl = addOptimisticMessage('assistant', '');
+  const bodyEl = asstEl.querySelector('.msg-body');
+  scrollToBottom();
+
   let streamNodeId = null;
   let fullText = '';
 
@@ -730,7 +759,8 @@ async function sendMessage() {
               break;
             case 'token':
               fullText += evt.text;
-              if (streamNodeId) scheduleRender(streamNodeId, fullText);
+              renderStreamingInto(bodyEl, fullText);
+              if (autoScroll) scrollToBottom();
               break;
             case 'tps':
               if (streamNodeId) tpsDataMap[streamNodeId] = evt;
@@ -740,10 +770,10 @@ async function sendMessage() {
               break;
             case 'tree':
               tree = evt.tree;
-              scheduleRender(streamNodeId, fullText);
               break;
             case 'error':
               fullText += `\n\n**Error:** ${evt.message}`;
+              renderStreamingInto(bodyEl, fullText);
               break;
           }
         } catch {}
@@ -751,6 +781,7 @@ async function sendMessage() {
     }
   } catch (e) {
     fullText += `\n\n**Error:** ${e.message}`;
+    renderStreamingInto(bodyEl, fullText);
   }
 
   setGenerating(false);
@@ -762,6 +793,21 @@ async function sendMessage() {
 async function regenerateMessage(nodeId) {
   if (generating) return;
   setGenerating(true);
+
+  // Optimistic UI: clear the assistant body and show cursor
+  const msgEl = msgContainer.querySelector(`[data-node-id="${nodeId}"]`);
+  let bodyEl;
+  if (msgEl) {
+    bodyEl = msgEl.querySelector('.msg-body');
+    bodyEl.innerHTML = '<span class="cursor"></span>';
+    const tpsBadge = msgEl.querySelector('.msg-tps');
+    if (tpsBadge) tpsBadge.remove();
+  } else {
+    const asstEl = addOptimisticMessage('assistant', '');
+    bodyEl = asstEl.querySelector('.msg-body');
+  }
+  scrollToBottom();
+
   let streamNodeId = null;
   let fullText = '';
 
@@ -787,15 +833,15 @@ async function regenerateMessage(nodeId) {
         try {
           const evt = JSON.parse(payload);
           if (evt.type === 'start') streamNodeId = evt.asst_node_id;
-          if (evt.type === 'token') { fullText += evt.text; if (streamNodeId) scheduleRender(streamNodeId, fullText); }
+          if (evt.type === 'token') { fullText += evt.text; renderStreamingInto(bodyEl, fullText); if (autoScroll) scrollToBottom(); }
           if (evt.type === 'tps' && streamNodeId) tpsDataMap[streamNodeId] = evt;
           if (evt.type === 'done' && evt.asst_node_id) streamNodeId = streamNodeId || evt.asst_node_id;
-          if (evt.type === 'tree') { tree = evt.tree; scheduleRender(streamNodeId, fullText); }
-          if (evt.type === 'error') fullText += `\n\n**Error:** ${evt.message}`;
+          if (evt.type === 'tree') tree = evt.tree;
+          if (evt.type === 'error') { fullText += `\n\n**Error:** ${evt.message}`; renderStreamingInto(bodyEl, fullText); }
         } catch {}
       }
     }
-  } catch (e) { fullText += `\n\n**Error:** ${e.message}`; }
+  } catch (e) { fullText += `\n\n**Error:** ${e.message}`; renderStreamingInto(bodyEl, fullText); }
 
   setGenerating(false);
   renderTree();
@@ -837,6 +883,20 @@ function startEdit(nodeId) {
 async function submitEdit(nodeId, content) {
   if (!content || generating) return;
   setGenerating(true);
+
+  // Optimistic UI: update user message text, remove everything after it,
+  // and add a fresh assistant element with cursor
+  const msgEl = msgContainer.querySelector(`[data-node-id="${nodeId}"]`);
+  if (msgEl) {
+    const body = msgEl.querySelector('.msg-body');
+    body.textContent = content;
+    // Remove all siblings after this message
+    while (msgEl.nextElementSibling) msgEl.nextElementSibling.remove();
+  }
+  const asstEl = addOptimisticMessage('assistant', '');
+  const bodyEl = asstEl.querySelector('.msg-body');
+  scrollToBottom();
+
   let streamNodeId = null;
   let fullText = '';
 
@@ -862,15 +922,15 @@ async function submitEdit(nodeId, content) {
         try {
           const evt = JSON.parse(payload);
           if (evt.type === 'start') streamNodeId = evt.asst_node_id;
-          if (evt.type === 'token') { fullText += evt.text; if (streamNodeId) scheduleRender(streamNodeId, fullText); }
+          if (evt.type === 'token') { fullText += evt.text; renderStreamingInto(bodyEl, fullText); if (autoScroll) scrollToBottom(); }
           if (evt.type === 'tps' && streamNodeId) tpsDataMap[streamNodeId] = evt;
           if (evt.type === 'done' && evt.asst_node_id) streamNodeId = streamNodeId || evt.asst_node_id;
-          if (evt.type === 'tree') { tree = evt.tree; scheduleRender(streamNodeId, fullText); }
-          if (evt.type === 'error') fullText += `\n\n**Error:** ${evt.message}`;
+          if (evt.type === 'tree') tree = evt.tree;
+          if (evt.type === 'error') { fullText += `\n\n**Error:** ${evt.message}`; renderStreamingInto(bodyEl, fullText); }
         } catch {}
       }
     }
-  } catch (e) { fullText += `\n\n**Error:** ${e.message}`; }
+  } catch (e) { fullText += `\n\n**Error:** ${e.message}`; renderStreamingInto(bodyEl, fullText); }
 
   setGenerating(false);
   renderTree();

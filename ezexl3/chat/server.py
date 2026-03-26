@@ -56,6 +56,12 @@ async def _stream_events(request, gen):
     )
     await response.prepare(request)
 
+    # Padding comment to fill browser's internal stream buffer (~2 KB).
+    # Without this, browsers may hold back the first SSE events from
+    # the ReadableStream API until enough bytes accumulate.
+    await response.write(b": " + b" " * 2048 + b"\n")
+    await response.drain()
+
     sent_initial_tree = False
     async for event in gen:
         sse_data = f"data: {json.dumps(event)}\n\n"
