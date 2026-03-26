@@ -1215,6 +1215,15 @@ def run_measure_single_bpw(
     task_descs = [f"{_task_to_csv_label(t['label'])} {t['phase'].upper()}" for t in all_tasks]
     print(f"  📊 Measuring {label}: {', '.join(task_descs)} on {n_workers} GPU(s)...")
 
+    use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+    gpu_status: Dict[int, str] = {d: "idle" for d in worker_devices}
+    num_lines = len(worker_devices)
+
+    if use_ansi:
+        for d in sorted(gpu_status):
+            sys.stdout.write(f"\033[2K  GPU {d} | idle\n")
+        sys.stdout.flush()
+
     # Result listener
     active_workers = n_workers
     failures = 0
@@ -1225,22 +1234,50 @@ def run_measure_single_bpw(
             active_workers -= 1
             continue
 
+        gpu = res["device"]
         event = res["event"]
+
         if event == "progress":
-            continue  # skip progress events for per-BPW measurement
+            gpu_status[gpu] = res["text"]
+            if use_ansi:
+                _clear_and_redraw_progress(gpu_status, num_lines)
+            continue
 
         res_label = res.get("label", "")
         phase = res.get("phase", "")
+        phase_tag = phase.upper()
 
-        if event == "done":
+        if event == "start":
+            msg = f"  🧪 [GPU {gpu}] START {res_label} {phase_tag}"
+            gpu_status[gpu] = f"{res_label} {phase_tag} | starting..."
+        elif event == "done":
             row = res["row"]
             if phase == "kl":
-                print(f"    ✅ {res_label} KL: {row.get('KL Div', 'N/A')}")
+                kl_val = row.get("KL Div", "N/A")
+                msg = f"    ✅ [GPU {gpu}] DONE {res_label} KL: KL={kl_val}"
             else:
-                print(f"    ✅ {res_label} PPL: {row.get('PPL r-100', 'N/A')}")
+                ppl_val = row.get("PPL r-100", "N/A")
+                msg = f"    ✅ [GPU {gpu}] DONE {res_label} PPL: PPL={ppl_val}"
+            gpu_status[gpu] = "idle"
         elif event == "error":
             failures += 1
-            print(f"    🔴 FAIL {res_label} {phase.upper()}: {res['error']}")
+            msg = f"    🔴 [GPU {gpu}] FAIL {res_label} {phase_tag}: {res['error']}"
+            gpu_status[gpu] = "idle"
+        else:
+            continue
+
+        if use_ansi:
+            _print_above_progress(msg, gpu_status, num_lines)
+        else:
+            print(msg)
+
+    # Clear the progress area
+    if use_ansi:
+        sys.stdout.write(f"\033[{num_lines}A")
+        for _ in range(num_lines):
+            sys.stdout.write("\033[2K\n")
+        sys.stdout.write(f"\033[{num_lines}A")
+        sys.stdout.flush()
 
     for p in procs:
         p.join()

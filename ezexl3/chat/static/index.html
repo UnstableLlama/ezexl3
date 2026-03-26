@@ -726,6 +726,7 @@ async function sendMessage() {
               break;
             case 'tree':
               tree = evt.tree;
+              renderTree(streamNodeId, fullText);
               break;
             case 'error':
               fullText += `\n\n**Error:** ${evt.message}`;
@@ -775,7 +776,7 @@ async function regenerateMessage(nodeId) {
           if (evt.type === 'token') { fullText += evt.text; if (streamNodeId) renderTree(streamNodeId, fullText); }
           if (evt.type === 'tps' && streamNodeId) tpsDataMap[streamNodeId] = evt;
           if (evt.type === 'done' && evt.asst_node_id) streamNodeId = streamNodeId || evt.asst_node_id;
-          if (evt.type === 'tree') tree = evt.tree;
+          if (evt.type === 'tree') { tree = evt.tree; renderTree(streamNodeId, fullText); }
           if (evt.type === 'error') fullText += `\n\n**Error:** ${evt.message}`;
         } catch {}
       }
@@ -850,7 +851,7 @@ async function submitEdit(nodeId, content) {
           if (evt.type === 'token') { fullText += evt.text; if (streamNodeId) renderTree(streamNodeId, fullText); }
           if (evt.type === 'tps' && streamNodeId) tpsDataMap[streamNodeId] = evt;
           if (evt.type === 'done' && evt.asst_node_id) streamNodeId = streamNodeId || evt.asst_node_id;
-          if (evt.type === 'tree') tree = evt.tree;
+          if (evt.type === 'tree') { tree = evt.tree; renderTree(streamNodeId, fullText); }
           if (evt.type === 'error') fullText += `\n\n**Error:** ${evt.message}`;
         } catch {}
       }
