@@ -66,11 +66,13 @@ async def _stream_events(request, gen):
             sent_initial_tree = True
             t = {"type": "tree", "tree": engine.get_tree()}
             await response.write(f"data: {json.dumps(t)}\n\n".encode("utf-8"))
+        await response.drain()
 
     # Send final tree snapshot so the client stays in sync
     tree_event = {"type": "tree", "tree": engine.get_tree()}
     await response.write(f"data: {json.dumps(tree_event)}\n\n".encode("utf-8"))
     await response.write(b"data: [DONE]\n\n")
+    await response.drain()
     await response.write_eof()
     return response
 
