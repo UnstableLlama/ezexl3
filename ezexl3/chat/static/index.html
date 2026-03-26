@@ -394,6 +394,89 @@ let settings = {};
 let modes = {};
 let autoScroll = true;
 let tpsDataMap = {};  // nodeId -> tps data
+let _renderRAF = null;
+let _pendingStreamNodeId = null;
+let _pendingStreamText = null;
+
+function scheduleRender(streamNodeId, streamText) {
+  _pendingStreamNodeId = streamNodeId;
+  _pendingStreamText = streamText;
+  if (!_renderRAF) {
+    _renderRAF = requestAnimationFrame(() => {
+      _renderRAF = null;
+      renderTree(_pendingStreamNodeId, _pendingStreamText);
+    });
+  }
+}
+
+function addOptimisticMessage(role, text) {
+  emptyState.style.display = 'none';
+  const msg = document.createElement('div');
+  msg.className = 'msg';
+  const header = document.createElement('div');
+  header.className = 'msg-header';
+  const roleEl = document.createElement('div');
+  roleEl.className = `msg-role ${role}`;
+  roleEl.textContent = role;
+  header.appendChild(roleEl);
+  msg.appendChild(header);
+  const body = document.createElement('div');
+  body.className = 'msg-body';
+  if (role === 'user') {
+    body.textContent = text || '';
+  } else {
+    body.innerHTML = '<span class="cursor"></span>';
+  }
+  msg.appendChild(body);
+  msgContainer.appendChild(msg);
+  return msg;
+}
+
+function addOptimisticMessage(role, text) {
+  emptyState.style.display = 'none';
+  const msg = document.createElement('div');
+  msg.className = 'msg';
+  const header = document.createElement('div');
+  header.className = 'msg-header';
+  const roleEl = document.createElement('div');
+  roleEl.className = `msg-role ${role}`;
+  roleEl.textContent = role;
+  header.appendChild(roleEl);
+  msg.appendChild(header);
+  const body = document.createElement('div');
+  body.className = 'msg-body';
+  if (role === 'user') {
+    body.textContent = text || '';
+  } else {
+    body.innerHTML = '<span class="cursor"></span>';
+  }
+  msg.appendChild(body);
+  msgContainer.appendChild(msg);
+  return msg;
+}
+
+function addOptimisticMessage(role, text) {
+  emptyState.style.display = 'none';
+  const msg = document.createElement('div');
+  msg.className = 'msg';
+  const header = document.createElement('div');
+  header.className = 'msg-header';
+  const roleEl = document.createElement('div');
+  roleEl.className = `msg-role ${role}`;
+  roleEl.textContent = role;
+  header.appendChild(roleEl);
+  msg.appendChild(header);
+  const body = document.createElement('div');
+  body.className = 'msg-body';
+  if (role === 'user') {
+    body.textContent = text || '';
+  } else {
+    body.innerHTML = '<span class="cursor"></span>';
+  }
+  msg.appendChild(body);
+  msgContainer.appendChild(msg);
+  return msg;
+}
 
 const msgContainer = document.getElementById('messages');
 const emptyState = document.getElementById('empty-state');
@@ -685,8 +768,14 @@ async function sendMessage() {
   inputBox.style.height = 'auto';
   setGenerating(true);
 
-  let streamNodeId = null;
+  // Optimistic UI: show user message + empty assistant immediately
+  addOptimisticMessage('user', text);
+  const assistantEl = addOptimisticMessage('assistant', '');
+  const bodyEl = assistantEl.querySelector('.msg-body');
+  scrollToBottom();
+
   let fullText = '';
+  let tpsData = null;
 
   try {
     const resp = await fetch('/api/chat', {
@@ -736,8 +825,29 @@ async function sendMessage() {
     }
   } catch (e) {
     fullText += `\n\n**Error:** ${e.message}`;
+    renderStreamingInto(bodyEl, fullText);
   }
 
+  // Final render
+  renderFinalInto(bodyEl, fullText);
+  if (tpsData) {
+    const badge = document.createElement('div');
+    badge.className = 'msg-tps';
+    const ctx = tpsData.prompt_tokens ? `${tpsData.prompt_tokens.toLocaleString()} ctx` : '';
+    const cached = tpsData.cached_tokens ? ` (${tpsData.cached_tokens.toLocaleString()} cached)` : '';
+    let parts = [];
+    if (ctx) parts.push(ctx + cached);
+    parts.push(`${tpsData.new_tokens} gen · ${tpsData.tps} t/s · ${tpsData.elapsed}s`);
+    if (tpsData.prefill_tps) parts.push(`prefill ${tpsData.prefill_tps} t/s`);
+    badge.textContent = parts.join(' · ');
+    assistantEl.appendChild(badge);
+  }
+
+  // Sync tree state for branch nav / action buttons
+  try {
+    const treeRes = await fetch('/api/tree');
+    tree = await treeRes.json();
+  } catch {}
   setGenerating(false);
   renderTree();
   inputBox.focus();
@@ -747,7 +857,21 @@ async function sendMessage() {
 async function regenerateMessage(nodeId) {
   if (generating) return;
   setGenerating(true);
-  let streamNodeId = null;
+
+  // Optimistic UI: clear the assistant body and show cursor
+  const msgEl = msgContainer.querySelector(`[data-node-id="${nodeId}"]`);
+  let bodyEl;
+  if (msgEl) {
+    bodyEl = msgEl.querySelector('.msg-body');
+    bodyEl.innerHTML = '<span class="cursor"></span>';
+    const tpsBadge = msgEl.querySelector('.msg-tps');
+    if (tpsBadge) tpsBadge.remove();
+  } else {
+    const asstEl = addOptimisticMessage('assistant', '');
+    bodyEl = asstEl.querySelector('.msg-body');
+  }
+  scrollToBottom();
+
   let fullText = '';
 
   try {
@@ -780,8 +904,10 @@ async function regenerateMessage(nodeId) {
         } catch {}
       }
     }
-  } catch (e) { fullText += `\n\n**Error:** ${e.message}`; }
+  } catch (e) { fullText += `\n\n**Error:** ${e.message}`; renderStreamingInto(bodyEl, fullText); }
 
+  renderFinalInto(bodyEl, fullText);
+  try { const treeRes = await fetch('/api/tree'); tree = await treeRes.json(); } catch {}
   setGenerating(false);
   renderTree();
 }
@@ -822,7 +948,19 @@ function startEdit(nodeId) {
 async function submitEdit(nodeId, content) {
   if (!content || generating) return;
   setGenerating(true);
-  let streamNodeId = null;
+
+  // Optimistic UI: update user message text, remove everything after it,
+  // and add a fresh assistant element with cursor
+  const msgEl = msgContainer.querySelector(`[data-node-id="${nodeId}"]`);
+  if (msgEl) {
+    const body = msgEl.querySelector('.msg-body');
+    body.textContent = content;
+    while (msgEl.nextElementSibling) msgEl.nextElementSibling.remove();
+  }
+  const asstEl = addOptimisticMessage('assistant', '');
+  const bodyEl = asstEl.querySelector('.msg-body');
+  scrollToBottom();
+
   let fullText = '';
 
   try {
@@ -855,8 +993,10 @@ async function submitEdit(nodeId, content) {
         } catch {}
       }
     }
-  } catch (e) { fullText += `\n\n**Error:** ${e.message}`; }
+  } catch (e) { fullText += `\n\n**Error:** ${e.message}`; renderStreamingInto(bodyEl, fullText); }
 
+  renderFinalInto(bodyEl, fullText);
+  try { const treeRes = await fetch('/api/tree'); tree = await treeRes.json(); } catch {}
   setGenerating(false);
   renderTree();
 }
@@ -920,6 +1060,10 @@ function setGenerating(v) {
   sendBtn.style.display = v ? 'none' : 'flex';
   stopBtn.style.display = v ? 'flex' : 'none';
   sendBtn.disabled = v;
+  if (!v && _renderRAF) {
+    cancelAnimationFrame(_renderRAF);
+    _renderRAF = null;
+  }
 }
 
 function scrollToBottom() {
