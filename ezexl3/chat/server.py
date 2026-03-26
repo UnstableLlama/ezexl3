@@ -60,6 +60,7 @@ async def _stream_sse(request, gen):
         await response.write(sse_data.encode("utf-8"))
 
     await response.write(b"data: [DONE]\n\n")
+    await response.drain()
     await response.write_eof()
     return response
 
