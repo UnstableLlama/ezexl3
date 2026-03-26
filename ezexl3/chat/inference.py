@@ -513,12 +513,8 @@ class ChatEngine:
         t_start = time.time()
         r = None
 
-        loop = asyncio.get_running_loop()
         while self.generator.num_remaining_jobs():
-            results = await loop.run_in_executor(
-                None, self.generator.iterate
-            )
-            for r in results:
+            for r in self.generator.iterate():
                 chunk = r.get("text", "")
                 if chunk:
                     response_text += chunk
