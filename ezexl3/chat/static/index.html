@@ -432,6 +432,29 @@ function addOptimisticMessage(role, text) {
   return msg;
 }
 
+function addOptimisticMessage(role, text) {
+  emptyState.style.display = 'none';
+  const msg = document.createElement('div');
+  msg.className = 'msg';
+  const header = document.createElement('div');
+  header.className = 'msg-header';
+  const roleEl = document.createElement('div');
+  roleEl.className = `msg-role ${role}`;
+  roleEl.textContent = role;
+  header.appendChild(roleEl);
+  msg.appendChild(header);
+  const body = document.createElement('div');
+  body.className = 'msg-body';
+  if (role === 'user') {
+    body.textContent = text || '';
+  } else {
+    body.innerHTML = '<span class="cursor"></span>';
+  }
+  msg.appendChild(body);
+  msgContainer.appendChild(msg);
+  return msg;
+}
+
 const msgContainer = document.getElementById('messages');
 const emptyState = document.getElementById('empty-state');
 const inputBox = document.getElementById('input-box');
@@ -724,12 +747,12 @@ async function sendMessage() {
 
   // Optimistic UI: show user message + empty assistant immediately
   addOptimisticMessage('user', text);
-  const asstEl = addOptimisticMessage('assistant', '');
-  const bodyEl = asstEl.querySelector('.msg-body');
+  const assistantEl = addOptimisticMessage('assistant', '');
+  const bodyEl = assistantEl.querySelector('.msg-body');
   scrollToBottom();
 
-  let streamNodeId = null;
   let fullText = '';
+  let tpsData = null;
 
   try {
     const resp = await fetch('/api/chat', {
@@ -753,28 +776,15 @@ async function sendMessage() {
         if (payload === '[DONE]') continue;
         try {
           const evt = JSON.parse(payload);
-          switch (evt.type) {
-            case 'start':
-              streamNodeId = evt.asst_node_id;
-              break;
-            case 'token':
-              fullText += evt.text;
-              renderStreamingInto(bodyEl, fullText);
-              if (autoScroll) scrollToBottom();
-              break;
-            case 'tps':
-              if (streamNodeId) tpsDataMap[streamNodeId] = evt;
-              break;
-            case 'done':
-              streamNodeId = streamNodeId || evt.asst_node_id;
-              break;
-            case 'tree':
-              tree = evt.tree;
-              break;
-            case 'error':
-              fullText += `\n\n**Error:** ${evt.message}`;
-              renderStreamingInto(bodyEl, fullText);
-              break;
+          if (evt.type === 'token') {
+            fullText += evt.text;
+            renderStreamingInto(bodyEl, fullText);
+            if (autoScroll) scrollToBottom();
+          } else if (evt.type === 'tps') {
+            tpsData = evt;
+          } else if (evt.type === 'error') {
+            fullText += `\n\n**Error:** ${evt.message}`;
+            renderStreamingInto(bodyEl, fullText);
           }
         } catch {}
       }
@@ -784,6 +794,26 @@ async function sendMessage() {
     renderStreamingInto(bodyEl, fullText);
   }
 
+  // Final render
+  renderFinalInto(bodyEl, fullText);
+  if (tpsData) {
+    const badge = document.createElement('div');
+    badge.className = 'msg-tps';
+    const ctx = tpsData.prompt_tokens ? `${tpsData.prompt_tokens.toLocaleString()} ctx` : '';
+    const cached = tpsData.cached_tokens ? ` (${tpsData.cached_tokens.toLocaleString()} cached)` : '';
+    let parts = [];
+    if (ctx) parts.push(ctx + cached);
+    parts.push(`${tpsData.new_tokens} gen · ${tpsData.tps} t/s · ${tpsData.elapsed}s`);
+    if (tpsData.prefill_tps) parts.push(`prefill ${tpsData.prefill_tps} t/s`);
+    badge.textContent = parts.join(' · ');
+    assistantEl.appendChild(badge);
+  }
+
+  // Sync tree state for branch nav / action buttons
+  try {
+    const treeRes = await fetch('/api/tree');
+    tree = await treeRes.json();
+  } catch {}
   setGenerating(false);
   renderTree();
   inputBox.focus();
@@ -808,7 +838,6 @@ async function regenerateMessage(nodeId) {
   }
   scrollToBottom();
 
-  let streamNodeId = null;
   let fullText = '';
 
   try {
@@ -832,17 +861,15 @@ async function regenerateMessage(nodeId) {
         if (payload === '[DONE]') continue;
         try {
           const evt = JSON.parse(payload);
-          if (evt.type === 'start') streamNodeId = evt.asst_node_id;
           if (evt.type === 'token') { fullText += evt.text; renderStreamingInto(bodyEl, fullText); if (autoScroll) scrollToBottom(); }
-          if (evt.type === 'tps' && streamNodeId) tpsDataMap[streamNodeId] = evt;
-          if (evt.type === 'done' && evt.asst_node_id) streamNodeId = streamNodeId || evt.asst_node_id;
-          if (evt.type === 'tree') tree = evt.tree;
           if (evt.type === 'error') { fullText += `\n\n**Error:** ${evt.message}`; renderStreamingInto(bodyEl, fullText); }
         } catch {}
       }
     }
   } catch (e) { fullText += `\n\n**Error:** ${e.message}`; renderStreamingInto(bodyEl, fullText); }
 
+  renderFinalInto(bodyEl, fullText);
+  try { const treeRes = await fetch('/api/tree'); tree = await treeRes.json(); } catch {}
   setGenerating(false);
   renderTree();
 }
@@ -890,14 +917,12 @@ async function submitEdit(nodeId, content) {
   if (msgEl) {
     const body = msgEl.querySelector('.msg-body');
     body.textContent = content;
-    // Remove all siblings after this message
     while (msgEl.nextElementSibling) msgEl.nextElementSibling.remove();
   }
   const asstEl = addOptimisticMessage('assistant', '');
   const bodyEl = asstEl.querySelector('.msg-body');
   scrollToBottom();
 
-  let streamNodeId = null;
   let fullText = '';
 
   try {
@@ -921,17 +946,15 @@ async function submitEdit(nodeId, content) {
         if (payload === '[DONE]') continue;
         try {
           const evt = JSON.parse(payload);
-          if (evt.type === 'start') streamNodeId = evt.asst_node_id;
           if (evt.type === 'token') { fullText += evt.text; renderStreamingInto(bodyEl, fullText); if (autoScroll) scrollToBottom(); }
-          if (evt.type === 'tps' && streamNodeId) tpsDataMap[streamNodeId] = evt;
-          if (evt.type === 'done' && evt.asst_node_id) streamNodeId = streamNodeId || evt.asst_node_id;
-          if (evt.type === 'tree') tree = evt.tree;
           if (evt.type === 'error') { fullText += `\n\n**Error:** ${evt.message}`; renderStreamingInto(bodyEl, fullText); }
         } catch {}
       }
     }
   } catch (e) { fullText += `\n\n**Error:** ${e.message}`; renderStreamingInto(bodyEl, fullText); }
 
+  renderFinalInto(bodyEl, fullText);
+  try { const treeRes = await fetch('/api/tree'); tree = await treeRes.json(); } catch {}
   setGenerating(false);
   renderTree();
 }
