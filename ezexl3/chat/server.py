@@ -41,8 +41,9 @@ def create_app(engine: ChatEngine) -> web.Application:
 # Helpers
 # ---------------------------------------------------------------------------
 
-async def _stream_sse(request, gen):
-    """Stream async generator events as SSE – simple write loop."""
+async def _stream_events(request, gen):
+    """Consume an async generator and stream as SSE, then send tree snapshot."""
+    engine: ChatEngine = request.app["engine"]
     response = web.StreamResponse(
         status=200,
         reason="OK",
@@ -55,10 +56,20 @@ async def _stream_sse(request, gen):
     )
     await response.prepare(request)
 
+    sent_initial_tree = False
     async for event in gen:
         sse_data = f"data: {json.dumps(event)}\n\n"
         await response.write(sse_data.encode("utf-8"))
+        # Send tree snapshot right after the start event so the client can
+        # render the new nodes while tokens stream in
+        if event.get("type") == "start" and not sent_initial_tree:
+            sent_initial_tree = True
+            t = {"type": "tree", "tree": engine.get_tree()}
+            await response.write(f"data: {json.dumps(t)}\n\n".encode("utf-8"))
 
+    # Send final tree snapshot so the client stays in sync
+    tree_event = {"type": "tree", "tree": engine.get_tree()}
+    await response.write(f"data: {json.dumps(tree_event)}\n\n".encode("utf-8"))
     await response.write(b"data: [DONE]\n\n")
     await response.write_eof()
     return response
@@ -102,7 +113,7 @@ async def handle_chat(request: web.Request) -> web.Response:
         return web.json_response({"error": "Empty message"}, status=400)
 
     parent_id = data.get("parent_id")  # optional: which assistant node to follow
-    return await _stream_sse(request, engine.generate(message, parent_id))
+    return await _stream_events(request, engine.generate(message, parent_id))
 
 
 async def handle_regenerate(request: web.Request) -> web.Response:
@@ -113,7 +124,7 @@ async def handle_regenerate(request: web.Request) -> web.Response:
     if not node_id:
         return web.json_response({"error": "Missing node_id"}, status=400)
 
-    return await _stream_sse(request, engine.regenerate(node_id))
+    return await _stream_events(request, engine.regenerate(node_id))
 
 
 async def handle_edit(request: web.Request) -> web.Response:
@@ -127,7 +138,7 @@ async def handle_edit(request: web.Request) -> web.Response:
             {"error": "Missing node_id or content"}, status=400
         )
 
-    return await _stream_sse(
+    return await _stream_events(
         request, engine.edit_and_generate(node_id, content)
     )
 
