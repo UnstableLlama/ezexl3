@@ -394,6 +394,20 @@ let settings = {};
 let modes = {};
 let autoScroll = true;
 let tpsDataMap = {};  // nodeId -> tps data
+let _renderRAF = null;
+let _pendingStreamNodeId = null;
+let _pendingStreamText = null;
+
+function scheduleRender(streamNodeId, streamText) {
+  _pendingStreamNodeId = streamNodeId;
+  _pendingStreamText = streamText;
+  if (!_renderRAF) {
+    _renderRAF = requestAnimationFrame(() => {
+      _renderRAF = null;
+      renderTree(_pendingStreamNodeId, _pendingStreamText);
+    });
+  }
+}
 
 function addOptimisticMessage(role, text) {
   emptyState.style.display = 'none';
@@ -981,6 +995,10 @@ function setGenerating(v) {
   sendBtn.style.display = v ? 'none' : 'flex';
   stopBtn.style.display = v ? 'flex' : 'none';
   sendBtn.disabled = v;
+  if (!v && _renderRAF) {
+    cancelAnimationFrame(_renderRAF);
+    _renderRAF = null;
+  }
 }
 
 function scrollToBottom() {
