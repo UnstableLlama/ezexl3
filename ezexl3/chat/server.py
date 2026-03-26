@@ -43,6 +43,7 @@ def create_app(engine: ChatEngine) -> web.Application:
 
 async def _stream_sse(request, gen):
     """Stream async generator events as SSE – simple write loop."""
+    engine: ChatEngine = request.app["engine"]
     response = web.StreamResponse(
         status=200,
         reason="OK",
@@ -58,6 +59,11 @@ async def _stream_sse(request, gen):
     async for event in gen:
         sse_data = f"data: {json.dumps(event)}\n\n"
         await response.write(sse_data.encode("utf-8"))
+        # Send tree snapshot right after start so the frontend can
+        # render new nodes while tokens stream in.
+        if event.get("type") == "start":
+            tree_evt = {"type": "tree", "tree": engine.get_tree()}
+            await response.write(f"data: {json.dumps(tree_evt)}\n\n".encode("utf-8"))
 
     await response.write(b"data: [DONE]\n\n")
     await response.drain()
