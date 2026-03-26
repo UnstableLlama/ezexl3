@@ -799,15 +799,26 @@ async function sendMessage() {
         if (payload === '[DONE]') continue;
         try {
           const evt = JSON.parse(payload);
-          if (evt.type === 'token') {
-            fullText += evt.text;
-            renderStreamingInto(bodyEl, fullText);
-            if (autoScroll) scrollToBottom();
-          } else if (evt.type === 'tps') {
-            tpsData = evt;
-          } else if (evt.type === 'error') {
-            fullText += `\n\n**Error:** ${evt.message}`;
-            renderStreamingInto(bodyEl, fullText);
+          switch (evt.type) {
+            case 'start':
+              streamNodeId = evt.asst_node_id;
+              break;
+            case 'token':
+              fullText += evt.text;
+              if (streamNodeId) renderTree(streamNodeId, fullText);
+              break;
+            case 'tps':
+              if (streamNodeId) tpsDataMap[streamNodeId] = evt;
+              break;
+            case 'done':
+              streamNodeId = streamNodeId || evt.asst_node_id;
+              break;
+            case 'tree':
+              tree = evt.tree;
+              break;
+            case 'error':
+              fullText += `\n\n**Error:** ${evt.message}`;
+              break;
           }
         } catch {}
       }
@@ -884,8 +895,12 @@ async function regenerateMessage(nodeId) {
         if (payload === '[DONE]') continue;
         try {
           const evt = JSON.parse(payload);
-          if (evt.type === 'token') { fullText += evt.text; renderStreamingInto(bodyEl, fullText); if (autoScroll) scrollToBottom(); }
-          if (evt.type === 'error') { fullText += `\n\n**Error:** ${evt.message}`; renderStreamingInto(bodyEl, fullText); }
+          if (evt.type === 'start') streamNodeId = evt.asst_node_id;
+          if (evt.type === 'token') { fullText += evt.text; if (streamNodeId) renderTree(streamNodeId, fullText); }
+          if (evt.type === 'tps' && streamNodeId) tpsDataMap[streamNodeId] = evt;
+          if (evt.type === 'done' && evt.asst_node_id) streamNodeId = streamNodeId || evt.asst_node_id;
+          if (evt.type === 'tree') tree = evt.tree;
+          if (evt.type === 'error') fullText += `\n\n**Error:** ${evt.message}`;
         } catch {}
       }
     }
@@ -969,8 +984,12 @@ async function submitEdit(nodeId, content) {
         if (payload === '[DONE]') continue;
         try {
           const evt = JSON.parse(payload);
-          if (evt.type === 'token') { fullText += evt.text; renderStreamingInto(bodyEl, fullText); if (autoScroll) scrollToBottom(); }
-          if (evt.type === 'error') { fullText += `\n\n**Error:** ${evt.message}`; renderStreamingInto(bodyEl, fullText); }
+          if (evt.type === 'start') streamNodeId = evt.asst_node_id;
+          if (evt.type === 'token') { fullText += evt.text; if (streamNodeId) renderTree(streamNodeId, fullText); }
+          if (evt.type === 'tps' && streamNodeId) tpsDataMap[streamNodeId] = evt;
+          if (evt.type === 'done' && evt.asst_node_id) streamNodeId = streamNodeId || evt.asst_node_id;
+          if (evt.type === 'tree') tree = evt.tree;
+          if (evt.type === 'error') fullText += `\n\n**Error:** ${evt.message}`;
         } catch {}
       }
     }
