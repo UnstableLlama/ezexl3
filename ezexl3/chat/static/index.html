@@ -455,6 +455,29 @@ function addOptimisticMessage(role, text) {
   return msg;
 }
 
+function addOptimisticMessage(role, text) {
+  emptyState.style.display = 'none';
+  const msg = document.createElement('div');
+  msg.className = 'msg';
+  const header = document.createElement('div');
+  header.className = 'msg-header';
+  const roleEl = document.createElement('div');
+  roleEl.className = `msg-role ${role}`;
+  roleEl.textContent = role;
+  header.appendChild(roleEl);
+  msg.appendChild(header);
+  const body = document.createElement('div');
+  body.className = 'msg-body';
+  if (role === 'user') {
+    body.textContent = text || '';
+  } else {
+    body.innerHTML = '<span class="cursor"></span>';
+  }
+  msg.appendChild(body);
+  msgContainer.appendChild(msg);
+  return msg;
+}
+
 const msgContainer = document.getElementById('messages');
 const emptyState = document.getElementById('empty-state');
 const inputBox = document.getElementById('input-box');

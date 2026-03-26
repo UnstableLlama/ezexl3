@@ -477,89 +477,6 @@ class ChatEngine:
 
         return ids
 
-    # -- Generation helpers --------------------------------------------------
-
-    async def _stream_response(
-        self, context: list[tuple[str, Optional[str]]], asst_node_id: str
-    ) -> AsyncGenerator[dict, None]:
-        """Core streaming loop. Populates the assistant node with generated text."""
-        from exllamav3 import Job
-
-        prompt_format = self._get_prompt_format()
-        stop_conditions = self._get_stop_conditions(prompt_format)
-        sampler = self._get_sampler()
-        ids = self._build_input_ids(prompt_format, context=context)
-
-        # Banned strings
-        banned = list(self.settings.banned_strings)
-        if self.settings.no_think:
-            tt = prompt_format.thinktag()
-            if tt[0]:
-                banned.append(tt[0])
-            if tt[1]:
-                banned.append(tt[1])
-
-        job = Job(
-            input_ids=ids,
-            max_new_tokens=self.settings.max_response_tokens,
-            stop_conditions=stop_conditions,
-            sampler=sampler,
-            banned_strings=banned if banned else None,
-        )
-        self._current_job = job
-        self.generator.enqueue(job)
-
-        response_text = ""
-        t_start = time.time()
-        r = None
-
-        loop = asyncio.get_running_loop()
-        while self.generator.num_remaining_jobs():
-            results = await loop.run_in_executor(
-                None, self.generator.iterate
-            )
-            for r in results:
-                chunk = r.get("text", "")
-                if chunk:
-                    response_text += chunk
-                    yield {"type": "token", "text": chunk}
-
-                if r.get("eos"):
-                    break
-
-            await asyncio.sleep(0)
-
-            if r and r.get("eos"):
-                break
-
-        # Stats
-        elapsed = time.time() - t_start
-        eos_reason = r.get("eos_reason", "unknown") if r else "unknown"
-        new_tokens = r.get("new_tokens", 0) if r else 0
-        prompt_tokens = r.get("prompt_tokens", 0) if r else 0
-        cached_tokens = r.get("cached_tokens", 0) if r else 0
-        tps = new_tokens / elapsed if elapsed > 0 else 0
-        prefill_tps = (
-            prompt_tokens / r["time_prefill"]
-            if r and r.get("time_prefill", 0) > 0
-            else 0
-        )
-
-        yield {
-            "type": "tps",
-            "new_tokens": new_tokens,
-            "prompt_tokens": prompt_tokens,
-            "cached_tokens": cached_tokens,
-            "tps": round(tps, 2),
-            "prefill_tps": round(prefill_tps, 2),
-            "elapsed": round(elapsed, 2),
-        }
-
-        yield {"type": "done", "eos_reason": eos_reason}
-
-        # Save response to tree node
-        self.tree.nodes[asst_node_id].content = response_text.strip()
-
     # -- Public generation methods -------------------------------------------
 
     async def generate(
@@ -578,6 +495,8 @@ class ChatEngine:
             {"type": "done", "eos_reason": "...", "user_node_id": ..., "asst_node_id": ...}
             {"type": "error", "message": "..."}
         """
+        from exllamav3 import Job
+
         if not self.is_loaded:
             yield {"type": "error", "message": "Model not loaded"}
             return
@@ -612,11 +531,77 @@ class ChatEngine:
                 "asst_node_id": asst_id,
             }
 
-            async for event in self._stream_response(context, asst_id):
-                if event["type"] == "done":
-                    event["user_node_id"] = user_id
-                    event["asst_node_id"] = asst_id
-                yield event
+            # --- Generation loop (flat, no sub-generator) ---
+            prompt_format = self._get_prompt_format()
+            stop_conditions = self._get_stop_conditions(prompt_format)
+            sampler = self._get_sampler()
+            ids = self._build_input_ids(prompt_format, context=context)
+
+            banned = list(self.settings.banned_strings)
+            if self.settings.no_think:
+                tt = prompt_format.thinktag()
+                if tt[0]:
+                    banned.append(tt[0])
+                if tt[1]:
+                    banned.append(tt[1])
+
+            job = Job(
+                input_ids=ids,
+                max_new_tokens=self.settings.max_response_tokens,
+                stop_conditions=stop_conditions,
+                sampler=sampler,
+                banned_strings=banned if banned else None,
+            )
+            self._current_job = job
+            self.generator.enqueue(job)
+
+            response_text = ""
+            t_start = time.time()
+            r = None
+
+            while self.generator.num_remaining_jobs():
+                for r in self.generator.iterate():
+                    chunk = r.get("text", "")
+                    if chunk:
+                        response_text += chunk
+                        yield {"type": "token", "text": chunk}
+                    if r.get("eos"):
+                        break
+                await asyncio.sleep(0)
+                if r and r.get("eos"):
+                    break
+
+            # Stats
+            elapsed = time.time() - t_start
+            eos_reason = r.get("eos_reason", "unknown") if r else "unknown"
+            new_tokens = r.get("new_tokens", 0) if r else 0
+            prompt_tokens = r.get("prompt_tokens", 0) if r else 0
+            cached_tokens = r.get("cached_tokens", 0) if r else 0
+            tps = new_tokens / elapsed if elapsed > 0 else 0
+            prefill_tps = (
+                prompt_tokens / r["time_prefill"]
+                if r and r.get("time_prefill", 0) > 0
+                else 0
+            )
+
+            yield {
+                "type": "tps",
+                "new_tokens": new_tokens,
+                "prompt_tokens": prompt_tokens,
+                "cached_tokens": cached_tokens,
+                "tps": round(tps, 2),
+                "prefill_tps": round(prefill_tps, 2),
+                "elapsed": round(elapsed, 2),
+            }
+
+            yield {
+                "type": "done",
+                "eos_reason": eos_reason,
+                "user_node_id": user_id,
+                "asst_node_id": asst_id,
+            }
+
+            self.tree.nodes[asst_id].content = response_text.strip()
 
         except Exception as e:
             yield {"type": "error", "message": str(e)}
@@ -630,6 +615,8 @@ class ChatEngine:
         fresh response.  The prefix (all turns before the branch point)
         stays identical, so the KV cache gives full prefix hits.
         """
+        from exllamav3 import Job
+
         if not self.is_loaded:
             yield {"type": "error", "message": "Model not loaded"}
             return
@@ -659,10 +646,76 @@ class ChatEngine:
             # Build context path
             context = self.tree.get_path_to_node(new_asst_id)
 
-            async for event in self._stream_response(context, new_asst_id):
-                if event["type"] == "done":
-                    event["asst_node_id"] = new_asst_id
-                yield event
+            # --- Generation loop (flat, no sub-generator) ---
+            prompt_format = self._get_prompt_format()
+            stop_conditions = self._get_stop_conditions(prompt_format)
+            sampler = self._get_sampler()
+            ids = self._build_input_ids(prompt_format, context=context)
+
+            banned = list(self.settings.banned_strings)
+            if self.settings.no_think:
+                tt = prompt_format.thinktag()
+                if tt[0]:
+                    banned.append(tt[0])
+                if tt[1]:
+                    banned.append(tt[1])
+
+            job = Job(
+                input_ids=ids,
+                max_new_tokens=self.settings.max_response_tokens,
+                stop_conditions=stop_conditions,
+                sampler=sampler,
+                banned_strings=banned if banned else None,
+            )
+            self._current_job = job
+            self.generator.enqueue(job)
+
+            response_text = ""
+            t_start = time.time()
+            r = None
+
+            while self.generator.num_remaining_jobs():
+                for r in self.generator.iterate():
+                    chunk = r.get("text", "")
+                    if chunk:
+                        response_text += chunk
+                        yield {"type": "token", "text": chunk}
+                    if r.get("eos"):
+                        break
+                await asyncio.sleep(0)
+                if r and r.get("eos"):
+                    break
+
+            # Stats
+            elapsed = time.time() - t_start
+            eos_reason = r.get("eos_reason", "unknown") if r else "unknown"
+            new_tokens = r.get("new_tokens", 0) if r else 0
+            prompt_tokens = r.get("prompt_tokens", 0) if r else 0
+            cached_tokens = r.get("cached_tokens", 0) if r else 0
+            tps = new_tokens / elapsed if elapsed > 0 else 0
+            prefill_tps = (
+                prompt_tokens / r["time_prefill"]
+                if r and r.get("time_prefill", 0) > 0
+                else 0
+            )
+
+            yield {
+                "type": "tps",
+                "new_tokens": new_tokens,
+                "prompt_tokens": prompt_tokens,
+                "cached_tokens": cached_tokens,
+                "tps": round(tps, 2),
+                "prefill_tps": round(prefill_tps, 2),
+                "elapsed": round(elapsed, 2),
+            }
+
+            yield {
+                "type": "done",
+                "eos_reason": eos_reason,
+                "asst_node_id": new_asst_id,
+            }
+
+            self.tree.nodes[new_asst_id].content = response_text.strip()
 
         except Exception as e:
             yield {"type": "error", "message": str(e)}
@@ -677,6 +730,8 @@ class ChatEngine:
         Edit a user message: create a sibling user node with *new_content*,
         then generate an assistant response for it.
         """
+        from exllamav3 import Job
+
         if not self.is_loaded:
             yield {"type": "error", "message": "Model not loaded"}
             return
@@ -708,11 +763,77 @@ class ChatEngine:
 
             context = self.tree.get_path_to_node(new_asst_id)
 
-            async for event in self._stream_response(context, new_asst_id):
-                if event["type"] == "done":
-                    event["user_node_id"] = new_user_id
-                    event["asst_node_id"] = new_asst_id
-                yield event
+            # --- Generation loop (flat, no sub-generator) ---
+            prompt_format = self._get_prompt_format()
+            stop_conditions = self._get_stop_conditions(prompt_format)
+            sampler = self._get_sampler()
+            ids = self._build_input_ids(prompt_format, context=context)
+
+            banned = list(self.settings.banned_strings)
+            if self.settings.no_think:
+                tt = prompt_format.thinktag()
+                if tt[0]:
+                    banned.append(tt[0])
+                if tt[1]:
+                    banned.append(tt[1])
+
+            job = Job(
+                input_ids=ids,
+                max_new_tokens=self.settings.max_response_tokens,
+                stop_conditions=stop_conditions,
+                sampler=sampler,
+                banned_strings=banned if banned else None,
+            )
+            self._current_job = job
+            self.generator.enqueue(job)
+
+            response_text = ""
+            t_start = time.time()
+            r = None
+
+            while self.generator.num_remaining_jobs():
+                for r in self.generator.iterate():
+                    chunk = r.get("text", "")
+                    if chunk:
+                        response_text += chunk
+                        yield {"type": "token", "text": chunk}
+                    if r.get("eos"):
+                        break
+                await asyncio.sleep(0)
+                if r and r.get("eos"):
+                    break
+
+            # Stats
+            elapsed = time.time() - t_start
+            eos_reason = r.get("eos_reason", "unknown") if r else "unknown"
+            new_tokens = r.get("new_tokens", 0) if r else 0
+            prompt_tokens = r.get("prompt_tokens", 0) if r else 0
+            cached_tokens = r.get("cached_tokens", 0) if r else 0
+            tps = new_tokens / elapsed if elapsed > 0 else 0
+            prefill_tps = (
+                prompt_tokens / r["time_prefill"]
+                if r and r.get("time_prefill", 0) > 0
+                else 0
+            )
+
+            yield {
+                "type": "tps",
+                "new_tokens": new_tokens,
+                "prompt_tokens": prompt_tokens,
+                "cached_tokens": cached_tokens,
+                "tps": round(tps, 2),
+                "prefill_tps": round(prefill_tps, 2),
+                "elapsed": round(elapsed, 2),
+            }
+
+            yield {
+                "type": "done",
+                "eos_reason": eos_reason,
+                "user_node_id": new_user_id,
+                "asst_node_id": new_asst_id,
+            }
+
+            self.tree.nodes[new_asst_id].content = response_text.strip()
 
         except Exception as e:
             yield {"type": "error", "message": str(e)}
