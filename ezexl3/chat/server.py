@@ -28,6 +28,7 @@ def create_app(engine: ChatEngine) -> web.Application:
     app.router.add_post("/api/clear", handle_clear)
     app.router.add_get("/api/session/save", handle_session_save)
     app.router.add_post("/api/session/load", handle_session_load)
+    app.router.add_static("/", STATIC_DIR, show_index=False)
 
     return app
 
