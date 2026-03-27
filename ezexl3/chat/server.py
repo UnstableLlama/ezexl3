@@ -16,6 +16,9 @@ from .inference import ChatEngine, ChatSettings
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+# Files that signal a valid model directory
+_MODEL_MARKERS = {"config.json"}
+
 
 def create_app(engine: ChatEngine) -> web.Application:
     app = web.Application()
@@ -30,6 +33,10 @@ def create_app(engine: ChatEngine) -> web.Application:
     app.router.add_post("/api/clear", handle_clear)
     app.router.add_get("/api/session/save", handle_session_save)
     app.router.add_post("/api/session/load", handle_session_load)
+    app.router.add_get("/api/gpus", handle_gpus)
+    app.router.add_get("/api/browse", handle_browse)
+    app.router.add_post("/api/model/load", handle_model_load)
+    app.router.add_post("/api/model/unload", handle_model_unload)
     app.router.add_static("/", STATIC_DIR, show_index=False)
 
     return app
@@ -130,11 +137,106 @@ async def handle_session_load(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Model management routes
+# ---------------------------------------------------------------------------
+
+async def handle_gpus(request: web.Request) -> web.Response:
+    gpus = ChatEngine.detect_gpus()
+    return web.json_response({"gpus": gpus})
+
+
+async def handle_browse(request: web.Request) -> web.Response:
+    """Server-side file browser for model directory selection."""
+    raw = request.query.get("path", "")
+    browse_path = Path(raw) if raw else Path.home()
+
+    try:
+        browse_path = browse_path.resolve()
+    except (OSError, ValueError):
+        return web.json_response(
+            {"error": "Invalid path"}, status=400,
+        )
+
+    if not browse_path.is_dir():
+        return web.json_response(
+            {"error": "Not a directory"}, status=400,
+        )
+
+    entries = []
+    try:
+        for entry in sorted(browse_path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())):
+            if entry.name.startswith("."):
+                continue
+            if entry.is_dir():
+                entries.append({"name": entry.name, "type": "dir"})
+            elif entry.suffix in (".json", ".safetensors", ".jinja"):
+                entries.append({"name": entry.name, "type": "file"})
+    except PermissionError:
+        return web.json_response(
+            {"error": "Permission denied"}, status=403,
+        )
+
+    is_model = (browse_path / "config.json").is_file()
+    parent = str(browse_path.parent) if browse_path.parent != browse_path else None
+
+    return web.json_response({
+        "current": str(browse_path),
+        "parent": parent,
+        "entries": entries,
+        "is_model": is_model,
+    })
+
+
+async def handle_model_load(request: web.Request) -> web.Response:
+    engine: ChatEngine = request.app["engine"]
+    data = await request.json()
+    model_dir = data.get("model_dir", "").strip()
+    if not model_dir:
+        return web.json_response(
+            {"ok": False, "error": "model_dir is required"}, status=400,
+        )
+    if not Path(model_dir).is_dir():
+        return web.json_response(
+            {"ok": False, "error": f"Directory not found: {model_dir}"}, status=400,
+        )
+    if not (Path(model_dir) / "config.json").is_file():
+        return web.json_response(
+            {"ok": False, "error": "No config.json found — not a valid model directory"},
+            status=400,
+        )
+
+    try:
+        await asyncio.to_thread(
+            engine.load_model,
+            model_dir=model_dir,
+            devices=data.get("devices"),
+            device_ratios=data.get("device_ratios"),
+            cache_size=data.get("cache_size"),
+            cache_quant=data.get("cache_quant"),
+        )
+        return web.json_response({
+            "ok": True,
+            "status": engine.get_status(),
+            "settings": engine.settings.to_dict(),
+        })
+    except Exception as e:
+        return web.json_response(
+            {"ok": False, "error": str(e)}, status=500,
+        )
+
+
+async def handle_model_unload(request: web.Request) -> web.Response:
+    engine: ChatEngine = request.app["engine"]
+    engine.unload()
+    return web.json_response({"ok": True})
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 def run_server(
-    model_dir: str,
+    model_dir: str | None = None,
     devices: list[int] | None = None,
     device_ratios: str | None = None,
     cache_size: int | None = None,
@@ -143,7 +245,7 @@ def run_server(
     port: int = 8800,
     open_browser: bool = True,
 ):
-    """Load model then start the web server."""
+    """Optionally load a model, then start the web server."""
     engine = ChatEngine(
         model_dir=model_dir,
         devices=devices,
@@ -166,9 +268,12 @@ def run_server(
     except ValueError:
         pass  # hostname like "localhost" — resolved by aiohttp
 
-    print(f"Loading model from: {model_dir}")
-    engine.load()
-    print()
+    if model_dir:
+        print(f"Loading model from: {model_dir}")
+        engine.load()
+        print()
+    else:
+        print("  No model specified — select one in the UI.")
 
     app = create_app(engine)
     url = f"http://{host}:{port}"

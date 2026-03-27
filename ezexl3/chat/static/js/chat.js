@@ -57,7 +57,7 @@ async function streamResponse(message, context, bodyEl, {initialText = '', prefi
 // ── Send message ────────────────────────────────────────────────
 async function sendMessage() {
   const text = inputBox.value.trim();
-  if (!text || generating) return;
+  if (!text || generating || !modelLoaded) return;
 
   inputBox.value = '';
   inputBox.style.height = 'auto';

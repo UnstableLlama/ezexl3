@@ -9,7 +9,15 @@
   const status = await statusRes.json();
   settings = await settingsRes.json();
   modes = status.available_modes || {};
-  populateUI(status);
+  modelLoaded = status.loaded;
+
+  // Always init model panel (handles both loaded and unloaded states)
+  await initModelPanel(status);
+
+  if (modelLoaded) {
+    populateUI(status);
+  }
+  updateChatEnabled();
 })();
 
 // ── Sidebar toggle ──────────────────────────────────────────────

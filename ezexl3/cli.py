@@ -197,8 +197,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
     # --- chat ---
-    ch = sub.add_parser("chat", help="Launch web chat UI for a loaded model")
-    ch.add_argument("-m", "--model", required=True, help="Model directory")
+    ch = sub.add_parser("chat", help="Launch web chat UI (model optional — select in browser)")
+    ch.add_argument("-m", "--model", required=False, default=None, help="Model directory (optional: select in UI)")
     ch.add_argument("-d", "--devices", default="0", help="CUDA devices. Example: -d 0,1")
     ch.add_argument("-r", "--device-ratios", default=None, help="Device ratios. Example: -r 1,1")
     ch.add_argument("--host", default="127.0.0.1",
@@ -251,11 +251,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if cmd == "chat":
         from ezexl3.chat.server import run_server
-        # args.devices is already a list of strings from the normalization above
-        chat_devices = [int(d) for d in args.devices]
-        dr = args.device_ratios
-        if dr:
-            dr = ",".join(dr) if isinstance(dr, list) else dr
+        # When -m is omitted, launch UI-only (no model pre-loaded)
+        chat_devices = None
+        dr = None
+        if args.model:
+            chat_devices = [int(d) for d in args.devices]
+            dr = args.device_ratios
+            if dr:
+                dr = ",".join(dr) if isinstance(dr, list) else dr
         run_server(
             model_dir=args.model,
             devices=chat_devices,
