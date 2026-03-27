@@ -205,7 +205,8 @@ body { display: flex; overflow: hidden; }
 /* TPS badge */
 .msg-tps {
   font-size: 11px; color: var(--text-dim);
-  margin-top: 8px; font-family: var(--mono);
+  font-family: var(--mono);
+  margin-left: auto;
 }
 
 /* Streaming cursor */
@@ -235,21 +236,20 @@ body { display: flex; overflow: hidden; }
 .branch-nav button:disabled { opacity: 0.3; cursor: default; }
 .branch-nav span { min-width: 28px; text-align: center; }
 
-/* ── Message actions ───────────────────────────────────────────── */
-.msg-actions {
-  display: flex; gap: 4px; margin-top: 6px;
-  grid-column: 2;
+/* ── Message actions (inline in header) ────────────────────────── */
+.msg-actions-inline {
+  display: inline-flex; gap: 4px;
   opacity: 0; transition: opacity .15s;
 }
-.msg:hover .msg-actions { opacity: 1; }
-.msg-actions button {
+.msg:hover .msg-actions-inline { opacity: 1; }
+.msg-actions-inline button {
   background: none; border: 1px solid transparent;
   color: var(--text-dim); cursor: pointer; padding: 2px 7px;
   border-radius: 3px; font-size: 11px;
   transition: color .1s, border-color .1s;
 }
-.msg-actions button:hover { color: var(--text-primary); border-color: var(--border-light); }
-.msg-actions .danger:hover { color: var(--red); border-color: var(--red); }
+.msg-actions-inline button:hover { color: var(--text-primary); border-color: var(--border-light); }
+.msg-actions-inline .danger:hover { color: var(--red); border-color: var(--red); }
 
 /* ── Edit overlay ──────────────────────────────────────────────── */
 .edit-area {
@@ -528,6 +528,7 @@ function createNode(role, content, parentId) {
     parentId: parentId || null,
     children: [],
     activeChild: -1,
+    tpsData: null,
   };
   tree.nodes.set(node.id, node);
   return node;
@@ -981,15 +982,11 @@ async function sendMessage() {
     // Final render
     renderFinal(bodyEl, fullText);
 
-    // Add assistant to tree
+    // Add assistant to tree with TPS data
     const assistNode = addAssistantNode(userNode.id, fullText.trim());
+    if (tpsData) assistNode.tpsData = tpsData;
 
-    // Show TPS badge
-    if (tpsData) {
-      appendTpsBadge(assistantEl, tpsData);
-    }
-
-    // Re-render full tree to get proper action buttons
+    // Re-render full tree to get proper action buttons + TPS badge
     renderActiveTree();
 
   } catch (e) {
@@ -1017,8 +1014,13 @@ async function regenerateResponse(assistantNodeId) {
   // Context is everything BEFORE this user turn
   const context = getActivePathUpTo(userNode.id);
 
-  // Render tree up to the user message
+  // Remove the old assistant message (and any descendants) from the DOM
+  // by re-rendering up to just the user message, then appending a fresh placeholder
+  // Temporarily point activeChild away so renderActiveTree stops at the user node
+  const savedActiveChild = userNode.activeChild;
+  userNode.activeChild = -1;
   renderActiveTree();
+  userNode.activeChild = savedActiveChild;
 
   // Create assistant placeholder
   const assistantEl = createMsgEl('assistant', '');
@@ -1036,10 +1038,7 @@ async function regenerateResponse(assistantNodeId) {
 
     // Add as new sibling assistant node
     const newAssist = addAssistantNode(userNode.id, fullText.trim());
-
-    if (tpsData) {
-      appendTpsBadge(assistantEl, tpsData);
-    }
+    if (tpsData) newAssist.tpsData = tpsData;
 
     renderActiveTree();
   } catch (e) {
@@ -1118,8 +1117,8 @@ async function submitEdit(userNodeId, newText) {
   try {
     const {fullText, tpsData} = await streamResponse(newText, context, bodyEl);
     renderFinal(bodyEl, fullText);
-    addAssistantNode(newUserNode.id, fullText.trim());
-    if (tpsData) appendTpsBadge(assistantEl, tpsData);
+    const newAssist = addAssistantNode(newUserNode.id, fullText.trim());
+    if (tpsData) newAssist.tpsData = tpsData;
     renderActiveTree();
   } catch (e) {
     renderFinal(bodyEl, `\n\n**Error:** ${e.message}`);
@@ -1311,19 +1310,50 @@ function renderActiveTree() {
     roleEl.textContent = node.role;
     msgEl.appendChild(roleEl);
 
-    // Branch navigation (if siblings exist)
+    // Header row: branch nav + action buttons + TPS (all in one line next to role)
     const sibInfo = getSiblingInfo(nodeId);
+    const headerEl = document.createElement('div');
+    headerEl.className = 'msg-header';
+
+    // Branch navigation
     if (sibInfo) {
-      const navEl = document.createElement('div');
-      navEl.className = 'msg-header';
-      navEl.innerHTML =
+      headerEl.innerHTML +=
         `<div class="branch-nav">` +
         `<button onclick="switchBranch('${nodeId}', -1)" ${sibInfo.current <= 1 ? 'disabled' : ''}>&lt;</button>` +
         `<span>${sibInfo.current} / ${sibInfo.total}</span>` +
         `<button onclick="switchBranch('${nodeId}', 1)" ${sibInfo.current >= sibInfo.total ? 'disabled' : ''}>&gt;</button>` +
         `</div>`;
-      msgEl.appendChild(navEl);
     }
+
+    // Action buttons (inline in header)
+    if (node.role === 'user') {
+      headerEl.innerHTML +=
+        `<div class="msg-actions-inline">` +
+        `<button onclick="startEdit('${nodeId}')">Edit</button>` +
+        `<button class="danger" onclick="deleteNode('${nodeId}')">Delete</button>` +
+        `</div>`;
+    } else {
+      headerEl.innerHTML +=
+        `<div class="msg-actions-inline">` +
+        `<button onclick="regenerateResponse('${nodeId}')">Regen</button>` +
+        `<button data-copy="${nodeId}" onclick="copyMessage('${nodeId}')">Copy</button>` +
+        `<button class="danger" onclick="deleteNode('${nodeId}')">Delete</button>` +
+        `</div>`;
+    }
+
+    // TPS badge (for assistant messages with stats)
+    if (node.role === 'assistant' && node.tpsData) {
+      const t = node.tpsData;
+      const ctx = t.prompt_tokens ? `${t.prompt_tokens.toLocaleString()} ctx` : '';
+      const cached = t.cached_tokens ? ` (${t.cached_tokens.toLocaleString()} cached)` : '';
+      let parts = [];
+      if (ctx) parts.push(ctx + cached);
+      parts.push(`${t.new_tokens} gen · ${t.tps} t/s · ${t.elapsed}s`);
+      if (t.prefill_tps) parts.push(`prefill ${t.prefill_tps} t/s`);
+      headerEl.innerHTML += `<span class="msg-tps">${parts.join(' · ')}</span>`;
+    }
+
+    msgEl.appendChild(headerEl);
 
     // Message body
     const bodyEl = document.createElement('div');
@@ -1334,21 +1364,6 @@ function renderActiveTree() {
       renderFinal(bodyEl, node.content);
     }
     msgEl.appendChild(bodyEl);
-
-    // Action buttons
-    const actionsEl = document.createElement('div');
-    actionsEl.className = 'msg-actions';
-    if (node.role === 'user') {
-      actionsEl.innerHTML =
-        `<button onclick="startEdit('${nodeId}')">Edit</button>` +
-        `<button class="danger" onclick="deleteNode('${nodeId}')">Delete</button>`;
-    } else {
-      actionsEl.innerHTML =
-        `<button onclick="regenerateResponse('${nodeId}')">Regen</button>` +
-        `<button data-copy="${nodeId}" onclick="copyMessage('${nodeId}')">Copy</button>` +
-        `<button class="danger" onclick="deleteNode('${nodeId}')">Delete</button>`;
-    }
-    msgEl.appendChild(actionsEl);
 
     msgContainer.appendChild(msgEl);
   }
