@@ -159,8 +159,13 @@ def run_server(
 
     if open_browser:
         async def _open_browser(_app):
-            await asyncio.sleep(1)
-            webbrowser.open(url)
+            # Schedule browser open after event loop is running and server is listening
+            import threading
+            def _delayed_open():
+                import time
+                time.sleep(2)
+                webbrowser.open(url)
+            threading.Thread(target=_delayed_open, daemon=True).start()
         app.on_startup.append(_open_browser)
 
     web.run_app(app, host=host, port=port, print=None)

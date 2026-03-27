@@ -249,30 +249,55 @@ body { display: flex; overflow: hidden; }
 }
 @keyframes blink { 50% { opacity: 0; } }
 
-/* ── Branch navigation ─────────────────────────────────────────── */
+/* ── Message wrapper with side arrows ──────────────────────────── */
+.msg-wrap {
+  position: relative;
+  padding: 0 32px;
+}
+.msg-arrow {
+  position: absolute; top: 0; bottom: 0; width: 28px;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity .15s;
+  cursor: pointer; z-index: 1;
+}
+.msg-wrap:hover .msg-arrow { opacity: 1; }
+.msg-arrow:hover { opacity: 1 !important; }
+.msg-arrow-left { left: 0; }
+.msg-arrow-right { right: 0; }
+.msg-arrow button {
+  background: none; border: 1px solid var(--border);
+  color: var(--text-muted); cursor: pointer;
+  width: 24px; height: 40px; border-radius: 4px;
+  font-size: 14px; display: flex; align-items: center; justify-content: center;
+  transition: color .1s, border-color .1s, background .1s;
+}
+.msg-arrow button:hover {
+  color: var(--text-primary); border-color: var(--text-muted);
+  background: var(--bg-surface);
+}
+.msg-arrow-right button.regen-arrow {
+  border-color: var(--accent); color: var(--accent);
+}
+.msg-arrow-right button.regen-arrow:hover {
+  background: var(--accent); color: #fff;
+}
+
+/* ── Branch navigation (header) ────────────────────────────────── */
 .msg-header {
   display: flex; align-items: center; gap: 8px;
   grid-column: 2;
 }
-.branch-nav {
-  display: inline-flex; align-items: center; gap: 2px;
+.branch-counter {
   font-size: 11px; color: var(--text-dim); font-family: var(--mono);
+  min-width: 28px;
 }
-.branch-nav button {
-  background: none; border: 1px solid var(--border);
-  color: var(--text-muted); cursor: pointer; padding: 0 5px;
-  border-radius: 3px; font-size: 11px; line-height: 1.6;
-}
-.branch-nav button:hover { color: var(--text-primary); border-color: var(--text-muted); }
-.branch-nav button:disabled { opacity: 0.3; cursor: default; }
-.branch-nav span { min-width: 28px; text-align: center; }
 
 /* ── Message actions (inline in header) ────────────────────────── */
 .msg-actions-inline {
   display: inline-flex; gap: 4px;
   opacity: 0; transition: opacity .15s;
 }
-.msg:hover .msg-actions-inline { opacity: 1; }
+.msg-wrap:hover .msg-actions-inline { opacity: 1; }
 .msg-actions-inline button {
   background: none; border: 1px solid transparent;
   color: var(--text-dim); cursor: pointer; padding: 2px 7px;
@@ -1324,6 +1349,35 @@ function renderActiveTree() {
     const node = tree.nodes.get(nodeId);
     if (!node) continue;
 
+    const sibInfo = getSiblingInfo(nodeId);
+
+    // Outer wrapper with side arrows
+    const wrapEl = document.createElement('div');
+    wrapEl.className = 'msg-wrap';
+
+    // Left arrow: go to previous branch (only if current > 1)
+    if (sibInfo && sibInfo.current > 1) {
+      const leftArrow = document.createElement('div');
+      leftArrow.className = 'msg-arrow msg-arrow-left';
+      leftArrow.innerHTML = `<button onclick="switchBranch('${nodeId}', -1)" title="Previous version">&#x2039;</button>`;
+      wrapEl.appendChild(leftArrow);
+    }
+
+    // Right arrow: go to next branch, or regen if at the end
+    if (node.role === 'assistant') {
+      const rightArrow = document.createElement('div');
+      rightArrow.className = 'msg-arrow msg-arrow-right';
+      if (sibInfo && sibInfo.current < sibInfo.total) {
+        // More siblings exist — navigate forward
+        rightArrow.innerHTML = `<button onclick="switchBranch('${nodeId}', 1)" title="Next version">&#x203A;</button>`;
+      } else {
+        // At the last branch (or only branch) — regen
+        rightArrow.innerHTML = `<button class="regen-arrow" onclick="regenerateResponse('${nodeId}')" title="Regenerate">&#x203A;</button>`;
+      }
+      wrapEl.appendChild(rightArrow);
+    }
+
+    // The message grid
     const msgEl = document.createElement('div');
     msgEl.className = 'msg';
     msgEl.dataset.nodeId = nodeId;
@@ -1334,19 +1388,13 @@ function renderActiveTree() {
     roleEl.textContent = node.role;
     msgEl.appendChild(roleEl);
 
-    // Header row: branch nav + action buttons + TPS (all in one line next to role)
-    const sibInfo = getSiblingInfo(nodeId);
+    // Header row: branch counter + action buttons
     const headerEl = document.createElement('div');
     headerEl.className = 'msg-header';
 
-    // Branch navigation
+    // Branch counter (no arrows here — arrows are on the sides now)
     if (sibInfo) {
-      headerEl.innerHTML +=
-        `<div class="branch-nav">` +
-        `<button onclick="switchBranch('${nodeId}', -1)" ${sibInfo.current <= 1 ? 'disabled' : ''}>&lt;</button>` +
-        `<span>${sibInfo.current} / ${sibInfo.total}</span>` +
-        `<button onclick="switchBranch('${nodeId}', 1)" ${sibInfo.current >= sibInfo.total ? 'disabled' : ''}>&gt;</button>` +
-        `</div>`;
+      headerEl.innerHTML += `<span class="branch-counter">${sibInfo.current} / ${sibInfo.total}</span>`;
     }
 
     // Action buttons (inline in header)
@@ -1392,7 +1440,8 @@ function renderActiveTree() {
       msgEl.appendChild(tpsEl);
     }
 
-    msgContainer.appendChild(msgEl);
+    wrapEl.appendChild(msgEl);
+    msgContainer.appendChild(wrapEl);
   }
 
   scrollToBottom();
