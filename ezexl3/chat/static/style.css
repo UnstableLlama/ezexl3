@@ -14,6 +14,7 @@
   --font:         -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
   --mono:         'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
   --sidebar-w:    340px;
+  --content-w:    900px;
   --radius:       10px;
   --radius-sm:    6px;
 }
@@ -48,10 +49,11 @@ body { display: flex; overflow: hidden; }
 
 #chat-area {
   flex: 1; overflow-y: auto; scroll-behavior: smooth;
+  padding: 0 100px;
 }
 #messages {
-  max-width: 780px; margin: 0 auto;
-  padding: 24px 24px 16px;
+  max-width: var(--content-w); margin: 0 auto;
+  padding: 24px 0 16px;
   display: flex; flex-direction: column; gap: 6px;
 }
 
@@ -135,18 +137,23 @@ body { display: flex; overflow: hidden; }
 /* ── Messages ──────────────────────────────────────────────────── */
 .msg {
   display: grid;
-  grid-template-columns: 72px 1fr;
-  gap: 0 12px;
+  grid-template-columns: 1fr;
+  gap: 0;
   padding: 12px 0;
+  position: relative;
 }
 .msg-role {
+  position: absolute;
+  right: calc(100% + 12px);
+  width: 72px;
   font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
   color: var(--text-dim); padding-top: 2px; text-align: right;
   font-weight: 600;
+  white-space: nowrap;
 }
 .msg-role.user { color: var(--accent); }
 .msg-body {
-  grid-column: 2;
+  grid-column: 1;
   font-size: 14px; line-height: 1.7;
   overflow-wrap: break-word;
   min-width: 0;
@@ -208,7 +215,7 @@ body { display: flex; overflow: hidden; }
 
 /* TPS badge */
 .msg-tps {
-  grid-column: 2;
+  grid-column: 1;
   font-size: 11px; color: var(--text-dim);
   margin-top: 6px; font-family: var(--mono);
 }
@@ -225,7 +232,6 @@ body { display: flex; overflow: hidden; }
 /* ── Message wrapper with side arrows ──────────────────────────── */
 .msg-wrap {
   position: relative;
-  padding: 0 32px;
 }
 .msg-arrow {
   position: absolute; top: 0; bottom: 0; width: 28px;
@@ -235,8 +241,8 @@ body { display: flex; overflow: hidden; }
 }
 .msg-wrap:hover .msg-arrow { opacity: 1; }
 .msg-arrow:hover { opacity: 1 !important; }
-.msg-arrow-left { left: 0; }
-.msg-arrow-right { right: 0; }
+.msg-arrow-left { left: -32px; }
+.msg-arrow-right { right: -32px; }
 .msg-arrow button {
   background: none; border: 1px solid var(--border);
   color: var(--text-muted); cursor: pointer;
@@ -258,7 +264,7 @@ body { display: flex; overflow: hidden; }
 /* ── Branch navigation (header) ────────────────────────────────── */
 .msg-header {
   display: flex; align-items: center; gap: 8px;
-  grid-column: 2;
+  grid-column: 1;
 }
 .branch-counter {
   font-size: 11px; color: var(--text-dim); font-family: var(--mono);
@@ -316,7 +322,7 @@ body { display: flex; overflow: hidden; }
 .edit-btns .cancel-btn:hover { color: var(--text-primary); }
 
 .edit-area {
-  grid-column: 2;
+  grid-column: 1;
 }
 .edit-area textarea {
   width: 100%; background: var(--bg-surface);
@@ -358,7 +364,7 @@ body { display: flex; overflow: hidden; }
   border-top: 1px solid var(--border);
 }
 #input-wrap {
-  max-width: 780px; margin: 0 auto;
+  max-width: var(--content-w); margin: 0 auto;
   display: flex; align-items: flex-end; gap: 10px;
 }
 #input-box {
@@ -396,7 +402,7 @@ body { display: flex; overflow: hidden; }
 
 /* ── Auto-scroll toggle ────────────────────────────────────────── */
 .input-footer {
-  max-width: 780px; margin: 4px auto 0;
+  max-width: var(--content-w); margin: 4px auto 0;
   display: flex; align-items: center; gap: 12px;
   font-size: 11px; color: var(--text-dim);
 }
@@ -416,6 +422,14 @@ body { display: flex; overflow: hidden; }
   :root { --sidebar-w: 280px; }
   #sidebar { position: fixed; left: 0; top: 0; bottom: 0; z-index: 100; }
   #sidebar.hidden { margin-left: 0; transform: translateX(-100%); }
-  #messages { padding: 0 16px; }
+  #chat-area { padding: 0 16px; }
+  #messages { padding: 0; }
+  /* Collapse role label from absolute overhang to inline above body */
+  .msg-role {
+    position: static; width: auto; text-align: left;
+    margin-bottom: 2px;
+  }
+  .msg-arrow-left { left: -16px; }
+  .msg-arrow-right { right: -16px; }
   #input-area { padding: 10px 16px 12px; }
 }
