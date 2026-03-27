@@ -174,9 +174,12 @@ class ChatEngine:
 
     def _get_stop_conditions(self, prompt_format):
         stop_conditions = [
-            sc for sc in prompt_format.stop_conditions(self.tokenizer) if sc
+            sc for sc in prompt_format.stop_conditions(self.tokenizer)
+            if sc is not None
         ]
-        if self.config.eos_token_id_list and all(self.config.eos_token_id_list):
+        if self.config.eos_token_id_list and all(
+            x is not None for x in self.config.eos_token_id_list
+        ):
             stop_conditions += self.config.eos_token_id_list
         return stop_conditions
 

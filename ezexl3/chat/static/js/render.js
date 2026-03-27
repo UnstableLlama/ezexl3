@@ -15,7 +15,7 @@ function escHtml(s) {
 function renderMarkdown(text) {
   if (!text.trim()) return '';
   try {
-    return marked.parse(text);
+    return DOMPurify.sanitize(marked.parse(text));
   } catch {
     return `<p>${escHtml(text)}</p>`;
   }
