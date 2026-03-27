@@ -192,6 +192,9 @@ body { display: flex; overflow: hidden; }
   border: 1px solid var(--border);
 }
 
+/* Dialogue quotes */
+.dialogue { color: #67e8f9; font-weight: 600; }
+
 /* Think blocks */
 .think-block {
   border-left: 2px solid var(--border-light);
