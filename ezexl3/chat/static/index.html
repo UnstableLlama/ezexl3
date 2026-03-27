@@ -91,10 +91,6 @@ body { display: flex; overflow: hidden; }
   border-radius: var(--radius-sm); padding: 6px 8px;
   color: var(--text-primary); font-size: 13px; outline: none; width: 100%;
 }
-.slider-row { display: flex; align-items: center; gap: 10px; }
-.slider-row input[type="range"] { flex: 1; accent-color: var(--accent); }
-.slider-val { font-size: 12px; color: var(--text-muted); font-family: var(--mono); min-width: 42px; text-align: right; }
-
 /* ── Sidebar widgets ───────────────────────────────────────────── */
 #sidebar h2 {
   font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
@@ -119,7 +115,20 @@ body { display: flex; overflow: hidden; }
 }
 .slider-row { display: flex; align-items: center; gap: 10px; }
 .slider-row input[type="range"] { flex: 1; accent-color: var(--accent); }
-.slider-val { font-size: 12px; color: var(--text-muted); font-family: var(--mono); min-width: 42px; text-align: right; }
+.slider-val {
+  font-size: 12px; color: var(--text-muted); font-family: var(--mono);
+  min-width: 48px; text-align: right; cursor: pointer;
+  padding: 2px 4px; border-radius: 3px;
+  border: 1px solid transparent; transition: border-color .15s;
+}
+.slider-val:hover { border-color: var(--border-light); }
+.slider-val-input {
+  font-size: 12px; font-family: var(--mono);
+  width: 56px; text-align: right;
+  background: var(--bg-surface); color: var(--text-primary);
+  border: 1px solid var(--accent); border-radius: 3px;
+  padding: 2px 4px; outline: none;
+}
 
 /* Toggles */
 .toggle-row { flex-direction: row; align-items: center; justify-content: space-between; }
@@ -308,6 +317,31 @@ body { display: flex; overflow: hidden; }
 .msg-actions-inline .danger:hover { color: var(--red); border-color: var(--red); }
 
 /* ── Edit overlay ──────────────────────────────────────────────── */
+.edit-assistant-textarea {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--accent) !important;
+  border-radius: var(--radius-sm);
+  padding: 10px 12px; color: var(--text-primary);
+  font-size: 14px; font-family: var(--font);
+  resize: vertical; min-height: 80px; line-height: 1.5;
+  outline: none; box-sizing: border-box;
+}
+.edit-btns {
+  display: flex; gap: 6px; margin-top: 6px;
+}
+.edit-btns button {
+  padding: 4px 14px; border-radius: var(--radius-sm);
+  font-size: 12px; cursor: pointer; border: 1px solid var(--border);
+}
+.edit-btns .save-btn {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+.edit-btns .save-btn:hover { background: var(--accent-hover); }
+.edit-btns .cancel-btn {
+  background: var(--bg-surface); color: var(--text-muted);
+}
+.edit-btns .cancel-btn:hover { color: var(--text-primary); }
+
 .edit-area {
   grid-column: 2;
 }
@@ -436,7 +470,7 @@ body { display: flex; overflow: hidden; }
     <div class="sb-row">
       <label class="sb-label">Temperature</label>
       <div class="slider-row">
-        <input type="range" id="s-temp" min="0" max="2" step="0.05" value="0.8">
+        <input type="range" id="s-temp" min="0" max="2" step="0.005" value="0.8">
         <span class="slider-val" id="v-temp">0.80</span>
       </div>
     </div>
@@ -450,28 +484,28 @@ body { display: flex; overflow: hidden; }
     <div class="sb-row">
       <label class="sb-label">Top-P</label>
       <div class="slider-row">
-        <input type="range" id="s-topp" min="0" max="1" step="0.01" value="0.9">
+        <input type="range" id="s-topp" min="0" max="1" step="0.001" value="0.9">
         <span class="slider-val" id="v-topp">0.90</span>
       </div>
     </div>
     <div class="sb-row">
       <label class="sb-label">Min-P</label>
       <div class="slider-row">
-        <input type="range" id="s-minp" min="0" max="0.5" step="0.005" value="0">
+        <input type="range" id="s-minp" min="0" max="0.5" step="0.0005" value="0">
         <span class="slider-val" id="v-minp">0.00</span>
       </div>
     </div>
     <div class="sb-row">
       <label class="sb-label">Repetition Penalty</label>
       <div class="slider-row">
-        <input type="range" id="s-rep" min="1" max="2" step="0.01" value="1">
+        <input type="range" id="s-rep" min="1" max="2" step="0.001" value="1">
         <span class="slider-val" id="v-rep">1.00</span>
       </div>
     </div>
     <div class="sb-row">
       <label class="sb-label">Max Response Tokens</label>
       <div class="slider-row">
-        <input type="range" id="s-maxtok" min="64" max="16384" step="64" value="1000">
+        <input type="range" id="s-maxtok" min="8" max="16384" step="8" value="1000">
         <span class="slider-val" id="v-maxtok">1000</span>
       </div>
     </div>
@@ -841,6 +875,33 @@ function setSlider(sliderId, valId, value, fmt) {
   vl.textContent = fmt(Number(value));
   sl.oninput = () => { vl.textContent = fmt(Number(sl.value)); };
   sl.onchange = () => syncSettings();
+
+  // Click on value to enter directly
+  vl.onclick = () => {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'slider-val-input';
+    input.value = sl.value;
+    vl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    const commit = () => {
+      let v = parseFloat(input.value);
+      if (isNaN(v)) v = Number(sl.value);
+      // Clamp to slider range
+      v = Math.max(Number(sl.min), Math.min(Number(sl.max), v));
+      sl.value = v;
+      vl.textContent = fmt(v);
+      input.replaceWith(vl);
+      syncSettings();
+    };
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      if (e.key === 'Escape') { vl.textContent = fmt(Number(sl.value)); input.replaceWith(vl); }
+    });
+  };
 }
 
 // ── Toggle helpers ──────────────────────────────────────────────
@@ -959,14 +1020,16 @@ stopBtn.onclick = () => stopGeneration();
 // ── Streaming helper (THE SACRED PIPELINE) ──────────────────────
 // This is extracted from the original sendMessage() WITHOUT changing
 // the streaming logic. It runs the fetch+SSE+renderStreaming loop.
-async function streamResponse(message, context, bodyEl) {
-  let fullText = '';
+async function streamResponse(message, context, bodyEl, {initialText = '', prefix = ''} = {}) {
+  let fullText = initialText;
   let tpsData = null;
 
+  const reqBody = {message, context};
+  if (prefix) reqBody.prefix = prefix;
   const resp = await fetch('/api/chat', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({message, context}),
+    body: JSON.stringify(reqBody),
   });
 
   const reader = resp.body.getReader();
@@ -1199,6 +1262,112 @@ async function stopGeneration() {
   await fetch('/api/stop', {method: 'POST'});
 }
 
+// ── Edit assistant message (reply spoofing) ─────────────────────
+function startEditAssistant(assistantNodeId) {
+  if (generating) return;
+  const node = tree.nodes.get(assistantNodeId);
+  if (!node || node.role !== 'assistant') return;
+
+  // Replace the message body with a textarea
+  const msgEl = document.querySelector(`[data-node-id="${assistantNodeId}"]`);
+  if (!msgEl) return;
+  const bodyEl = msgEl.querySelector('.msg-body');
+  if (!bodyEl) return;
+
+  const textarea = document.createElement('textarea');
+  textarea.className = 'edit-assistant-textarea';
+  textarea.value = node.content;
+  textarea.style.width = '100%';
+  textarea.style.minHeight = '100px';
+
+  const btnRow = document.createElement('div');
+  btnRow.className = 'edit-btns';
+  btnRow.innerHTML =
+    `<button class="save-btn" onclick="saveAssistantEdit('${assistantNodeId}')">Save</button>` +
+    `<button class="cancel-btn" onclick="renderActiveTree()">Cancel</button>`;
+
+  bodyEl.innerHTML = '';
+  bodyEl.appendChild(textarea);
+  bodyEl.appendChild(btnRow);
+  textarea.focus();
+}
+
+function saveAssistantEdit(assistantNodeId) {
+  const node = tree.nodes.get(assistantNodeId);
+  if (!node) return;
+  const textarea = document.querySelector(`[data-node-id="${assistantNodeId}"] .edit-assistant-textarea`);
+  if (!textarea) return;
+  const newText = textarea.value.trim();
+  if (!newText) return;
+
+  // Create a sibling assistant node with the edited content
+  const userNode = tree.nodes.get(node.parentId);
+  if (!userNode) return;
+
+  const newNode = createNode('assistant', newText, node.parentId);
+  userNode.children.push(newNode.id);
+  userNode.activeChild = userNode.children.length - 1;
+
+  renderActiveTree();
+}
+
+// ── Continue generation ─────────────────────────────────────────
+async function continueGeneration(assistantNodeId) {
+  if (generating) return;
+
+  const assistNode = tree.nodes.get(assistantNodeId);
+  if (!assistNode || assistNode.role !== 'assistant') return;
+
+  const userNode = tree.nodes.get(assistNode.parentId);
+  if (!userNode) return;
+
+  const existingText = assistNode.content;
+
+  // Context is everything BEFORE this user turn
+  const context = getActivePathUpTo(userNode.id);
+
+  // Clear current message and show placeholder with existing text
+  const savedActiveChild = userNode.activeChild;
+  userNode.activeChild = -1;
+  renderActiveTree();
+  userNode.activeChild = savedActiveChild;
+
+  const assistantEl = createMsgEl('assistant', '');
+  msgContainer.appendChild(assistantEl);
+  const bodyEl = assistantEl.querySelector('.msg-body');
+
+  // Show existing text immediately
+  renderStreaming(bodyEl, existingText);
+
+  generating = true;
+  sendBtn.style.display = 'none';
+  stopBtn.style.display = 'flex';
+  sendBtn.disabled = true;
+
+  try {
+    const {fullText, tpsData} = await streamResponse(
+      userNode.content, context, bodyEl,
+      {initialText: existingText, prefix: existingText}
+    );
+    renderFinal(bodyEl, fullText);
+
+    // Add as new sibling with the combined text
+    const newAssist = addAssistantNode(userNode.id, fullText.trim());
+    if (tpsData) newAssist.tpsData = tpsData;
+
+    renderActiveTree();
+  } catch (e) {
+    renderFinal(bodyEl, `\n\n**Error:** ${e.message}`);
+  }
+
+  generating = false;
+  sendBtn.style.display = 'flex';
+  stopBtn.style.display = 'none';
+  sendBtn.disabled = false;
+  inputBox.focus();
+  scrollToBottom();
+}
+
 // ── Clear context ───────────────────────────────────────────────
 async function clearContext() {
   await fetch('/api/clear', {method: 'POST'});
@@ -1407,7 +1576,9 @@ function renderActiveTree() {
     } else {
       headerEl.innerHTML +=
         `<div class="msg-actions-inline">` +
+        `<button onclick="startEditAssistant('${nodeId}')">Edit</button>` +
         `<button onclick="regenerateResponse('${nodeId}')">Regen</button>` +
+        `<button onclick="continueGeneration('${nodeId}')">Continue</button>` +
         `<button data-copy="${nodeId}" onclick="copyMessage('${nodeId}')">Copy</button>` +
         `<button class="danger" onclick="deleteNode('${nodeId}')">Delete</button>` +
         `</div>`;
