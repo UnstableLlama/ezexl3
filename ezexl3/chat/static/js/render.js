@@ -82,7 +82,7 @@ function createMsgEl(role, text) {
   msg.className = 'msg';
   msg.innerHTML = `<div class="msg-role ${role}">${role}</div><div class="msg-body"></div>`;
   if (role === 'user' && text) {
-    msg.querySelector('.msg-body').textContent = text;
+    renderFinal(msg.querySelector('.msg-body'), text);
   }
   return msg;
 }
@@ -198,11 +198,7 @@ function renderActiveTree() {
     // Message body
     const bodyEl = document.createElement('div');
     bodyEl.className = 'msg-body';
-    if (node.role === 'user') {
-      bodyEl.textContent = node.content;
-    } else {
-      renderFinal(bodyEl, node.content);
-    }
+    renderFinal(bodyEl, node.content);
     msgEl.appendChild(bodyEl);
 
     // TPS badge below message body (for assistant messages with stats)
