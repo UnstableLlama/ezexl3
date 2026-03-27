@@ -316,6 +316,15 @@ body { display: flex; overflow: hidden; }
 .msg-actions-inline button:hover { color: var(--text-primary); border-color: var(--border-light); }
 .msg-actions-inline .danger:hover { color: var(--red); border-color: var(--red); }
 
+/* Disable all actions during editing */
+#messages.editing .msg-actions-inline button,
+#messages.editing .msg-arrow button {
+  opacity: 0.3; pointer-events: none;
+}
+#messages.editing .msg-actions-inline { opacity: 0.3; }
+#messages.editing .msg-wrap:hover .msg-actions-inline { opacity: 0.3; }
+#messages.editing .msg-wrap:hover .msg-arrow { opacity: 0.3; }
+
 /* ── Edit overlay ──────────────────────────────────────────────── */
 .edit-assistant-textarea {
   background: var(--bg-surface) !important;
@@ -470,7 +479,7 @@ body { display: flex; overflow: hidden; }
     <div class="sb-row">
       <label class="sb-label">Temperature</label>
       <div class="slider-row">
-        <input type="range" id="s-temp" min="0" max="2" step="0.005" value="0.8">
+        <input type="range" id="s-temp" min="0" max="2" step="0.001" value="0.8">
         <span class="slider-val" id="v-temp">0.80</span>
       </div>
     </div>
@@ -484,28 +493,28 @@ body { display: flex; overflow: hidden; }
     <div class="sb-row">
       <label class="sb-label">Top-P</label>
       <div class="slider-row">
-        <input type="range" id="s-topp" min="0" max="1" step="0.001" value="0.9">
+        <input type="range" id="s-topp" min="0" max="1" step="0.0001" value="0.9">
         <span class="slider-val" id="v-topp">0.90</span>
       </div>
     </div>
     <div class="sb-row">
       <label class="sb-label">Min-P</label>
       <div class="slider-row">
-        <input type="range" id="s-minp" min="0" max="0.5" step="0.0005" value="0">
+        <input type="range" id="s-minp" min="0" max="0.5" step="0.0001" value="0">
         <span class="slider-val" id="v-minp">0.00</span>
       </div>
     </div>
     <div class="sb-row">
       <label class="sb-label">Repetition Penalty</label>
       <div class="slider-row">
-        <input type="range" id="s-rep" min="1" max="2" step="0.001" value="1">
+        <input type="range" id="s-rep" min="1" max="2" step="0.0001" value="1">
         <span class="slider-val" id="v-rep">1.00</span>
       </div>
     </div>
     <div class="sb-row">
       <label class="sb-label">Max Response Tokens</label>
       <div class="slider-row">
-        <input type="range" id="s-maxtok" min="8" max="16384" step="8" value="1000">
+        <input type="range" id="s-maxtok" min="1" max="16384" step="1" value="1000">
         <span class="slider-val" id="v-maxtok">1000</span>
       </div>
     </div>
@@ -886,20 +895,28 @@ function setSlider(sliderId, valId, value, fmt) {
     input.focus();
     input.select();
 
+    let committed = false;
     const commit = () => {
+      if (committed) return;
+      committed = true;
       let v = parseFloat(input.value);
       if (isNaN(v)) v = Number(sl.value);
-      // Clamp to slider range
       v = Math.max(Number(sl.min), Math.min(Number(sl.max), v));
       sl.value = v;
       vl.textContent = fmt(v);
       input.replaceWith(vl);
       syncSettings();
     };
+    const cancel = () => {
+      if (committed) return;
+      committed = true;
+      vl.textContent = fmt(Number(sl.value));
+      input.replaceWith(vl);
+    };
     input.addEventListener('blur', commit);
     input.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { e.preventDefault(); commit(); }
-      if (e.key === 'Escape') { vl.textContent = fmt(Number(sl.value)); input.replaceWith(vl); }
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+      if (e.key === 'Escape') { e.preventDefault(); cancel(); }
     });
   };
 }
@@ -1190,8 +1207,8 @@ function startEdit(userNodeId) {
   inputBox.style.height = Math.min(inputBox.scrollHeight, 200) + 'px';
   inputBox.focus();
   inputBox.setSelectionRange(0, node.content.length);
-  // Visual hint
   inputBox.style.borderColor = '#f59e0b';
+  msgContainer.classList.add('editing');
 }
 
 function cancelInputEdit() {
@@ -1199,6 +1216,7 @@ function cancelInputEdit() {
   inputBox.value = '';
   inputBox.style.height = 'auto';
   inputBox.style.borderColor = '';
+  msgContainer.classList.remove('editing');
 }
 
 async function submitEdit(userNodeId, newText) {
@@ -1290,6 +1308,7 @@ function startEditAssistant(assistantNodeId) {
   bodyEl.appendChild(textarea);
   bodyEl.appendChild(btnRow);
   textarea.focus();
+  msgContainer.classList.add('editing');
 }
 
 function saveAssistantEdit(assistantNodeId) {
@@ -1504,6 +1523,7 @@ function escHtml(s) {
 // ── Tree-aware rendering ────────────────────────────────────────
 function renderActiveTree() {
   msgContainer.innerHTML = '';
+  msgContainer.classList.remove('editing');
 
   const nodeIds = getActiveNodeIds();
   if (nodeIds.length === 0) {
