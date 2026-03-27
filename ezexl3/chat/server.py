@@ -38,7 +38,10 @@ def create_app(engine: ChatEngine) -> web.Application:
 
 async def handle_index(request: web.Request) -> web.Response:
     html_path = STATIC_DIR / "index.html"
-    return web.FileResponse(html_path, headers={"Content-Type": "text/html"})
+    return web.FileResponse(html_path, headers={
+        "Content-Type": "text/html",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+    })
 
 
 async def handle_status(request: web.Request) -> web.Response:
