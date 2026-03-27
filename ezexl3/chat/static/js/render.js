@@ -121,7 +121,11 @@ function renderActiveTree() {
     if (sibInfo && sibInfo.current > 1) {
       const leftArrow = document.createElement('div');
       leftArrow.className = 'msg-arrow msg-arrow-left';
-      leftArrow.innerHTML = `<button onclick="switchBranch('${nodeId}', -1)" title="Previous version">&#x2039;</button>`;
+      const leftBtn = document.createElement('button');
+      leftBtn.title = 'Previous version';
+      leftBtn.innerHTML = '&#x2039;';
+      leftBtn.addEventListener('click', () => switchBranch(nodeId, -1));
+      leftArrow.appendChild(leftBtn);
       wrapEl.appendChild(leftArrow);
     }
 
@@ -129,11 +133,18 @@ function renderActiveTree() {
     if (node.role === 'assistant') {
       const rightArrow = document.createElement('div');
       rightArrow.className = 'msg-arrow msg-arrow-right';
+      const rightBtn = document.createElement('button');
       if (sibInfo && sibInfo.current < sibInfo.total) {
-        rightArrow.innerHTML = `<button onclick="switchBranch('${nodeId}', 1)" title="Next version">&#x203A;</button>`;
+        rightBtn.title = 'Next version';
+        rightBtn.innerHTML = '&#x203A;';
+        rightBtn.addEventListener('click', () => switchBranch(nodeId, 1));
       } else {
-        rightArrow.innerHTML = `<button class="regen-arrow" onclick="regenerateResponse('${nodeId}')" title="Regenerate">&#x203A;</button>`;
+        rightBtn.className = 'regen-arrow';
+        rightBtn.title = 'Regenerate';
+        rightBtn.innerHTML = '&#x203A;';
+        rightBtn.addEventListener('click', () => regenerateResponse(nodeId));
       }
+      rightArrow.appendChild(rightBtn);
       wrapEl.appendChild(rightArrow);
     }
 
@@ -157,22 +168,30 @@ function renderActiveTree() {
     }
 
     // Action buttons (inline in header)
-    if (node.role === 'user') {
-      headerEl.innerHTML +=
-        `<div class="msg-actions-inline">` +
-        `<button onclick="startEdit('${nodeId}')">Edit</button>` +
-        `<button class="danger" onclick="deleteNode('${nodeId}')">Delete</button>` +
-        `</div>`;
-    } else {
-      headerEl.innerHTML +=
-        `<div class="msg-actions-inline">` +
-        `<button onclick="startEditAssistant('${nodeId}')">Edit</button>` +
-        `<button onclick="regenerateResponse('${nodeId}')">Regen</button>` +
-        `<button onclick="continueGeneration('${nodeId}')">Continue</button>` +
-        `<button data-copy="${nodeId}" onclick="copyMessage('${nodeId}')">Copy</button>` +
-        `<button class="danger" onclick="deleteNode('${nodeId}')">Delete</button>` +
-        `</div>`;
+    const actionsDiv = document.createElement('div');
+    actionsDiv.className = 'msg-actions-inline';
+
+    function addAction(label, handler, cls) {
+      const btn = document.createElement('button');
+      btn.textContent = label;
+      if (cls) btn.className = cls;
+      btn.addEventListener('click', handler);
+      actionsDiv.appendChild(btn);
+      return btn;
     }
+
+    if (node.role === 'user') {
+      addAction('Edit', () => startEdit(nodeId));
+      addAction('Delete', () => deleteNode(nodeId), 'danger');
+    } else {
+      addAction('Edit', () => startEditAssistant(nodeId));
+      addAction('Regen', () => regenerateResponse(nodeId));
+      addAction('Continue', () => continueGeneration(nodeId));
+      const copyBtn = addAction('Copy', () => copyMessage(nodeId));
+      copyBtn.dataset.copy = nodeId;
+      addAction('Delete', () => deleteNode(nodeId), 'danger');
+    }
+    headerEl.appendChild(actionsDiv);
 
     msgEl.appendChild(headerEl);
 

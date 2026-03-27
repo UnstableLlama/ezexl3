@@ -54,34 +54,7 @@ body { display: flex; overflow: hidden; }
   padding: 24px 24px 16px;
   display: flex; flex-direction: column; gap: 6px;
 }
-#messages {
-  max-width: 780px; margin: 0 auto;
-  padding: 24px 24px 16px;
-  display: flex; flex-direction: column; gap: 6px;
-}
 
-/* ── Sidebar widgets ───────────────────────────────────────────── */
-#sidebar h2 {
-  font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
-  color: var(--text-dim); margin: 20px 0 8px;
-}
-#sidebar h2:first-child { margin-top: 0; }
-.sb-section { display: flex; flex-direction: column; gap: 10px; }
-.sb-row { display: flex; flex-direction: column; gap: 4px; }
-.sb-label { font-size: 12px; color: var(--text-muted); }
-.sb-textarea, #sidebar input[type="text"], #sidebar input[type="number"] {
-  background: var(--bg-surface); border: 1px solid var(--border);
-  border-radius: var(--radius-sm); padding: 8px 10px;
-  color: var(--text-primary); font-size: 13px; font-family: var(--font);
-  outline: none; width: 100%;
-}
-.sb-textarea:focus, #sidebar input:focus { border-color: var(--accent); }
-.sb-textarea { resize: vertical; min-height: 60px; line-height: 1.4; }
-#sidebar select {
-  background: var(--bg-surface); border: 1px solid var(--border);
-  border-radius: var(--radius-sm); padding: 6px 8px;
-  color: var(--text-primary); font-size: 13px; outline: none; width: 100%;
-}
 /* ── Sidebar widgets ───────────────────────────────────────────── */
 #sidebar h2 {
   font-size: 11px; text-transform: uppercase; letter-spacing: .08em;

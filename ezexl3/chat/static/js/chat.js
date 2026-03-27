@@ -254,9 +254,16 @@ function startEditAssistant(assistantNodeId) {
 
   const btnRow = document.createElement('div');
   btnRow.className = 'edit-btns';
-  btnRow.innerHTML =
-    `<button class="save-btn" onclick="saveAssistantEdit('${assistantNodeId}')">Save</button>` +
-    `<button class="cancel-btn" onclick="renderActiveTree()">Cancel</button>`;
+  const saveBtn2 = document.createElement('button');
+  saveBtn2.className = 'save-btn';
+  saveBtn2.textContent = 'Save';
+  saveBtn2.addEventListener('click', () => saveAssistantEdit(assistantNodeId));
+  const cancelBtn2 = document.createElement('button');
+  cancelBtn2.className = 'cancel-btn';
+  cancelBtn2.textContent = 'Cancel';
+  cancelBtn2.addEventListener('click', () => renderActiveTree());
+  btnRow.appendChild(saveBtn2);
+  btnRow.appendChild(cancelBtn2);
 
   bodyEl.innerHTML = '';
   bodyEl.appendChild(textarea);
@@ -352,5 +359,5 @@ function copyMessage(nodeId) {
       btn.textContent = 'Copied!';
       setTimeout(() => { btn.textContent = orig; }, 1000);
     }
-  });
+  }).catch(() => {});
 }
