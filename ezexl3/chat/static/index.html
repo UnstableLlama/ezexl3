@@ -235,9 +235,9 @@ body { display: flex; overflow: hidden; }
 
 /* TPS badge */
 .msg-tps {
+  grid-column: 2;
   font-size: 11px; color: var(--text-dim);
-  font-family: var(--mono);
-  margin-left: auto;
+  margin-top: 6px; font-family: var(--mono);
 }
 
 /* Streaming cursor */
@@ -1372,18 +1372,6 @@ function renderActiveTree() {
         `</div>`;
     }
 
-    // TPS badge (for assistant messages with stats)
-    if (node.role === 'assistant' && node.tpsData) {
-      const t = node.tpsData;
-      const ctx = t.prompt_tokens ? `${t.prompt_tokens.toLocaleString()} ctx` : '';
-      const cached = t.cached_tokens ? ` (${t.cached_tokens.toLocaleString()} cached)` : '';
-      let parts = [];
-      if (ctx) parts.push(ctx + cached);
-      parts.push(`${t.new_tokens} gen · ${t.tps} t/s · ${t.elapsed}s`);
-      if (t.prefill_tps) parts.push(`prefill ${t.prefill_tps} t/s`);
-      headerEl.innerHTML += `<span class="msg-tps">${parts.join(' · ')}</span>`;
-    }
-
     msgEl.appendChild(headerEl);
 
     // Message body
@@ -1395,6 +1383,21 @@ function renderActiveTree() {
       renderFinal(bodyEl, node.content);
     }
     msgEl.appendChild(bodyEl);
+
+    // TPS badge below message body (for assistant messages with stats)
+    if (node.role === 'assistant' && node.tpsData) {
+      const t = node.tpsData;
+      const ctx = t.prompt_tokens ? `${t.prompt_tokens.toLocaleString()} ctx` : '';
+      const cached = t.cached_tokens ? ` (${t.cached_tokens.toLocaleString()} cached)` : '';
+      let parts = [];
+      if (ctx) parts.push(ctx + cached);
+      parts.push(`${t.new_tokens} gen · ${t.tps} t/s · ${t.elapsed}s`);
+      if (t.prefill_tps) parts.push(`prefill ${t.prefill_tps} t/s`);
+      const tpsEl = document.createElement('div');
+      tpsEl.className = 'msg-tps';
+      tpsEl.textContent = parts.join(' · ');
+      msgEl.appendChild(tpsEl);
+    }
 
     msgContainer.appendChild(msgEl);
   }
