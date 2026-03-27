@@ -19,6 +19,9 @@ dependencies = [
     "aiohttp>=3.9",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
 [project.scripts]
 ezexl3 = "ezexl3.cli:main"
 
