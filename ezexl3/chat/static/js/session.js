@@ -35,7 +35,14 @@ function handleSessionFileLoad(e) {
   const file = e.target.files[0];
   if (!file) return;
   file.text().then(async (text) => {
-    const data = JSON.parse(text);
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      alert('Invalid session file: not valid JSON');
+      e.target.value = '';
+      return;
+    }
     await fetch('/api/session/load', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
