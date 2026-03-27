@@ -237,7 +237,7 @@ class ChatEngine:
 
         return ids
 
-    async def generate(self, user_message: str) -> AsyncGenerator[dict, None]:
+    async def generate(self, user_message: str, prefix: str = "") -> AsyncGenerator[dict, None]:
         """
         Stream a response for *user_message*.
 
@@ -269,7 +269,7 @@ class ChatEngine:
             prompt_format = self._get_prompt_format()
             stop_conditions = self._get_stop_conditions(prompt_format)
             sampler = self._get_sampler()
-            ids = self._build_input_ids(prompt_format)
+            ids = self._build_input_ids(prompt_format, prefix=prefix)
 
             # Banned strings
             banned = list(self.settings.banned_strings)
@@ -335,8 +335,9 @@ class ChatEngine:
 
             yield {"type": "done", "eos_reason": eos_reason}
 
-            # Save to context
-            self.context[-1] = (user_message, response_text.strip())
+            # Save to context (include prefix for continue)
+            full_response = (prefix + response_text).strip()
+            self.context[-1] = (user_message, full_response)
 
         except Exception as e:
             yield {"type": "error", "message": str(e)}

@@ -86,7 +86,8 @@ async def handle_chat(request: web.Request) -> web.Response:
     )
     await response.prepare(request)
 
-    async for event in engine.generate(message):
+    prefix = data.get("prefix", "")
+    async for event in engine.generate(message, prefix=prefix):
         sse_data = f"data: {json.dumps(event)}\n\n"
         await response.write(sse_data.encode("utf-8"))
 
