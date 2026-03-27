@@ -903,6 +903,12 @@ inputBox.addEventListener('input', () => {
   inputBox.style.height = 'auto';
   inputBox.style.height = Math.min(inputBox.scrollHeight, 200) + 'px';
 });
+inputBox.addEventListener('blur', () => {
+  // Clear edit state if input is emptied or user clicks away
+  if (editingNodeId && !inputBox.value.trim()) {
+    cancelInputEdit();
+  }
+});
 inputBox.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
@@ -1287,19 +1293,6 @@ function createMsgEl(role, text) {
     msg.querySelector('.msg-body').textContent = text;
   }
   return msg;
-}
-
-function appendTpsBadge(msgEl, tpsData) {
-  const badge = document.createElement('div');
-  badge.className = 'msg-tps';
-  const ctx = tpsData.prompt_tokens ? `${tpsData.prompt_tokens.toLocaleString()} ctx` : '';
-  const cached = tpsData.cached_tokens ? ` (${tpsData.cached_tokens.toLocaleString()} cached)` : '';
-  let parts = [];
-  if (ctx) parts.push(ctx + cached);
-  parts.push(`${tpsData.new_tokens} gen · ${tpsData.tps} t/s · ${tpsData.elapsed}s`);
-  if (tpsData.prefill_tps) parts.push(`prefill ${tpsData.prefill_tps} t/s`);
-  badge.textContent = parts.join(' · ');
-  msgEl.appendChild(badge);
 }
 
 function scrollToBottom() {
