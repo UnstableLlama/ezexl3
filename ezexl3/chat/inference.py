@@ -62,14 +62,14 @@ class ChatEngine:
 
     def __init__(
         self,
-        model_dir: str,
+        model_dir: str | None = None,
         devices: list[int] | None = None,
         device_ratios: str | None = None,
         cache_size: int | None = None,
         cache_quant: str | None = None,
     ):
-        self.model_dir = os.path.abspath(model_dir)
-        self._devices = devices or [0]
+        self.model_dir = os.path.abspath(model_dir) if model_dir else None
+        self._devices = devices or []
         self._device_ratios = device_ratios
         self._cache_size = cache_size or self.DEFAULT_CACHE_SIZE
         self._cache_quant = cache_quant or self.DEFAULT_CACHE_QUANT
@@ -81,7 +81,7 @@ class ChatEngine:
         self.tokenizer = None
         self.generator = None
         self.context_length: int = 0
-        self.model_name: str = os.path.basename(self.model_dir)
+        self.model_name: str = os.path.basename(self.model_dir) if self.model_dir else ""
 
         # Chat state
         self.settings = ChatSettings()
@@ -102,12 +102,13 @@ class ChatEngine:
         from exllamav3 import Generator, model_init
 
         # Set visible devices before model_init touches CUDA
-        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(d) for d in self._devices)
+        devices = self._devices or list(range(torch.cuda.device_count()))
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(d) for d in devices)
 
         # Build a minimal args namespace that model_init.init() expects
         args = _build_model_args(
             self.model_dir,
-            self._devices,
+            devices,
             self._device_ratios,
             self._cache_size,
             self._cache_quant,
@@ -128,6 +129,58 @@ class ChatEngine:
         print(f"  Model loaded: {self.model_name}")
         print(f"  Context length: {self.context_length:,} tokens")
         print(f"  Prompt mode: {self.settings.mode}")
+
+    def unload(self):
+        """Unload the current model, freeing GPU memory."""
+        if self._is_generating:
+            self.cancel()
+        self.generator = None
+        self.model = None
+        self.cache = None
+        self.tokenizer = None
+        self.config = None
+        self.context_length = 0
+        self.context = []
+        self.model_name = ""
+        self.model_dir = None
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def load_model(
+        self,
+        model_dir: str,
+        devices: list[int] | None = None,
+        device_ratios: str | None = None,
+        cache_size: int | None = None,
+        cache_quant: str | None = None,
+    ):
+        """Load a model (callable from the UI after startup)."""
+        if self.is_loaded:
+            self.unload()
+        self.model_dir = os.path.abspath(model_dir)
+        self.model_name = os.path.basename(self.model_dir)
+        self._devices = devices or []
+        self._device_ratios = device_ratios
+        self._cache_size = cache_size or self.DEFAULT_CACHE_SIZE
+        self._cache_quant = cache_quant or self.DEFAULT_CACHE_QUANT
+        self.settings = ChatSettings()
+        self.load()
+
+    @staticmethod
+    def detect_gpus() -> list[dict]:
+        """Return list of available GPUs with name and VRAM."""
+        gpus = []
+        if torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                props = torch.cuda.get_device_properties(i)
+                gpus.append({
+                    "index": i,
+                    "name": props.name,
+                    "vram_gb": round(props.total_mem / (1024**3), 1),
+                })
+        return gpus
 
     def _auto_detect_mode(self):
         """Try to pick a sensible default prompt format from model config."""
@@ -384,12 +437,13 @@ class ChatEngine:
             "loaded": self.is_loaded,
             "generating": self.is_generating,
             "model_name": self.model_name,
-            "model_dir": self.model_dir,
+            "model_dir": self.model_dir or "",
             "context_length": self.context_length,
             "context_turns": len(self.context),
             "available_modes": {
                 k: v.description for k, v in prompt_formats.items()
             },
+            "gpus": self.detect_gpus(),
         }
 
 
