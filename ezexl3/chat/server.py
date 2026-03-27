@@ -158,6 +158,9 @@ def run_server(
     print(f"  Press Ctrl+C to stop\n")
 
     if open_browser:
-        webbrowser.open(url)
+        async def _open_browser(_app):
+            await asyncio.sleep(1)
+            webbrowser.open(url)
+        app.on_startup.append(_open_browser)
 
     web.run_app(app, host=host, port=port, print=None)
