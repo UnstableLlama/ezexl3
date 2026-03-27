@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import os
+import sys
 import webbrowser
 from pathlib import Path
 
@@ -149,6 +151,20 @@ def run_server(
         cache_size=cache_size,
         cache_quant=cache_quant,
     )
+
+    # Warn if binding to a non-loopback address (no auth layer).
+    try:
+        addr = ipaddress.ip_address(host)
+        if not addr.is_loopback:
+            print(
+                f"\n  WARNING: Binding to non-loopback address {host}.\n"
+                f"  The chat API has no authentication — anyone with network\n"
+                f"  access to this host can interact with the model.\n"
+                f"  Consider using a reverse-proxy with auth, or an SSH tunnel.\n",
+                file=sys.stderr,
+            )
+    except ValueError:
+        pass  # hostname like "localhost" — resolved by aiohttp
 
     print(f"Loading model from: {model_dir}")
     engine.load()

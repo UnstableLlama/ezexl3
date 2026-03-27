@@ -201,7 +201,8 @@ def build_parser() -> argparse.ArgumentParser:
     ch.add_argument("-m", "--model", required=True, help="Model directory")
     ch.add_argument("-d", "--devices", default="0", help="CUDA devices. Example: -d 0,1")
     ch.add_argument("-r", "--device-ratios", default=None, help="Device ratios. Example: -r 1,1")
-    ch.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
+    ch.add_argument("--host", default="127.0.0.1",
+                    help="Bind address (default: 127.0.0.1). WARNING: non-loopback addresses expose the unauthenticated API to the network")
     ch.add_argument("--port", type=int, default=8800, help="Port (default: 8800)")
     ch.add_argument("--no-browser", action="store_true", help="Don't auto-open browser")
     ch.add_argument("-cs", "--cache-size", type=int, default=None,
