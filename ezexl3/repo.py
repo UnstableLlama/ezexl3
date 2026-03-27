@@ -1406,7 +1406,6 @@ def run_measure_stage(
 
     # --- Run multi-GPU catbench jobs first (sequentially, all GPUs) ---
     if multi_gpu_catbench_tasks:
-        import threading
         from queue import Queue as TQueue
 
         mgpu_use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()

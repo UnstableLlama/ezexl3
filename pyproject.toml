@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ezexl3"
-version = "0.0.7"
+version = "0.0.8"
 description = "Single-command EXL3 quantization + measurement + reporting pipeline"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,13 +16,17 @@ dependencies = [
     "numpy",
     "pandas",
     "matplotlib",
+    "aiohttp>=3.9",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
 
 [project.scripts]
 ezexl3 = "ezexl3.cli:main"
 
 [tool.setuptools.package-data]
-ezexl3 = ["templates/*"]
+ezexl3 = ["templates/*", "chat/static/*", "chat/static/js/*", "chat/static/lib/*"]
 
 
 [tool.pytest.ini_options]

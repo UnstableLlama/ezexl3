@@ -196,6 +196,20 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Run SVG Catbench with N samples per model (default: 3 when flag present)")
 
 
+    # --- chat ---
+    ch = sub.add_parser("chat", help="Launch web chat UI for a loaded model")
+    ch.add_argument("-m", "--model", required=True, help="Model directory")
+    ch.add_argument("-d", "--devices", default="0", help="CUDA devices. Example: -d 0,1")
+    ch.add_argument("-r", "--device-ratios", default=None, help="Device ratios. Example: -r 1,1")
+    ch.add_argument("--host", default="127.0.0.1",
+                    help="Bind address (default: 127.0.0.1). WARNING: non-loopback addresses expose the unauthenticated API to the network")
+    ch.add_argument("--port", type=int, default=8800, help="Port (default: 8800)")
+    ch.add_argument("--no-browser", action="store_true", help="Don't auto-open browser")
+    ch.add_argument("-cs", "--cache-size", type=int, default=None,
+                    help="Cache size in tokens (default: 32768). Must be multiple of 256")
+    ch.add_argument("-cq", "--cache-quant", type=str, default=None,
+                    help="Cache quantization bits: kv_bits or k_bits,v_bits (default: 6,6)")
+
     # --- readme ---
     r = sub.add_parser("readme", help="README only (CSV -> README)")
     r.add_argument("-m", "--models", nargs="+", required=True, help="One or more model directories")
@@ -234,6 +248,26 @@ def main(argv: Optional[List[str]] = None) -> int:
     
 
     import os
+
+    if cmd == "chat":
+        from ezexl3.chat.server import run_server
+        # args.devices is already a list of strings from the normalization above
+        chat_devices = [int(d) for d in args.devices]
+        dr = args.device_ratios
+        if dr:
+            dr = ",".join(dr) if isinstance(dr, list) else dr
+        run_server(
+            model_dir=args.model,
+            devices=chat_devices,
+            device_ratios=dr,
+            cache_size=args.cache_size,
+            cache_quant=args.cache_quant,
+            host=args.host,
+            port=args.port,
+            open_browser=not args.no_browser,
+        )
+        return 0
+
     from ezexl3.repo import run_repo, run_quant_stage, run_measure_stage
 
     devices_i = _parse_devices(getattr(args, "devices", ["0"]))

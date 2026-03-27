@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ezexl3 chat</title>
+<script src="lib/marked.min.js"></script>
+<script src="lib/purify.min.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ── Sidebar ──────────────────────────────────────────────────── -->
+<div id="sidebar">
+  <h2>Settings</h2>
+
+  <div class="sb-section">
+    <div class="sb-row">
+      <label class="sb-label">Prompt Mode</label>
+      <select id="s-mode"></select>
+    </div>
+    <div class="sb-row">
+      <label class="sb-label">System Prompt</label>
+      <textarea class="sb-textarea" id="s-system" rows="4"></textarea>
+    </div>
+  </div>
+
+  <h2>Sampling</h2>
+  <div class="sb-section">
+    <div class="sb-row">
+      <label class="sb-label">Temperature</label>
+      <div class="slider-row">
+        <input type="range" id="s-temp" min="0" max="2" step="0.001" value="0.8">
+        <span class="slider-val" id="v-temp">0.80</span>
+      </div>
+    </div>
+    <div class="sb-row">
+      <label class="sb-label">Top-K</label>
+      <div class="slider-row">
+        <input type="range" id="s-topk" min="0" max="200" step="1" value="50">
+        <span class="slider-val" id="v-topk">50</span>
+      </div>
+    </div>
+    <div class="sb-row">
+      <label class="sb-label">Top-P</label>
+      <div class="slider-row">
+        <input type="range" id="s-topp" min="0" max="1" step="0.0001" value="0.9">
+        <span class="slider-val" id="v-topp">0.90</span>
+      </div>
+    </div>
+    <div class="sb-row">
+      <label class="sb-label">Min-P</label>
+      <div class="slider-row">
+        <input type="range" id="s-minp" min="0" max="0.5" step="0.0001" value="0">
+        <span class="slider-val" id="v-minp">0.00</span>
+      </div>
+    </div>
+    <div class="sb-row">
+      <label class="sb-label">Repetition Penalty</label>
+      <div class="slider-row">
+        <input type="range" id="s-rep" min="1" max="2" step="0.0001" value="1">
+        <span class="slider-val" id="v-rep">1.00</span>
+      </div>
+    </div>
+    <div class="sb-row">
+      <label class="sb-label">Max Response Tokens</label>
+      <div class="slider-row">
+        <input type="range" id="s-maxtok" min="1" max="16384" step="1" value="1000">
+        <span class="slider-val" id="v-maxtok">1000</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>Reasoning</h2>
+  <div class="sb-section">
+    <div class="sb-row toggle-row">
+      <span>Think mode</span>
+      <div class="toggle" id="t-think" data-key="think"></div>
+    </div>
+    <div class="sb-row toggle-row">
+      <span>Suppress think tags</span>
+      <div class="toggle" id="t-nothink" data-key="no_think"></div>
+    </div>
+    <div class="sb-row">
+      <label class="sb-label">Think Budget</label>
+      <input type="number" id="s-thinkbudget" placeholder="(none)" min="0" step="256">
+    </div>
+  </div>
+
+  <h2>Behavior</h2>
+  <div class="sb-section">
+    <div class="sb-row toggle-row">
+      <span>Amnesia mode</span>
+      <div class="toggle" id="t-amnesia" data-key="amnesia"></div>
+    </div>
+    <div class="sb-row">
+      <label class="sb-label">Banned Strings</label>
+      <div class="chip-list" id="banned-chips"></div>
+      <div style="display:flex;gap:6px;margin-top:6px">
+        <input type="text" id="banned-input" placeholder="Add string...">
+        <button class="sb-btn" onclick="addBan()">+</button>
+      </div>
+    </div>
+  </div>
+
+  <h2>Session</h2>
+  <div class="sb-section">
+    <div class="btn-row">
+      <button class="sb-btn" onclick="saveSession()">&#x1F4BE; Save</button>
+      <button class="sb-btn" onclick="loadSession()">&#x1F4C2; Load</button>
+      <button class="sb-btn" onclick="exportMarkdown()">&#x1F4DD; Export MD</button>
+      <button class="sb-btn danger" onclick="clearContext()">&#x1F5D1; Clear</button>
+    </div>
+  </div>
+
+  <h2>Model</h2>
+  <div class="sb-section">
+    <div class="model-info" id="model-info">Loading...</div>
+  </div>
+</div>
+
+<!-- ── Main ─────────────────────────────────────────────────────── -->
+<div id="main">
+  <div id="header">
+    <button id="toggle-sidebar" title="Toggle settings">&#9776;</button>
+    <span id="header-title">ezexl3 chat</span>
+    <span id="header-model"></span>
+  </div>
+  <div id="chat-area">
+    <div id="messages">
+      <div id="empty-state">
+        <div class="logo">&#x2728;</div>
+        <div class="hint">Send a message to start chatting</div>
+      </div>
+    </div>
+  </div>
+  <div id="input-area">
+    <div id="input-wrap">
+      <textarea id="input-box" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" rows="1"></textarea>
+      <button id="send-btn" title="Send">&#9654;</button>
+      <button id="stop-btn" title="Stop">&#9632;</button>
+    </div>
+    <div class="input-footer">
+      <label><input type="checkbox" id="autoscroll" checked> Auto-scroll</label>
+      <span style="color:var(--text-dim);font-size:10px">Ctrl+Shift+Backspace = stop &middot; Up = edit last</span>
+    </div>
+  </div>
+</div>
+
+<!-- Hidden file input for session load -->
+<input type="file" id="file-input" accept=".json" style="display:none">
+
+<!-- ── Scripts (order matters: state → tree → render → settings → chat → session → main) ── -->
+<script src="js/state.js"></script>
+<script src="js/tree.js"></script>
+<script src="js/render.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/chat.js"></script>
+<script src="js/session.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
