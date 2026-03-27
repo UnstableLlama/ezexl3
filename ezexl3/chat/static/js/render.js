@@ -12,10 +12,19 @@ function escHtml(s) {
   return d.innerHTML;
 }
 
+function highlightDialogue(html) {
+  // Split on <pre>...</pre> and <code>...</code> to avoid replacing inside code blocks
+  return html.replace(/(<pre[\s>][\s\S]*?<\/pre>|<code[\s>][\s\S]*?<\/code>)|(?:&quot;|"|[\u201C\u201D])(.+?)(?:&quot;|"|[\u201C\u201D])/g,
+    (match, codeBlock, inner) => {
+      if (codeBlock) return codeBlock; // pass code blocks through unchanged
+      return `<span class="dialogue">\u201C${inner}\u201D</span>`;
+    });
+}
+
 function renderMarkdown(text) {
   if (!text.trim()) return '';
   try {
-    return DOMPurify.sanitize(marked.parse(text));
+    return DOMPurify.sanitize(highlightDialogue(marked.parse(text)));
   } catch {
     return `<p>${escHtml(text)}</p>`;
   }
