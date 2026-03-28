@@ -178,7 +178,7 @@ class ChatEngine:
                 gpus.append({
                     "index": i,
                     "name": props.name,
-                    "vram_gb": round(props.total_mem / (1024**3), 1),
+                    "vram_gb": round(props.total_memory / (1024**3), 1),
                 })
         return gpus
 
