@@ -410,10 +410,12 @@ async def handle_chat_launch(request: web.Request) -> web.Response:
         start_new_session=True,
     )
 
-    # Tell the client to redirect, then shut down
+    # Tell the client to redirect, then gracefully shut down the server
     async def _shutdown():
         await asyncio.sleep(0.5)
-        raise SystemExit(0)
+        await request.app.shutdown()
+        await request.app.cleanup()
+        asyncio.get_event_loop().stop()
     asyncio.create_task(_shutdown())
 
     return web.json_response({"ok": True, "url": f"http://{host}:{port}"})
