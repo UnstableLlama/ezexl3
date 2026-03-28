@@ -410,11 +410,14 @@ async def handle_chat_launch(request: web.Request) -> web.Response:
         start_new_session=True,
     )
 
-    # Tell the client to redirect, then shut down
-    async def _shutdown():
-        await asyncio.sleep(0.5)
-        raise SystemExit(0)
-    asyncio.create_task(_shutdown())
+    # Tell the client to redirect, then exit the process.
+    # Use os._exit from a background thread to avoid async task exceptions.
+    import threading
+    def _delayed_exit():
+        import time
+        time.sleep(1)
+        os._exit(0)
+    threading.Thread(target=_delayed_exit, daemon=True).start()
 
     return web.json_response({"ok": True, "url": f"http://{host}:{port}"})
 
