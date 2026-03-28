@@ -26,7 +26,7 @@ dev = ["pytest>=7"]
 ezexl3 = "ezexl3.cli:main"
 
 [tool.setuptools.package-data]
-ezexl3 = ["templates/*", "chat/static/*", "chat/static/js/*", "chat/static/lib/*"]
+ezexl3 = ["templates/*", "chat/static/*", "chat/static/js/*", "chat/static/lib/*", "ui/static/*", "ui/static/js/*"]
 
 
 [tool.pytest.ini_options]

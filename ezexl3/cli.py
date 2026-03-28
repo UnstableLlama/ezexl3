@@ -218,6 +218,13 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--no-measurement", "-nm", action="store_true", help="Remove KL/PPL columns from README and skip graph embedding")
     r.add_argument("--template", "-t", help="README template name (e.g., 'fire', 'basic')")
 
+    # --- ui (dashboard) ---
+    ui = sub.add_parser("ui", help="Launch dashboard web UI")
+    ui.add_argument("--host", default="127.0.0.1",
+                    help="Bind address (default: 127.0.0.1)")
+    ui.add_argument("--port", type=int, default=8801, help="Port (default: 8801)")
+    ui.add_argument("--no-browser", action="store_true", help="Don't auto-open browser")
+
     return p
 
 
@@ -265,6 +272,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             device_ratios=dr,
             cache_size=args.cache_size,
             cache_quant=args.cache_quant,
+            host=args.host,
+            port=args.port,
+            open_browser=not args.no_browser,
+        )
+        return 0
+
+    if cmd == "ui":
+        from ezexl3.ui.server import run_ui_server
+        run_ui_server(
             host=args.host,
             port=args.port,
             open_browser=not args.no_browser,
