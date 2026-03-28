@@ -55,17 +55,52 @@
   </div>
 
   <div id="content">
-    <!-- Command form -->
-    <div id="form-panel">
-      <div id="form-header">
-        <h2 id="command-title">Repo</h2>
-        <p id="command-desc">Quantize &rarr; Measure KL+PPL &rarr; README</p>
+    <!-- Upper panel with tab switching -->
+    <div id="upper-panel">
+      <!-- Tab bar -->
+      <div id="tab-bar">
+        <div class="tab-bar-left">
+          <button class="tab-btn active" data-tab="command">
+            <span id="tab-command-label">Repo</span>
+          </button>
+          <button class="tab-btn" data-tab="data">Data</button>
+        </div>
+        <p id="command-desc" class="tab-bar-desc">Quantize &rarr; Measure KL+PPL &rarr; README</p>
       </div>
-      <div id="form-fields"></div>
-      <div id="form-actions">
-        <button id="run-btn" class="action-btn primary">Run</button>
-        <button id="stop-btn" class="action-btn danger" style="display:none">Stop</button>
-        <button id="clear-btn" class="action-btn secondary">Clear</button>
+
+      <!-- Command form tab -->
+      <div id="form-panel" class="tab-content active">
+        <div id="form-fields"></div>
+        <div id="form-actions">
+          <button id="run-btn" class="action-btn primary">Run</button>
+          <button id="stop-btn" class="action-btn danger" style="display:none">Stop</button>
+          <button id="clear-btn" class="action-btn secondary">Clear</button>
+        </div>
+      </div>
+
+      <!-- Data tab -->
+      <div id="data-panel" class="tab-content">
+        <div id="data-content">
+          <div id="data-table-wrap">
+            <table id="data-table">
+              <thead>
+                <tr>
+                  <th>BPW</th>
+                  <th>KL Div</th>
+                  <th>PPL</th>
+                  <th>GiB</th>
+                </tr>
+              </thead>
+              <tbody id="data-table-body">
+              </tbody>
+            </table>
+            <div id="data-empty" class="data-empty">No measurement data yet. Run a repo or measure command to begin.</div>
+          </div>
+          <div id="data-graph-wrap">
+            <div id="data-graph-placeholder" class="data-graph-placeholder">Graph will appear after 2+ measurements</div>
+            <div id="data-graph"></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -108,6 +143,7 @@
 <script src="js/forms.js"></script>
 <script src="js/browser.js"></script>
 <script src="js/terminal.js"></script>
+<script src="js/data.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>

@@ -42,6 +42,7 @@ async function runCommand() {
 
   jobRunning = true;
   updateRunButton();
+  startDataPolling();
   terminalStatus().textContent = "Running...";
   terminalStatus().className = "terminal-status running";
 
@@ -130,6 +131,8 @@ async function streamJob(jobId) {
     activeJobId = null;
     abortController = null;
     updateRunButton();
+    stopDataPolling();
+    refreshData();
   }
 }
 

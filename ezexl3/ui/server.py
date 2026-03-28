@@ -10,6 +10,7 @@ import os
 import shutil
 import signal
 import sys
+import tempfile
 import uuid
 import webbrowser
 from pathlib import Path
@@ -300,6 +301,90 @@ async def handle_run_status(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Live measurement data + graph
+# ---------------------------------------------------------------------------
+
+def _resolve_db_path(model_dir: str) -> str | None:
+    """Find the measurement DB for a model directory."""
+    try:
+        from ezexl3.measure_db import default_db_path
+        db = default_db_path(model_dir)
+        return db if os.path.exists(db) else None
+    except ImportError:
+        return None
+
+
+async def handle_data(request: web.Request) -> web.Response:
+    """Return current measurement rows from the SQLite DB as JSON."""
+    model_dir = request.query.get("model_dir", "").strip()
+    if not model_dir:
+        return web.json_response({"rows": [], "error": "No model_dir"})
+
+    db_path = _resolve_db_path(model_dir)
+    if not db_path:
+        return web.json_response({"rows": []})
+
+    try:
+        from ezexl3.measure_db import read_all_rows
+        rows_dict = await asyncio.to_thread(read_all_rows, db_path)
+        # Sort numerically by BPW
+        rows = list(rows_dict.values())
+        rows.sort(key=lambda r: _bpw_key(r.get("weights", "")))
+        return web.json_response({"rows": rows})
+    except Exception as e:
+        return web.json_response({"rows": [], "error": str(e)})
+
+
+async def handle_graph(request: web.Request) -> web.Response:
+    """Generate SVG graph from current DB state and return it."""
+    model_dir = request.query.get("model_dir", "").strip()
+    if not model_dir:
+        return web.json_response({"error": "No model_dir"}, status=400)
+
+    db_path = _resolve_db_path(model_dir)
+    if not db_path:
+        return web.json_response({"error": "No measurement data yet"}, status=404)
+
+    try:
+        from ezexl3.measure_db import export_csv, read_all_rows
+
+        # Need at least 2 numeric rows to draw
+        rows = await asyncio.to_thread(read_all_rows, db_path)
+        numeric = [r for r in rows.values()
+                   if r.get("KL Div") and r.get("PPL r-100") and r.get("GiB")]
+        if len(numeric) < 2:
+            return web.json_response({"error": "Need at least 2 completed measurements"}, status=404)
+
+        # Export to temp CSV, generate SVG, return inline
+        model_name = os.path.basename(os.path.abspath(model_dir))
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path = os.path.join(tmp, "data.csv")
+            svg_path = os.path.join(tmp, "graph.svg")
+            await asyncio.to_thread(export_csv, db_path, csv_path)
+
+            from ezexl3.graph_svg import generate_iceblink_svg
+            await asyncio.to_thread(
+                generate_iceblink_svg, csv_path, svg_path, model_name,
+            )
+
+            svg_content = Path(svg_path).read_text(encoding="utf-8")
+        return web.Response(
+            text=svg_content,
+            content_type="image/svg+xml",
+            headers={"Cache-Control": "no-cache"},
+        )
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+def _bpw_key(label: str) -> float:
+    try:
+        return float(label)
+    except (ValueError, TypeError):
+        return float("inf")
+
+
+# ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
 
@@ -315,6 +400,8 @@ def create_app() -> web.Application:
     app.router.add_get("/api/run/{job_id}/stream", handle_run_stream)
     app.router.add_post("/api/run/{job_id}/stop", handle_run_stop)
     app.router.add_get("/api/run/status", handle_run_status)
+    app.router.add_get("/api/data", handle_data)
+    app.router.add_get("/api/graph", handle_graph)
     app.router.add_static("/", STATIC_DIR, show_index=False)
 
     return app
