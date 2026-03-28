@@ -123,10 +123,10 @@ async function launchChat() {
     // Dashboard is shutting down, redirect to the chat UI on same port
     const url = data.url || window.location.origin;
     document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#a0a0a0;font-size:14px">Launching chat UI...</div>';
-    // Wait for chat server to come up, then redirect
+    // Wait for chat server to come up, then redirect with cache bust
     const tryRedirect = () => {
-      fetch(url + "/api/status").then(r => {
-        if (r.ok) window.location.href = url;
+      fetch(url + "/api/status", { cache: "no-store" }).then(r => {
+        if (r.ok) window.location.replace(url + "/?t=" + Date.now());
         else setTimeout(tryRedirect, 500);
       }).catch(() => setTimeout(tryRedirect, 500));
     };
