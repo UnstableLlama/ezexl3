@@ -51,6 +51,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     document.getElementById("sidebar").classList.toggle("collapsed");
   });
 
+  // Tab switching
+  document.querySelectorAll(".tab-btn").forEach(btn => {
+    btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+  });
+
   // Splitter drag
   initSplitter();
 
@@ -72,8 +77,11 @@ function selectCommand(cmd) {
 
   // Update header
   const schema = COMMANDS[cmd];
-  document.getElementById("command-title").textContent = schema.label;
+  document.getElementById("tab-command-label").textContent = schema.label;
   document.getElementById("command-desc").textContent = schema.description;
+
+  // Switch back to command tab when changing commands
+  switchTab("command");
 
   // Render form
   renderForm(cmd);
@@ -112,7 +120,7 @@ async function checkRunningJob() {
 function initSplitter() {
   const splitter = document.getElementById("splitter");
   const content = document.getElementById("content");
-  const formPanel = document.getElementById("form-panel");
+  const formPanel = document.getElementById("upper-panel");
 
   let startY = 0;
   let startHeight = 0;
