@@ -399,9 +399,9 @@ async def handle_chat_launch(request: web.Request) -> web.Response:
     # Spawn chat server as a separate process, then shut ourselves down
     ezexl3_bin = shutil.which("ezexl3")
     if ezexl3_bin:
-        chat_cmd = [ezexl3_bin, "chat", "--port", str(port), "--host", host]
+        chat_cmd = [ezexl3_bin, "chat", "--port", str(port), "--host", host, "--no-browser"]
     else:
-        chat_cmd = [sys.executable, "-m", "ezexl3", "chat", "--port", str(port), "--host", host]
+        chat_cmd = [sys.executable, "-m", "ezexl3", "chat", "--port", str(port), "--host", host, "--no-browser"]
 
     # Launch detached chat process
     await asyncio.create_subprocess_exec(
@@ -481,7 +481,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/chat/launch", handle_chat_launch)
     app.router.add_get("/api/config", handle_config_get)
     app.router.add_post("/api/config", handle_config_set)
-    app.router.add_static("/", STATIC_DIR, show_index=False)
+    app.router.add_static("/", STATIC_DIR, show_index=False, append_version=True)
 
     return app
 
