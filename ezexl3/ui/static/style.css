@@ -208,7 +208,7 @@ body {
   overflow: hidden;
 }
 #data-table-wrap {
-  flex: 0 0 340px;
+  flex: 0 0 510px;
   min-width: 180px;
   overflow-y: auto;
   padding: 16px;
