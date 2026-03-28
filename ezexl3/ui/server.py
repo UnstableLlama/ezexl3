@@ -384,6 +384,41 @@ def _bpw_key(label: str) -> float:
         return float("inf")
 
 
+async def handle_chat_launch(request: web.Request) -> web.Response:
+    """Shut down the dashboard and launch the chat UI in its place."""
+    manager: JobManager = request.app["job_manager"]
+    if manager.current and manager.current.status in ("starting", "running"):
+        return web.json_response(
+            {"error": "Cannot launch chat while a job is running"}, status=409,
+        )
+
+    # Find port/host from the running server
+    host = request.app.get("_host", "127.0.0.1")
+    port = request.app.get("_port", 8801)
+
+    # Spawn chat server as a separate process, then shut ourselves down
+    ezexl3_bin = shutil.which("ezexl3")
+    if ezexl3_bin:
+        chat_cmd = [ezexl3_bin, "chat", "--port", str(port), "--host", host]
+    else:
+        chat_cmd = [sys.executable, "-m", "ezexl3", "chat", "--port", str(port), "--host", host]
+
+    # Launch detached chat process
+    await asyncio.create_subprocess_exec(
+        *chat_cmd,
+        stdout=None, stderr=None,
+        start_new_session=True,
+    )
+
+    # Tell the client to redirect, then shut down
+    async def _shutdown():
+        await asyncio.sleep(0.5)
+        raise SystemExit(0)
+    asyncio.create_task(_shutdown())
+
+    return web.json_response({"ok": True, "url": f"http://{host}:{port}"})
+
+
 # ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
@@ -402,6 +437,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/run/status", handle_run_status)
     app.router.add_get("/api/data", handle_data)
     app.router.add_get("/api/graph", handle_graph)
+    app.router.add_post("/api/chat/launch", handle_chat_launch)
     app.router.add_static("/", STATIC_DIR, show_index=False)
 
     return app
@@ -429,6 +465,8 @@ def run_ui_server(
         pass
 
     app = create_app()
+    app["_host"] = host
+    app["_port"] = port
     url = f"http://{host}:{port}"
     print(f"  ezexl3 dashboard: {url}")
     print(f"  Press Ctrl+C to stop\n")
