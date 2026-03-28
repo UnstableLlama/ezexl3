@@ -25,6 +25,10 @@ function selectBrowserPath() {
     if (input) {
       input.value = pathEl.textContent;
       input.classList.remove("input-error");
+      // Persist model directory selection
+      if (browserTargetField === "models") {
+        saveModelDir(pathEl.textContent);
+      }
     }
   }
   closeBrowser();

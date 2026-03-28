@@ -1,16 +1,19 @@
 // ── Initialization, navigation, event wiring ────────────────────
 
 document.addEventListener("DOMContentLoaded", async () => {
-  // Fetch templates and GPU info
+  // Fetch templates, GPU info, and saved config
   try {
-    const [tRes, gRes] = await Promise.all([
+    const [tRes, gRes, cRes] = await Promise.all([
       fetch("/api/templates"),
       fetch("/api/gpus"),
+      fetch("/api/config"),
     ]);
     const tData = await tRes.json();
     const gData = await gRes.json();
+    const cData = await cRes.json();
     templates = tData.templates || [];
     gpus = gData.gpus || [];
+    savedConfig = cData || {};
   } catch (e) {
     console.error("Failed to fetch initial data:", e);
   }
