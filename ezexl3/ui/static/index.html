@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ezexl3 dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Sidebar -->
+<div id="sidebar">
+  <div class="sidebar-header">
+    <span class="logo-text">ezexl3</span>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-label">Commands</div>
+    <button class="nav-btn active" data-cmd="repo">
+      <span class="nav-icon">&#9654;</span> Repo
+      <span class="nav-sub">Full Pipeline</span>
+    </button>
+    <button class="nav-btn" data-cmd="quantize">
+      <span class="nav-icon">&#9638;</span> Quantize
+      <span class="nav-sub">Quantize Only</span>
+    </button>
+    <button class="nav-btn" data-cmd="measure">
+      <span class="nav-icon">&#9636;</span> Measure
+      <span class="nav-sub">KL + PPL</span>
+    </button>
+    <button class="nav-btn" data-cmd="readme">
+      <span class="nav-icon">&#9998;</span> README
+      <span class="nav-sub">Generate</span>
+    </button>
+    <div class="nav-divider"></div>
+    <button class="nav-btn" data-cmd="chat">
+      <span class="nav-icon">&#9993;</span> Chat
+      <span class="nav-sub">Opens in new tab</span>
+    </button>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="nav-section-label">GPUs</div>
+    <div id="gpu-info" class="gpu-info">
+      <span class="text-dim">Detecting...</span>
+    </div>
+  </div>
+</div>
+
+<!-- Main content -->
+<div id="main">
+  <div id="header">
+    <button id="toggle-sidebar" title="Toggle sidebar">&#9776;</button>
+    <span id="header-title">ezexl3 dashboard</span>
+  </div>
+
+  <div id="content">
+    <!-- Command form -->
+    <div id="form-panel">
+      <div id="form-header">
+        <h2 id="command-title">Repo</h2>
+        <p id="command-desc">Quantize &rarr; Measure KL+PPL &rarr; README</p>
+      </div>
+      <div id="form-fields"></div>
+      <div id="form-actions">
+        <button id="run-btn" class="action-btn primary">Run</button>
+        <button id="stop-btn" class="action-btn danger" style="display:none">Stop</button>
+        <button id="clear-btn" class="action-btn secondary">Clear</button>
+      </div>
+    </div>
+
+    <!-- Terminal output -->
+    <div id="terminal-panel">
+      <div id="terminal-header">
+        <span class="terminal-title">Output</span>
+        <span id="terminal-status" class="terminal-status"></span>
+      </div>
+      <pre id="terminal-output"></pre>
+    </div>
+  </div>
+</div>
+
+<!-- File browser modal -->
+<div id="browser-modal" style="display:none">
+  <div class="browser-dialog">
+    <div class="browser-header">
+      <span class="browser-title">Select Directory</span>
+      <button id="browser-close-btn" class="browser-close">&times;</button>
+    </div>
+    <input type="text" id="browser-path-input" class="browser-path-input" placeholder="Type a path and press Enter">
+    <div id="browser-current-path" class="browser-current-path"></div>
+    <div id="browser-indicator" class="browser-indicator" style="display:none"></div>
+    <div id="browser-entries" class="browser-entries"></div>
+    <div class="browser-footer">
+      <button id="browser-select-btn" class="action-btn primary">Select</button>
+    </div>
+  </div>
+</div>
+
+<!-- Scripts -->
+<script src="js/state.js"></script>
+<script src="js/commands.js"></script>
+<script src="js/forms.js"></script>
+<script src="js/browser.js"></script>
+<script src="js/terminal.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
