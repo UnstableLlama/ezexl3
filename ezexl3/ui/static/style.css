@@ -144,8 +144,9 @@ body {
 #form-panel {
   padding: 20px 24px;
   overflow-y: auto;
-  border-bottom: 1px solid var(--border);
-  max-height: 55vh;
+  flex: 0 0 auto;
+  height: 55%;
+  min-height: 80px;
 }
 
 #form-header { margin-bottom: 16px; }
@@ -306,12 +307,38 @@ body {
 .action-btn.secondary { background: var(--bg-surface); color: var(--text-muted); border: 1px solid var(--border); }
 .action-btn.secondary:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
 
+/* ── Splitter ─────────────────────────────────────────────────── */
+#splitter {
+  flex: 0 0 6px;
+  background: #111;
+  cursor: row-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid #222;
+  position: relative;
+  z-index: 2;
+  transition: background 0.15s;
+}
+#splitter:hover, #splitter.dragging { background: var(--accent); }
+.splitter-grip {
+  width: 32px;
+  height: 2px;
+  background: var(--text-dim);
+  border-radius: 1px;
+}
+#splitter:hover .splitter-grip,
+#splitter.dragging .splitter-grip { background: #fff; }
+/* Prevent text selection while dragging */
+body.splitter-active { cursor: row-resize !important; user-select: none; }
+
 /* ── Terminal panel ───────────────────────────────────────────── */
 #terminal-panel {
   flex: 1;
   display: flex;
   flex-direction: column;
-  min-height: 150px;
+  min-height: 80px;
   background: #000;
 }
 
@@ -321,7 +348,6 @@ body {
   justify-content: space-between;
   padding: 8px 16px;
   background: #111;
-  border-bottom: 1px solid #222;
 }
 .terminal-title {
   font-size: 11px;

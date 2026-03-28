@@ -51,6 +51,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     document.getElementById("sidebar").classList.toggle("collapsed");
   });
 
+  // Splitter drag
+  initSplitter();
+
   // Select initial command
   selectCommand("repo");
 
@@ -103,4 +106,43 @@ async function checkRunningJob() {
   } catch (e) {
     // ignore
   }
+}
+
+
+function initSplitter() {
+  const splitter = document.getElementById("splitter");
+  const content = document.getElementById("content");
+  const formPanel = document.getElementById("form-panel");
+
+  let startY = 0;
+  let startHeight = 0;
+
+  function onMouseDown(e) {
+    e.preventDefault();
+    startY = e.clientY;
+    startHeight = formPanel.getBoundingClientRect().height;
+    splitter.classList.add("dragging");
+    document.body.classList.add("splitter-active");
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }
+
+  function onMouseMove(e) {
+    const contentRect = content.getBoundingClientRect();
+    const delta = e.clientY - startY;
+    const newHeight = startHeight + delta;
+    // Clamp: min 80px for form, leave at least 80px for terminal + splitter
+    const maxHeight = contentRect.height - 80 - 6;
+    const clamped = Math.max(80, Math.min(newHeight, maxHeight));
+    formPanel.style.height = clamped + "px";
+  }
+
+  function onMouseUp() {
+    splitter.classList.remove("dragging");
+    document.body.classList.remove("splitter-active");
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+  }
+
+  splitter.addEventListener("mousedown", onMouseDown);
 }
