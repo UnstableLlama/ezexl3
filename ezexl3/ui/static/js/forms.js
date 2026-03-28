@@ -77,6 +77,17 @@ function createFieldEl(field) {
     input.className = "form-input";
     input.id = `field-${field.name}`;
     input.placeholder = "/path/to/model";
+    // Restore saved model directory
+    if (field.name === "models" && savedConfig.last_model_dir) {
+      input.value = savedConfig.last_model_dir;
+    }
+    // Save model directory on change
+    if (field.name === "models") {
+      input.addEventListener("change", () => {
+        const v = input.value.trim();
+        if (v) saveModelDir(v);
+      });
+    }
     const browseBtn = document.createElement("button");
     browseBtn.className = "browse-btn";
     browseBtn.textContent = "Browse";
@@ -209,4 +220,14 @@ function collectArgs() {
     return { error: `Required: ${missing.join(", ")}` };
   }
   return args;
+}
+
+
+function saveModelDir(dir) {
+  savedConfig.last_model_dir = dir;
+  fetch("/api/config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ last_model_dir: dir }),
+  }).catch(() => {});
 }

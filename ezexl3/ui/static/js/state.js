@@ -5,3 +5,4 @@ let activeJobId = null;
 let jobRunning = false;
 let templates = [];
 let gpus = [];
+let savedConfig = {};

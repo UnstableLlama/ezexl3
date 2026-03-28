@@ -420,6 +420,44 @@ async def handle_chat_launch(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Persistent user config (~/.config/ezexl3/ui.json)
+# ---------------------------------------------------------------------------
+
+def _config_path() -> Path:
+    xdg = os.environ.get("XDG_CONFIG_HOME", "")
+    base = Path(xdg) if xdg else Path.home() / ".config"
+    return base / "ezexl3" / "ui.json"
+
+
+def _load_config() -> dict:
+    p = _config_path()
+    if p.is_file():
+        try:
+            return json.loads(p.read_text("utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def _save_config(data: dict) -> None:
+    p = _config_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, indent=2), "utf-8")
+
+
+async def handle_config_get(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_load_config))
+
+
+async def handle_config_set(request: web.Request) -> web.Response:
+    incoming = await request.json()
+    cfg = await asyncio.to_thread(_load_config)
+    cfg.update(incoming)
+    await asyncio.to_thread(_save_config, cfg)
+    return web.json_response({"ok": True})
+
+
+# ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
 
@@ -438,6 +476,8 @@ def create_app() -> web.Application:
     app.router.add_get("/api/data", handle_data)
     app.router.add_get("/api/graph", handle_graph)
     app.router.add_post("/api/chat/launch", handle_chat_launch)
+    app.router.add_get("/api/config", handle_config_get)
+    app.router.add_post("/api/config", handle_config_set)
     app.router.add_static("/", STATIC_DIR, show_index=False)
 
     return app
