@@ -7,6 +7,7 @@ import collections
 import ipaddress
 import json
 import os
+import shutil
 import signal
 import sys
 import uuid
@@ -60,7 +61,12 @@ class JobManager:
             raise RuntimeError("A job is already running")
 
         job_id = uuid.uuid4().hex[:12]
-        cmd = [sys.executable, "-m", "ezexl3", subcommand] + args
+        # Prefer the installed entry-point script; fall back to python -m
+        ezexl3_bin = shutil.which("ezexl3")
+        if ezexl3_bin:
+            cmd = [ezexl3_bin, subcommand] + args
+        else:
+            cmd = [sys.executable, "-m", "ezexl3", subcommand] + args
         job = Job(job_id, cmd)
         self.current = job
 

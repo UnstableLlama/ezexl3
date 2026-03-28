@@ -186,14 +186,17 @@ function collectArgs() {
 
     if (!val) continue;
 
-    if (field.type === "select" || field.type === "template") {
+    if (field.type === "csv") {
+      // Normalize: strip spaces around commas so "-d 0, 1" becomes "-d 0,1"
+      args.push(field.flag, val.replace(/\s*,\s*/g, ",").replace(/\s+/g, ","));
+    } else if (field.type === "select" || field.type === "template") {
       if (val) {
         args.push(field.flag, val);
       }
     } else if (field.type === "number") {
       args.push(field.flag, val);
     } else {
-      // text, csv, path
+      // text, path
       args.push(field.flag, val);
     }
   }
