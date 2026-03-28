@@ -127,6 +127,10 @@ function createFieldEl(field) {
     input.id = `field-${field.name}`;
     if (field.placeholder) input.placeholder = field.placeholder;
     if (field.default !== undefined) input.value = field.default;
+    // Auto-populate CUDA devices from detected GPUs
+    if (field.name === "devices" && gpus.length > 0) {
+      input.value = gpus.map(g => g.index).join(",");
+    }
     row.appendChild(input);
   }
 

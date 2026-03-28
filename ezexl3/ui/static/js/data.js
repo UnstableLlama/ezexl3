@@ -132,6 +132,44 @@ function stopDataPolling() {
 }
 
 
+function initDataSplitter() {
+  const splitter = document.getElementById("data-splitter");
+  const tableWrap = document.getElementById("data-table-wrap");
+  const content = document.getElementById("data-content");
+
+  let startX = 0;
+  let startWidth = 0;
+
+  function onMouseDown(e) {
+    e.preventDefault();
+    startX = e.clientX;
+    startWidth = tableWrap.getBoundingClientRect().width;
+    splitter.classList.add("dragging");
+    document.body.classList.add("data-splitter-active");
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }
+
+  function onMouseMove(e) {
+    const contentRect = content.getBoundingClientRect();
+    const delta = e.clientX - startX;
+    const newWidth = startWidth + delta;
+    const maxWidth = contentRect.width - 180 - 6;
+    const clamped = Math.max(180, Math.min(newWidth, maxWidth));
+    tableWrap.style.flexBasis = clamped + "px";
+  }
+
+  function onMouseUp() {
+    splitter.classList.remove("dragging");
+    document.body.classList.remove("data-splitter-active");
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+  }
+
+  splitter.addEventListener("mousedown", onMouseDown);
+}
+
+
 function esc(s) {
   const d = document.createElement("div");
   d.textContent = s;

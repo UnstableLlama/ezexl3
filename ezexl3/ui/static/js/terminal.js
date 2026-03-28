@@ -165,4 +165,5 @@ function updateRunButton() {
     runBtn.textContent = "Run";
     stopBtn.style.display = "none";
   }
+  if (typeof updateChatButton === "function") updateChatButton();
 }

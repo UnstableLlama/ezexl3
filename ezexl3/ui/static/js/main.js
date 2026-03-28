@@ -24,8 +24,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     btn.addEventListener("click", () => {
       const cmd = btn.dataset.cmd;
       if (cmd === "chat") {
-        // Open chat in new tab on port 8800
-        window.open("http://127.0.0.1:8800", "_blank");
+        launchChat();
         return;
       }
       selectCommand(cmd);
@@ -55,6 +54,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.querySelectorAll(".tab-btn").forEach(btn => {
     btn.addEventListener("click", () => switchTab(btn.dataset.tab));
   });
+
+  // Data panel horizontal splitter
+  initDataSplitter();
 
   // Splitter drag
   initSplitter();
@@ -97,6 +99,47 @@ function renderGpuInfo() {
   el.innerHTML = gpus.map(g =>
     `<div class="gpu-item">GPU ${g.index}: ${g.name} <span class="text-dim">${g.vram_gb} GB</span></div>`
   ).join("");
+}
+
+
+async function launchChat() {
+  const chatBtn = document.querySelector('.nav-btn[data-cmd="chat"]');
+  if (jobRunning) return;
+  chatBtn.disabled = true;
+  chatBtn.classList.add("disabled");
+
+  try {
+    const res = await fetch("/api/chat/launch", { method: "POST" });
+    const data = await res.json();
+    if (data.error) {
+      alert(data.error);
+      chatBtn.disabled = false;
+      chatBtn.classList.remove("disabled");
+      return;
+    }
+    // Dashboard is shutting down, redirect to the chat UI on same port
+    const url = data.url || window.location.origin;
+    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#a0a0a0;font-size:14px">Launching chat UI...</div>';
+    // Wait for chat server to come up, then redirect
+    const tryRedirect = () => {
+      fetch(url + "/api/status").then(r => {
+        if (r.ok) window.location.href = url;
+        else setTimeout(tryRedirect, 500);
+      }).catch(() => setTimeout(tryRedirect, 500));
+    };
+    setTimeout(tryRedirect, 1500);
+  } catch (e) {
+    chatBtn.disabled = false;
+    chatBtn.classList.remove("disabled");
+  }
+}
+
+
+function updateChatButton() {
+  const chatBtn = document.querySelector('.nav-btn[data-cmd="chat"]');
+  if (!chatBtn) return;
+  chatBtn.disabled = jobRunning;
+  chatBtn.classList.toggle("disabled", jobRunning);
 }
 
 

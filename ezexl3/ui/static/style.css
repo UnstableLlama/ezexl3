@@ -95,6 +95,7 @@ body {
   color: var(--text-dim);
 }
 .nav-divider { height: 1px; background: var(--border); margin: 4px 12px; }
+.nav-btn.disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
 
 .sidebar-section { padding: 4px 0; }
 .gpu-info { padding: 4px 16px 12px; }
@@ -208,10 +209,33 @@ body {
 }
 #data-table-wrap {
   flex: 0 0 340px;
+  min-width: 180px;
   overflow-y: auto;
   padding: 16px;
-  border-right: 1px solid var(--border);
 }
+
+/* Vertical splitter in data panel */
+.data-splitter {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  background: var(--bg-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  transition: background 0.15s;
+}
+.data-splitter:hover, .data-splitter.dragging { background: var(--accent); }
+.data-splitter-grip {
+  width: 2px;
+  height: 32px;
+  background: var(--text-dim);
+  border-radius: 1px;
+}
+.data-splitter:hover .data-splitter-grip,
+.data-splitter.dragging .data-splitter-grip { background: #fff; }
+body.data-splitter-active { cursor: col-resize !important; user-select: none; }
 #data-graph-wrap {
   flex: 1;
   display: flex;
