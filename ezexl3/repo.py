@@ -450,9 +450,8 @@ def _print_msg_with_progress(
     if use_ansi:
         _print_above_progress(msg, gpu_status, num_lines)
     else:
-        # Overwrite the progress line with the message
-        sys.stdout.write(f"\r{msg}\n")
-        sys.stdout.flush()
+        # Print on a new line (no \r so the dashboard finalizes the progress bar)
+        print(msg)
 
 
 def _cleanup_gpu_progress(use_ansi: bool, num_lines: int) -> None:
