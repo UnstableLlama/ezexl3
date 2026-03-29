@@ -1116,6 +1116,21 @@ def _parse_measure_args(measure_args: List[str], default_devices: List[int]) -> 
     return ppl_rows, devices
 
 
+def _maybe_update_graph(model_dir: str, csv_path: str) -> None:
+    """Regenerate the SVG graph from the current CSV if there are >= 2 data points."""
+    from ezexl3.graph_svg import load_series, generate_iceblink_svg
+
+    try:
+        bpw, _kld, _ppl, _gib, _ = load_series(csv_path, drop_bf16=True)
+    except Exception:
+        return
+    if len(bpw) < 2:
+        return
+    basename = os.path.basename(os.path.abspath(model_dir)).lower()
+    svg_path = os.path.join(model_dir, f"{basename}.svg")
+    generate_iceblink_svg(csv_path=csv_path, out_svg=svg_path, title=basename)
+
+
 def _init_measure_db(model_dir: str, devices: List[int]) -> Tuple[str, str]:
     """Set up SQLite DB, migrate legacy CSVs. Returns (db_path, out_csv)."""
     out_csv = default_csv_path(model_dir)
@@ -1289,6 +1304,14 @@ def run_measure_single_bpw(
                 ppl_val = row.get("PPL r-100", "N/A")
                 msg = f"✅ [GPU {gpu}] DONE {res_label} PPL: PPL={ppl_val}"
             gpu_status[gpu] = "idle"
+
+            # Live graph update after each measurement result
+            try:
+                out_csv = default_csv_path(model_dir)
+                export_csv(db_path, out_csv)
+                _maybe_update_graph(model_dir, out_csv)
+            except Exception:
+                pass  # non-critical
         elif event == "error":
             failures += 1
             msg = f"🔴 [GPU {gpu}] FAIL {res_label} {phase_tag}: {res['error']}"
@@ -1557,14 +1580,29 @@ def run_measure_stage(
             print(f"✅ All catbench jobs complete: {n_svgs} SVGs generated.")
         return 0
 
-    # Queue: all KL first, then all PPL, then catbench, then sentinels
+    # Queue: interleave by BPW (lowest first), PPL then KL per BPW,
+    # so the live graph fills in from left to right.
     tasks: Queue = Queue()
     results: Queue = Queue()
 
-    for t in kl_tasks:
-        tasks.put(t)
+    # Build a combined per-BPW task list sorted by numeric BPW (ascending)
+    _bpw_tasks: Dict[str, List[dict]] = {}
     for t in ppl_tasks:
-        tasks.put(t)
+        _bpw_tasks.setdefault(t["label"], []).append(t)
+    for t in kl_tasks:
+        _bpw_tasks.setdefault(t["label"], []).append(t)
+
+    def _bpw_sort_key(label: str) -> float:
+        if label == "base":
+            return -1.0
+        try:
+            return float(label)
+        except ValueError:
+            return 999.0
+
+    for label in sorted(_bpw_tasks, key=_bpw_sort_key):
+        for t in _bpw_tasks[label]:
+            tasks.put(t)
     for t in catbench_tasks:
         tasks.put(t)
     for _ in devices:
@@ -1622,6 +1660,15 @@ def run_measure_stage(
                 ppl_val = row.get("PPL r-100", "N/A")
                 msg = f"✅ [GPU {gpu}] DONE {label} PPL: PPL={ppl_val}"
             gpu_status[gpu] = "idle"
+
+            # Live graph update: export CSV and regenerate SVG after each
+            # KL/PPL result so the graph renders progressively.
+            if phase in ("kl", "ppl"):
+                try:
+                    export_csv(db_path, out_csv)
+                    _maybe_update_graph(model_dir, out_csv)
+                except Exception:
+                    pass  # non-critical, final export happens below
         elif event == "error":
             failures += 1
             msg = f"🔴 [GPU {gpu}] FAIL {label} {phase_tag}: {res['error']}"
@@ -1636,7 +1683,7 @@ def run_measure_stage(
     for p in procs:
         p.join()
 
-    # Export database to CSV for downstream consumers (readme, graph_svg)
+    # Final export of database to CSV for downstream consumers (readme, graph_svg)
     export_csv(db_path, out_csv)
 
     # Batch SVG generation after all catbench jobs
