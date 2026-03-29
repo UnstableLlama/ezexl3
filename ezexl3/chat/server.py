@@ -21,8 +21,16 @@ STATIC_DIR = Path(__file__).parent / "static"
 _MODEL_MARKERS = {"config.json"}
 
 
+@web.middleware
+async def _no_cache_static(request: web.Request, handler):
+    resp = await handler(request)
+    if "Cache-Control" not in resp.headers:
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 def create_app(engine: ChatEngine) -> web.Application:
-    app = web.Application()
+    app = web.Application(middlewares=[_no_cache_static])
     app["engine"] = engine
 
     app.router.add_get("/", handle_index)

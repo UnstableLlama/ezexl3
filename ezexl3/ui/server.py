@@ -461,11 +461,23 @@ async def handle_config_set(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Middleware — prevent browser from caching static files across server swaps
+# ---------------------------------------------------------------------------
+
+@web.middleware
+async def _no_cache_static(request: web.Request, handler):
+    resp = await handler(request)
+    if "Cache-Control" not in resp.headers:
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+# ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
 
 def create_app() -> web.Application:
-    app = web.Application()
+    app = web.Application(middlewares=[_no_cache_static])
     app["job_manager"] = JobManager()
 
     app.router.add_get("/", handle_index)
