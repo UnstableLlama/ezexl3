@@ -14,9 +14,9 @@
   // Always init model panel (handles both loaded and unloaded states)
   await initModelPanel(status);
 
-  if (modelLoaded) {
-    populateUI(status);
-  }
+  // Always populate UI — initializes sliders, toggles, mode dropdown,
+  // and model info regardless of whether a model is loaded yet.
+  populateUI(status);
   updateChatEnabled();
 })();
 

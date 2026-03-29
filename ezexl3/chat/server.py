@@ -292,7 +292,8 @@ def run_server(
         app.on_startup.append(_open_browser)
 
     try:
-        web.run_app(app, host=host, port=port, print=None)
+        web.run_app(app, host=host, port=port, print=None,
+                    reuse_address=True)
     except OSError as exc:
         if exc.errno == 98:  # EADDRINUSE
             print(
