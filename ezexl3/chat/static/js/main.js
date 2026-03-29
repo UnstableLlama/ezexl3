@@ -2,22 +2,28 @@
 
 // ── Init ────────────────────────────────────────────────────────
 (async () => {
-  const [statusRes, settingsRes] = await Promise.all([
-    fetch('/api/status'),
-    fetch('/api/settings'),
-  ]);
-  const status = await statusRes.json();
-  settings = await settingsRes.json();
-  modes = status.available_modes || {};
-  modelLoaded = status.loaded;
+  try {
+    const [statusRes, settingsRes] = await Promise.all([
+      fetch('/api/status'),
+      fetch('/api/settings'),
+    ]);
+    const status = await statusRes.json();
+    settings = await settingsRes.json();
+    modes = status.available_modes || {};
+    modelLoaded = status.loaded;
 
-  // Always init model panel (handles both loaded and unloaded states)
-  await initModelPanel(status);
+    // Always init model panel (handles both loaded and unloaded states)
+    await initModelPanel(status);
 
-  // Always populate UI — initializes sliders, toggles, mode dropdown,
-  // and model info regardless of whether a model is loaded yet.
-  populateUI(status);
-  updateChatEnabled();
+    // Always populate UI — initializes sliders, toggles, mode dropdown,
+    // and model info regardless of whether a model is loaded yet.
+    populateUI(status);
+    updateChatEnabled();
+  } catch (err) {
+    console.error('Chat init failed:', err);
+    document.getElementById('empty-hint').textContent =
+      'Failed to connect to backend — is the server running?';
+  }
 })();
 
 // ── Sidebar toggle ──────────────────────────────────────────────

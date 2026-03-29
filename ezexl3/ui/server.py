@@ -490,6 +490,31 @@ def create_app() -> web.Application:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _kill_port_holder(port: int) -> bool:
+    """Try to kill whatever process is holding *port*. Returns True on success."""
+    import subprocess
+    try:
+        pids = subprocess.check_output(
+            ["lsof", "-ti", f":{port}"], text=True,
+        ).strip().split()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+    if not pids:
+        return False
+    my_pid = str(os.getpid())
+    for pid in pids:
+        if pid == my_pid:
+            continue
+        try:
+            os.kill(int(pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+    # Give the OS a moment to release the socket
+    import time
+    time.sleep(0.5)
+    return True
+
+
 def run_ui_server(
     host: str = "127.0.0.1",
     port: int = 8801,
@@ -529,12 +554,18 @@ def run_ui_server(
                     reuse_address=True)
     except OSError as exc:
         if exc.errno == 98:  # EADDRINUSE
-            print(
-                f"\n  ERROR: Port {port} is already in use.\n"
-                f"  A previous ezexl3 process may still be running.\n"
-                f"  Fix:  lsof -ti :{port} | xargs kill\n"
-                f"  Or use a different port:  ezexl3 ui --port {port + 1}\n",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        raise
+            if _kill_port_holder(port):
+                print(f"  Killed stale process on port {port}, retrying...\n")
+                web.run_app(app, host=host, port=port, print=None,
+                            reuse_address=True)
+            else:
+                print(
+                    f"\n  ERROR: Port {port} is already in use and could not"
+                    f" be freed.\n"
+                    f"  Fix:  lsof -ti :{port} | xargs kill\n"
+                    f"  Or use a different port:  ezexl3 ui --port {port + 1}\n",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        else:
+            raise
