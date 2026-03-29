@@ -459,7 +459,6 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
 }
 .form-label-row .form-label { margin-bottom: 0; }
 .field-toggle {
-  margin-left: auto;
   display: flex;
   align-items: center;
   cursor: pointer;
