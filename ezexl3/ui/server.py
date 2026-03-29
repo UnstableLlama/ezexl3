@@ -544,31 +544,33 @@ def run_ui_server(
     except ValueError:
         pass
 
-    app = create_app()
-    app["_host"] = host
-    app["_port"] = port
     url = f"http://{host}:{port}"
     print(f"  ezexl3 dashboard: {url}")
     print(f"  Press Ctrl+C to stop\n")
 
-    if open_browser:
-        async def _open_browser(_app):
-            import threading
-            def _delayed_open():
-                import time
-                time.sleep(2)
-                webbrowser.open(url)
-            threading.Thread(target=_delayed_open, daemon=True).start()
-        app.on_startup.append(_open_browser)
+    def _make_app():
+        app = create_app()
+        app["_host"] = host
+        app["_port"] = port
+        if open_browser:
+            async def _open_browser(_app):
+                import threading
+                def _delayed_open():
+                    import time
+                    time.sleep(2)
+                    webbrowser.open(url)
+                threading.Thread(target=_delayed_open, daemon=True).start()
+            app.on_startup.append(_open_browser)
+        return app
 
     try:
-        web.run_app(app, host=host, port=port, print=None,
+        web.run_app(_make_app(), host=host, port=port, print=None,
                     reuse_address=True)
     except OSError as exc:
         if exc.errno == 98:  # EADDRINUSE
             if _kill_port_holder(port):
                 print(f"  Killed stale process on port {port}, retrying...\n")
-                web.run_app(app, host=host, port=port, print=None,
+                web.run_app(_make_app(), host=host, port=port, print=None,
                             reuse_address=True)
             else:
                 print(

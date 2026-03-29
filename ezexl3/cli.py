@@ -219,7 +219,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--template", "-t", help="README template name (e.g., 'fire', 'basic')")
 
     # --- ui (dashboard) ---
-    ui = sub.add_parser("ui", help="Launch dashboard web UI")
+    ui = sub.add_parser("ui", aliases=["dash", "dashboard"],
+                        help="Launch dashboard web UI")
     ui.add_argument("--host", default="127.0.0.1",
                     help="Bind address (default: 127.0.0.1)")
     ui.add_argument("--port", type=int, default=8801, help="Port (default: 8801)")
@@ -278,7 +279,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         return 0
 
-    if cmd == "ui":
+    if cmd in ("ui", "dash", "dashboard"):
         from ezexl3.ui.server import run_ui_server
         run_ui_server(
             host=args.host,
