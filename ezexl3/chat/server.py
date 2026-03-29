@@ -291,4 +291,16 @@ def run_server(
             threading.Thread(target=_delayed_open, daemon=True).start()
         app.on_startup.append(_open_browser)
 
-    web.run_app(app, host=host, port=port, print=None)
+    try:
+        web.run_app(app, host=host, port=port, print=None)
+    except OSError as exc:
+        if exc.errno == 98:  # EADDRINUSE
+            print(
+                f"\n  ERROR: Port {port} is already in use.\n"
+                f"  A previous ezexl3 process may still be running.\n"
+                f"  Fix:  lsof -ti :{port} | xargs kill\n"
+                f"  Or use a different port:  ezexl3 chat --port {port + 1}\n",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        raise
