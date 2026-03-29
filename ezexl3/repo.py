@@ -430,13 +430,17 @@ def _redraw_gpu_progress(
     if use_ansi:
         _clear_and_redraw_progress(gpu_status, num_lines)
     else:
-        # Non-ANSI fallback: print each active GPU status on its own line
-        # using \r to overwrite (works in piped/dashboard output)
+        # Non-ANSI fallback: build a single status line from all active GPUs,
+        # use \r to overwrite the current line in the terminal/dashboard.
+        parts = []
         for gpu_id in sorted(gpu_status):
             text = gpu_status[gpu_id]
             if text != "idle":
-                sys.stdout.write(f"\r  GPU {gpu_id} | {text}")
-                sys.stdout.flush()
+                parts.append(f"GPU {gpu_id} | {text}")
+        if parts:
+            line = "  " + "  ·  ".join(parts)
+            sys.stdout.write(f"\r{line}\n")
+            sys.stdout.flush()
 
 
 def _print_msg_with_progress(
@@ -446,8 +450,9 @@ def _print_msg_with_progress(
     if use_ansi:
         _print_above_progress(msg, gpu_status, num_lines)
     else:
-        sys.stdout.write("\n")
-        print(msg)
+        # Overwrite the progress line with the message
+        sys.stdout.write(f"\r{msg}\n")
+        sys.stdout.flush()
 
 
 def _cleanup_gpu_progress(use_ansi: bool, num_lines: int) -> None:
@@ -457,9 +462,6 @@ def _cleanup_gpu_progress(use_ansi: bool, num_lines: int) -> None:
         for _ in range(num_lines):
             sys.stdout.write("\033[2K\n")
         sys.stdout.write(f"\033[{num_lines}A")
-        sys.stdout.flush()
-    else:
-        sys.stdout.write("\n")
         sys.stdout.flush()
 
 
