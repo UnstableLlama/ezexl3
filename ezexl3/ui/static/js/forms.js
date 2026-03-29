@@ -49,6 +49,8 @@ function createFieldEl(field) {
   const row = document.createElement("div");
   row.className = "form-row";
 
+  const labelRow = document.createElement("div");
+  labelRow.className = "form-label-row";
   const label = document.createElement("label");
   label.className = "form-label";
   label.textContent = field.label;
@@ -58,7 +60,21 @@ function createFieldEl(field) {
     star.textContent = " *";
     label.appendChild(star);
   }
-  row.appendChild(label);
+  labelRow.appendChild(label);
+
+  if (field.toggleable) {
+    const toggle = document.createElement("label");
+    toggle.className = "field-toggle";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.id = `toggle-${field.name}`;
+    toggle.appendChild(cb);
+    const slider = document.createElement("span");
+    slider.className = "toggle-slider";
+    toggle.appendChild(slider);
+    labelRow.appendChild(toggle);
+  }
+  row.appendChild(labelRow);
 
   if (field.help) {
     const help = document.createElement("div");
@@ -145,6 +161,18 @@ function createFieldEl(field) {
     row.appendChild(input);
   }
 
+  // Wire up toggleable: start disabled, grey out until toggled on
+  if (field.toggleable) {
+    const toggleCb = row.querySelector(`#toggle-${field.name}`);
+    const setEnabled = (on) => {
+      row.classList.toggle("field-disabled", !on);
+      const inp = row.querySelector(`#field-${field.name}`);
+      if (inp) inp.disabled = !on;
+    };
+    setEnabled(false);
+    toggleCb.addEventListener("change", () => setEnabled(toggleCb.checked));
+  }
+
   return row;
 }
 
@@ -190,6 +218,12 @@ function collectArgs() {
       continue;
     }
 
+    // Skip toggleable fields that are toggled off
+    if (field.toggleable) {
+      const toggleCb = document.getElementById(`toggle-${field.name}`);
+      if (!toggleCb || !toggleCb.checked) continue;
+    }
+
     const val = el.value.trim();
 
     if (field.required && !val) {
@@ -199,7 +233,11 @@ function collectArgs() {
     }
     el.classList.remove("input-error");
 
-    if (!val) continue;
+    if (!val) {
+      // Toggleable fields with no value still emit the flag (e.g. -cb defaults to 3)
+      if (field.toggleable) args.push(field.flag);
+      continue;
+    }
 
     if (field.type === "csv") {
       // Normalize: strip spaces around commas so "-d 0, 1" becomes "-d 0,1"
