@@ -14,7 +14,7 @@ const COMMANDS = {
       { name: "device_ratios", flag: "-r", type: "csv", label: "Device Ratios", placeholder: "1,1", help: "VRAM ratios per device (optional)" },
       { name: "template", flag: "-t", type: "template", label: "Template", help: "README template style" },
       { name: "layers", flag: "-l", type: "select", choices: ["1", "2", "3"], default: "2", label: "Measure Layers", help: "Layers for optimized measure stage" },
-      { name: "catbench", flag: "-cb", type: "number", label: "Catbench Samples", placeholder: "3", help: "SVG Catbench samples per BPW (0 = off)" },
+      { name: "catbench", flag: "-cb", type: "number", label: "Catbench Samples", placeholder: "3", help: "SVG Catbench samples per BPW", toggleable: true },
       // Boolean flags
       { name: "no_verify", flag: "-nv", type: "boolean", label: "No Verify", help: "Batch mode: all quants then all measures" },
       { name: "no_cleanup", flag: "-nc", type: "boolean", label: "Keep Work Dirs", help: "Keep w-* working directories and logs" },
@@ -52,7 +52,7 @@ const COMMANDS = {
       { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "Model directory with quantized outputs" },
       { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6" },
       { name: "devices", flag: "-d", type: "csv", default: "0", label: "CUDA Devices", placeholder: "0,1" },
-      { name: "catbench", flag: "-cb", type: "number", label: "Catbench Samples", placeholder: "3" },
+      { name: "catbench", flag: "-cb", type: "number", label: "Catbench Samples", placeholder: "3", help: "SVG Catbench samples per BPW", toggleable: true },
       { name: "no_logs", flag: "--no-logs", type: "boolean", label: "No Logs" },
       { name: "no_cleanup", flag: "-nc", type: "boolean", label: "Keep Temp Files" },
     ],

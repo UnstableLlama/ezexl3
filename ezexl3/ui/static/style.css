@@ -450,6 +450,48 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
 }
 .toggle-label-text { color: var(--text-muted); }
 
+/* Inline field toggle (toggleable fields like Catbench) */
+.form-label-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.form-label-row .form-label { margin-bottom: 0; }
+.field-toggle {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+.field-toggle input[type="checkbox"] { display: none; }
+.field-toggle .toggle-slider {
+  width: 28px;
+  height: 16px;
+  border-radius: 8px;
+}
+.field-toggle .toggle-slider::after {
+  width: 10px;
+  height: 10px;
+  top: 2px;
+  left: 2px;
+}
+.field-toggle input:checked + .toggle-slider {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.field-toggle input:checked + .toggle-slider::after {
+  transform: translateX(12px);
+  background: #fff;
+}
+.form-row.field-disabled .form-label,
+.form-row.field-disabled .form-help { opacity: 0.35; }
+.form-row.field-disabled .form-input,
+.form-row.field-disabled .form-select {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
 /* Form actions */
 #form-actions {
   display: flex;
