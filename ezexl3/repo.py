@@ -1117,18 +1117,27 @@ def _parse_measure_args(measure_args: List[str], default_devices: List[int]) -> 
 
 
 def _maybe_update_graph(model_dir: str, csv_path: str) -> None:
-    """Regenerate the SVG graph from the current CSV if there are >= 2 data points."""
-    from ezexl3.graph_svg import load_series, generate_iceblink_svg
+    """Regenerate the SVG graph from the current CSV if there are >= 2 complete data points.
+
+    Rows with missing KL/PPL/GiB (NaN from partial measurement) are filtered
+    out so that make_plot never sees NaN values in axis-limit calculations.
+    """
+    import numpy as np
+    from ezexl3.graph_svg import load_series, make_plot
 
     try:
-        bpw, _kld, _ppl, _gib, _ = load_series(csv_path, drop_bf16=True)
+        bpw, kld, ppl, gib, _ = load_series(csv_path, drop_bf16=True)
     except Exception:
         return
+
+    valid = ~(np.isnan(kld) | np.isnan(ppl) | np.isnan(gib))
+    bpw, kld, ppl, gib = bpw[valid], kld[valid], ppl[valid], gib[valid]
+
     if len(bpw) < 2:
         return
     basename = os.path.basename(os.path.abspath(model_dir)).lower()
     svg_path = os.path.join(model_dir, f"{basename}.svg")
-    generate_iceblink_svg(csv_path=csv_path, out_svg=svg_path, title=basename)
+    make_plot(bpw, kld, ppl, gib, title=basename, outfile=svg_path, add_checks=False)
 
 
 def _init_measure_db(model_dir: str, devices: List[int]) -> Tuple[str, str]:
