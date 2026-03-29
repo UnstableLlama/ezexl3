@@ -13,7 +13,7 @@ const COMMANDS = {
       { name: "devices", flag: "-d", type: "csv", default: "0", label: "CUDA Devices", placeholder: "0,1", help: "GPU device indices" },
       { name: "device_ratios", flag: "-r", type: "csv", label: "Device Ratios", placeholder: "1,1", help: "VRAM ratios per device (optional)" },
       { name: "template", flag: "-t", type: "template", label: "Template", help: "README template style" },
-      { name: "layers", flag: "-l", type: "select", choices: ["1", "2", "3"], default: "2", label: "Measure Layers", help: "Layers for optimized measure stage" },
+      { name: "layers", flag: "-l", type: "select", choices: ["1", "2", "3"], default: "2", label: "Optimization Depth", help: "Layer depth for optimization", toggleable: true },
       { name: "catbench", flag: "-cb", type: "number", label: "Catbench Samples", placeholder: "3", help: "SVG Catbench samples per BPW", toggleable: true },
       // Boolean flags
       { name: "no_verify", flag: "-nv", type: "boolean", label: "No Verify", help: "Batch mode: all quants then all measures" },
@@ -37,7 +37,7 @@ const COMMANDS = {
       { name: "device_ratios", flag: "-r", type: "csv", label: "Device Ratios", placeholder: "1,1" },
       { name: "out_template", flag: "--out-template", type: "text", default: "{model}/{bpw}", label: "Output Template", help: "Fields: {model}, {model_name}, {bpw}" },
       { name: "w_template", flag: "--w-template", type: "text", default: "{model}/w-{bpw}", label: "Work Dir Template", help: "Fields: {model}, {model_name}, {bpw}" },
-      { name: "layers", flag: "-l", type: "select", choices: ["1", "2", "3"], default: "2", label: "Measure Layers" },
+      { name: "layers", flag: "-l", type: "select", choices: ["1", "2", "3"], default: "2", label: "Optimization Depth", help: "Layer depth for optimization", toggleable: true },
       { name: "dry", flag: "--dry", type: "boolean", label: "Dry Run", help: "Print commands without executing" },
       { name: "continue_on_error", flag: "--continue-on-error", type: "boolean", label: "Continue on Error" },
       { name: "no_logs", flag: "--no-logs", type: "boolean", label: "No Logs" },
