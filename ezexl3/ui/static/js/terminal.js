@@ -14,17 +14,17 @@ function clearTerminal() {
 function appendTerminal(text, className) {
   const el = terminalEl();
 
-  // Handle \r (carriage return): replace the current (last) line
+  // Handle \r (carriage return): replace the current line
   if (text.includes("\r")) {
     const parts = text.split("\r");
     // Anything before first \r appends normally
     if (parts[0]) _appendChunk(el, parts[0], className);
-    // Each subsequent part replaces the current line
-    for (let i = 1; i < parts.length; i++) {
-      _replaceLastLine(el);
-      if (parts[i]) _appendChunk(el, parts[i], className);
-    }
+    // Last part after final \r updates the progress line
+    const replacement = parts[parts.length - 1];
+    _updateProgressLine(el, replacement);
   } else {
+    // Regular text — finalize any active progress line first
+    _finalizeProgress(el);
     _appendChunk(el, text, className);
   }
   // Auto-scroll
@@ -42,22 +42,23 @@ function _appendChunk(el, text, className) {
   }
 }
 
-function _replaceLastLine(el) {
-  // Walk backwards removing nodes until we hit a newline or run out
-  while (el.lastChild) {
-    const node = el.lastChild;
-    const text = node.textContent;
-    const nlIdx = text.lastIndexOf("\n");
-    if (nlIdx !== -1) {
-      // Keep up to and including the newline
-      if (node.nodeType === Node.TEXT_NODE) {
-        node.textContent = text.slice(0, nlIdx + 1);
-      } else {
-        node.textContent = text.slice(0, nlIdx + 1);
-      }
-      return;
-    }
-    el.removeChild(node);
+function _updateProgressLine(el, text) {
+  // Find or create the ephemeral progress element
+  let prog = el.querySelector(".term-progress");
+  if (!prog) {
+    prog = document.createElement("span");
+    prog.className = "term-progress";
+    el.appendChild(prog);
+  }
+  // Strip trailing newline — progress lines are ephemeral, not committed
+  prog.textContent = text.replace(/\n$/, "");
+}
+
+function _finalizeProgress(el) {
+  // Convert any active progress span into a permanent newline
+  const prog = el.querySelector(".term-progress");
+  if (prog) {
+    prog.replaceWith(document.createTextNode("\n"));
   }
 }
 
