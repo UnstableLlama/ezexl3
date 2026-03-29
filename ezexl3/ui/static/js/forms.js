@@ -8,8 +8,8 @@ function renderForm(commandKey) {
   container.innerHTML = "";
 
   const required = cmd.fields.filter(f => f.required && f.type !== "boolean");
-  const optional = cmd.fields.filter(f => !f.required && f.type !== "boolean");
-  const booleans = cmd.fields.filter(f => f.type === "boolean");
+  const optional = cmd.fields.filter(f => !f.required && f.type !== "boolean" || (f.type === "boolean" && f.toggleable));
+  const booleans = cmd.fields.filter(f => f.type === "boolean" && !f.toggleable);
 
   // Required fields
   if (required.length) {
@@ -102,7 +102,21 @@ function createFieldEl(field) {
 
   let input;
 
-  if (field.type === "path") {
+  if (field.type === "boolean" && field.toggleable) {
+    // Toggleable boolean — the toggle in the label row IS the input, no extra field needed
+    // Create a hidden checkbox to serve as the field value for collectArgs
+    input = document.createElement("input");
+    input.type = "checkbox";
+    input.id = `field-${field.name}`;
+    input.style.display = "none";
+    row.appendChild(input);
+    // Sync the label-row toggle with the hidden field checkbox
+    const toggleCb = row.querySelector(`#toggle-${field.name}`);
+    if (toggleCb) {
+      toggleCb.addEventListener("change", () => { input.checked = toggleCb.checked; });
+    }
+    return row;
+  } else if (field.type === "path") {
     const wrap = document.createElement("div");
     wrap.className = "path-input-wrap";
     input = document.createElement("input");
