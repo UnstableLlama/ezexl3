@@ -415,6 +415,54 @@ def _build_synthetic_bar(pct: int, width: int = 30) -> str:
     return "\u2501" * filled + "\u2500" * empty + f" {pct:3d}%"
 
 
+def _init_gpu_progress(use_ansi: bool, gpu_status: Dict[int, str]) -> None:
+    """Print the initial GPU status area (one line per GPU)."""
+    if use_ansi:
+        for d in sorted(gpu_status):
+            sys.stdout.write(f"\033[2K  GPU {d} | idle\n")
+        sys.stdout.flush()
+
+
+def _redraw_gpu_progress(
+    use_ansi: bool, gpu_status: Dict[int, str], num_lines: int,
+) -> None:
+    """Update the GPU progress area in-place."""
+    if use_ansi:
+        _clear_and_redraw_progress(gpu_status, num_lines)
+    else:
+        # Non-ANSI fallback: print each active GPU status on its own line
+        # using \r to overwrite (works in piped/dashboard output)
+        for gpu_id in sorted(gpu_status):
+            text = gpu_status[gpu_id]
+            if text != "idle":
+                sys.stdout.write(f"\r  GPU {gpu_id} | {text}")
+                sys.stdout.flush()
+
+
+def _print_msg_with_progress(
+    msg: str, use_ansi: bool, gpu_status: Dict[int, str], num_lines: int,
+) -> None:
+    """Print a message, preserving the GPU progress area if ANSI is available."""
+    if use_ansi:
+        _print_above_progress(msg, gpu_status, num_lines)
+    else:
+        sys.stdout.write("\n")
+        print(msg)
+
+
+def _cleanup_gpu_progress(use_ansi: bool, num_lines: int) -> None:
+    """Clear the GPU progress area after all tasks are done."""
+    if use_ansi:
+        sys.stdout.write(f"\033[{num_lines}A")
+        for _ in range(num_lines):
+            sys.stdout.write("\033[2K\n")
+        sys.stdout.write(f"\033[{num_lines}A")
+        sys.stdout.flush()
+    else:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
+
 def _build_optimized_jobs(model_dir: str, optimized_bpws: List[str]) -> Tuple[List[dict], List[dict]]:
     measurements_dir = os.path.join(model_dir, "measurements")
     os.makedirs(measurements_dir, exist_ok=True)
@@ -549,12 +597,7 @@ def _run_optimized_compare_queue(
     use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     gpu_status: Dict[int, str] = {d: "idle" for d in devices}
     num_lines = len(devices)
-
-    # Print initial progress area (one line per GPU)
-    if use_ansi:
-        for d in sorted(gpu_status):
-            sys.stdout.write(f"\033[2K  GPU {d} | idle\n")
-        sys.stdout.flush()
+    _init_gpu_progress(use_ansi, gpu_status)
 
     active_workers = len(devices)
     failures = 0
@@ -568,8 +611,7 @@ def _run_optimized_compare_queue(
 
         if event == "progress":
             gpu_status[gpu] = res["text"]
-            if use_ansi:
-                _clear_and_redraw_progress(gpu_status, num_lines)
+            _redraw_gpu_progress(use_ansi, gpu_status, num_lines)
             continue
 
         job = res["job"]
@@ -589,18 +631,9 @@ def _run_optimized_compare_queue(
         else:
             continue
 
-        if use_ansi:
-            _print_above_progress(msg, gpu_status, num_lines)
-        else:
-            print(msg)
+        _print_msg_with_progress(msg, use_ansi, gpu_status, num_lines)
 
-    # Clear the progress area
-    if use_ansi:
-        sys.stdout.write(f"\033[{num_lines}A")
-        for _ in range(num_lines):
-            sys.stdout.write("\033[2K\n")
-        sys.stdout.write(f"\033[{num_lines}A")
-        sys.stdout.flush()
+    _cleanup_gpu_progress(use_ansi, num_lines)
 
     for p in procs:
         p.join()
@@ -716,7 +749,10 @@ def _run_measure_subprocess(
     completed = 0
     last_send: float = 0.0
 
-    for line in proc.stdout:
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            break
         buf_lines.append(line)
         if log_f:
             log_f.write(line)
@@ -1219,11 +1255,7 @@ def run_measure_single_bpw(
     gpu_status: Dict[int, str] = {d: "idle" for d in worker_devices}
     num_lines = n_workers
 
-    # Print initial progress area (one line per GPU)
-    if use_ansi:
-        for d in sorted(gpu_status):
-            sys.stdout.write(f"\033[2K  GPU {d} | idle\n")
-        sys.stdout.flush()
+    _init_gpu_progress(use_ansi, gpu_status)
 
     # Result listener
     active_workers = n_workers
@@ -1240,8 +1272,7 @@ def run_measure_single_bpw(
         if event == "progress":
             gpu = res["device"]
             gpu_status[gpu] = res["text"]
-            if use_ansi:
-                _clear_and_redraw_progress(gpu_status, num_lines)
+            _redraw_gpu_progress(use_ansi, gpu_status, num_lines)
             continue
 
         res_label = res.get("label", "")
@@ -1268,18 +1299,9 @@ def run_measure_single_bpw(
         else:
             continue
 
-        if use_ansi:
-            _print_above_progress(msg, gpu_status, num_lines)
-        else:
-            print(msg)
+        _print_msg_with_progress(msg, use_ansi, gpu_status, num_lines)
 
-    # Clear the progress area
-    if use_ansi:
-        sys.stdout.write(f"\033[{num_lines}A")
-        for _ in range(num_lines):
-            sys.stdout.write("\033[2K\n")
-        sys.stdout.write(f"\033[{num_lines}A")
-        sys.stdout.flush()
+    _cleanup_gpu_progress(use_ansi, num_lines)
 
     for p in procs:
         p.join()
@@ -1565,12 +1587,7 @@ def run_measure_stage(
     use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     gpu_status: Dict[int, str] = {d: "idle" for d in devices}
     num_lines = len(devices)
-
-    # Print initial progress area (one line per GPU)
-    if use_ansi:
-        for d in sorted(gpu_status):
-            sys.stdout.write(f"\033[2K  GPU {d} | idle\n")
-        sys.stdout.flush()
+    _init_gpu_progress(use_ansi, gpu_status)
 
     # Result listener loop
     active_workers = len(devices)
@@ -1587,8 +1604,7 @@ def run_measure_stage(
 
         if event == "progress":
             gpu_status[gpu] = res["text"]
-            if use_ansi:
-                _clear_and_redraw_progress(gpu_status, num_lines)
+            _redraw_gpu_progress(use_ansi, gpu_status, num_lines)
             continue
 
         label = res["label"]
@@ -1616,18 +1632,9 @@ def run_measure_stage(
         else:
             continue
 
-        if use_ansi:
-            _print_above_progress(msg, gpu_status, num_lines)
-        else:
-            print(msg)
+        _print_msg_with_progress(msg, use_ansi, gpu_status, num_lines)
 
-    # Clear the progress area
-    if use_ansi:
-        sys.stdout.write(f"\033[{num_lines}A")
-        for _ in range(num_lines):
-            sys.stdout.write("\033[2K\n")
-        sys.stdout.write(f"\033[{num_lines}A")
-        sys.stdout.flush()
+    _cleanup_gpu_progress(use_ansi, num_lines)
 
     for p in procs:
         p.join()

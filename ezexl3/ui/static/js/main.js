@@ -39,6 +39,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("stop-btn").addEventListener("click", stopJob);
   document.getElementById("clear-btn").addEventListener("click", clearTerminal);
 
+  // Enter in form fields triggers run
+  document.getElementById("form-fields").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && e.target.matches("input, select")) {
+      e.preventDefault();
+      runCommand();
+    }
+  });
+
   // Browser modal
   document.getElementById("browser-close-btn").addEventListener("click", closeBrowser);
   document.getElementById("browser-select-btn").addEventListener("click", selectBrowserPath);
