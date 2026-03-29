@@ -14,17 +14,17 @@ function clearTerminal() {
 function appendTerminal(text, className) {
   const el = terminalEl();
 
-  // Handle \r (carriage return): replace the current line
+  // Handle \r (carriage return): replace a progress line
   if (text.includes("\r")) {
     const parts = text.split("\r");
     // Anything before first \r appends normally
     if (parts[0]) _appendChunk(el, parts[0], className);
-    // Last part after final \r updates the progress line
+    // Last part after final \r updates a progress line
     const replacement = parts[parts.length - 1];
     _updateProgressLine(el, replacement);
   } else {
-    // Regular text — finalize any active progress line first
-    _finalizeProgress(el);
+    // Regular text — finalize all active progress lines first
+    _finalizeAllProgress(el);
     _appendChunk(el, text, className);
   }
   // Auto-scroll
@@ -43,22 +43,30 @@ function _appendChunk(el, text, className) {
 }
 
 function _updateProgressLine(el, text) {
-  // Find or create the ephemeral progress element
-  let prog = el.querySelector(".term-progress");
+  // Extract key prefix like "gpu0:" to support per-GPU progress lines
+  const cleaned = text.replace(/\n$/, "");
+  const m = cleaned.match(/^(gpu\d+:)\s*/);
+  const key = m ? m[1] : "_default";
+  const display = m ? cleaned.slice(m[0].length) : cleaned;
+
+  // Find or create the ephemeral progress element for this key
+  let prog = el.querySelector(`.term-progress[data-key="${key}"]`);
   if (!prog) {
     prog = document.createElement("span");
     prog.className = "term-progress";
+    prog.dataset.key = key;
     el.appendChild(prog);
   }
-  // Strip trailing newline — progress lines are ephemeral, not committed
-  prog.textContent = text.replace(/\n$/, "");
+  prog.textContent = display;
 }
 
-function _finalizeProgress(el) {
-  // Convert any active progress span into a permanent newline
-  const prog = el.querySelector(".term-progress");
-  if (prog) {
-    prog.replaceWith(document.createTextNode("\n"));
+function _finalizeAllProgress(el) {
+  // Convert all active progress spans into permanent text
+  const progs = el.querySelectorAll(".term-progress");
+  if (progs.length) {
+    for (const prog of progs) {
+      prog.replaceWith(document.createTextNode("\n"));
+    }
   }
 }
 

@@ -618,6 +618,7 @@ body.splitter-active { cursor: row-resize !important; user-select: none; }
   word-break: break-all;
 }
 
+.term-progress { display: block; }
 .term-cmd { color: var(--accent); font-weight: 500; }
 .term-stderr { color: #f87171; }
 .term-success { color: var(--green); font-weight: 500; }
