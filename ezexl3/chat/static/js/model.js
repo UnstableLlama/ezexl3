@@ -1,8 +1,57 @@
 // ── Model Panel: file browser, GPU config, load/unload ──────────
+// ── Dashboard switch ────────────────────────────────────────────
 
 let currentBrowsePath = '';
 let browseIsModel = false;
 let gpuData = [];
+
+function updateDashboardButton() {
+  const btn = document.getElementById('dashboard-btn');
+  if (!btn) return;
+  btn.classList.toggle('disabled', modelLoaded);
+}
+
+function flashDashboardWarning() {
+  const el = document.getElementById('dashboard-flash');
+  if (!el) return;
+  el.classList.remove('show');
+  void el.offsetWidth;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 1500);
+}
+
+async function launchDashboard() {
+  if (modelLoaded) {
+    flashDashboardWarning();
+    return;
+  }
+  const btn = document.getElementById('dashboard-btn');
+  btn.disabled = true;
+  btn.classList.add('disabled');
+
+  try {
+    const res = await fetch('/api/ui/launch', { method: 'POST' });
+    const data = await res.json();
+    if (data.error) {
+      alert(data.error);
+      btn.disabled = false;
+      btn.classList.remove('disabled');
+      return;
+    }
+    const url = data.url || window.location.origin;
+    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#a0a0a0;font-size:14px">Launching dashboard...</div>';
+    const tryRedirect = () => {
+      fetch(url + '/api/gpus', { cache: 'no-store' }).then(r => {
+        if (r.ok) window.location.replace(url + '/?t=' + Date.now());
+        else setTimeout(tryRedirect, 500);
+      }).catch(() => setTimeout(tryRedirect, 500));
+    };
+    setTimeout(tryRedirect, 1500);
+  } catch (e) {
+    btn.disabled = false;
+    btn.classList.remove('disabled');
+  }
+}
 
 // ── Init ────────────────────────────────────────────────────────
 
@@ -15,6 +64,8 @@ async function initModelPanel(status) {
   document.getElementById('auto-gpu').onchange = onAutoGpuToggle;
   document.getElementById('load-btn').onclick = loadModel;
   document.getElementById('unload-btn').onclick = unloadModel;
+  document.getElementById('dashboard-btn').onclick = launchDashboard;
+  updateDashboardButton();
   document.getElementById('browser-path-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -228,6 +279,7 @@ async function loadModel() {
       populateUI(data.status);
       setModelPanelLoaded(data.status.model_name);
       updateChatEnabled();
+      updateDashboardButton();
     } else {
       loadingEl.textContent = 'Error: ' + (data.error || 'Unknown error');
       loadBtn.disabled = !browseIsModel;
@@ -247,6 +299,7 @@ async function unloadModel() {
   modelLoaded = false;
   setModelPanelUnloaded();
   updateChatEnabled();
+  updateDashboardButton();
   document.getElementById('header-model').textContent = '';
   document.getElementById('model-info').innerHTML = '<em>No model loaded</em>';
   await browseTo(currentBrowsePath || '');

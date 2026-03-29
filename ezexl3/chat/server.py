@@ -46,6 +46,7 @@ def create_app(engine: ChatEngine) -> web.Application:
     app.router.add_get("/api/browse", handle_browse)
     app.router.add_post("/api/model/load", handle_model_load)
     app.router.add_post("/api/model/unload", handle_model_unload)
+    app.router.add_post("/api/ui/launch", handle_ui_launch)
     app.router.add_static("/", STATIC_DIR, show_index=False, append_version=True)
 
     return app
@@ -240,6 +241,45 @@ async def handle_model_unload(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def handle_ui_launch(request: web.Request) -> web.Response:
+    """Shut down the chat server and launch the dashboard UI in its place."""
+    engine: ChatEngine = request.app["engine"]
+    if engine.is_loaded:
+        return web.json_response(
+            {"error": "Unload the model before switching to dashboard"},
+            status=409,
+        )
+    if engine.is_generating:
+        return web.json_response(
+            {"error": "Cannot switch while generating"}, status=409,
+        )
+
+    host = request.app.get("_host", "127.0.0.1")
+    port = request.app.get("_port", 8800)
+
+    import shutil
+    ezexl3_bin = shutil.which("ezexl3")
+    if ezexl3_bin:
+        ui_cmd = [ezexl3_bin, "ui", "--port", str(port), "--host", host,
+                  "--no-browser"]
+    else:
+        ui_cmd = [sys.executable, "-m", "ezexl3", "ui", "--port", str(port),
+                  "--host", host, "--no-browser"]
+
+    await asyncio.create_subprocess_exec(
+        *ui_cmd, stdout=None, stderr=None, start_new_session=True,
+    )
+
+    import threading
+    def _delayed_exit():
+        import time
+        time.sleep(1)
+        os._exit(0)
+    threading.Thread(target=_delayed_exit, daemon=True).start()
+
+    return web.json_response({"ok": True, "url": f"http://{host}:{port}"})
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -310,6 +350,8 @@ def run_server(
         print("  No model specified — select one in the UI.")
 
     app = create_app(engine)
+    app["_host"] = host
+    app["_port"] = port
     url = f"http://{host}:{port}"
     print(f"  Chat UI: {url}")
     print(f"  Press Ctrl+C to stop\n")

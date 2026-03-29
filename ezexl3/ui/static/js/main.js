@@ -105,9 +105,21 @@ function renderGpuInfo() {
 }
 
 
+function flashNavWarning(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.remove("show");
+  void el.offsetWidth; // force reflow to restart animation
+  el.classList.add("show");
+  setTimeout(() => el.classList.remove("show"), 1500);
+}
+
 async function launchChat() {
   const chatBtn = document.querySelector('.nav-btn[data-cmd="chat"]');
-  if (jobRunning) return;
+  if (jobRunning) {
+    flashNavWarning("chat-flash");
+    return;
+  }
   chatBtn.disabled = true;
   chatBtn.classList.add("disabled");
 
