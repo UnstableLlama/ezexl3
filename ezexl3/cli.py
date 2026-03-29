@@ -151,6 +151,7 @@ def build_parser() -> argparse.ArgumentParser:
             default=None,
             help="Device ratios for quantization only. Example: -r 1,1 (optional)",
         )
+        p_sub.add_argument("-hq", action="store_true", help="Enable high-quality quantization (exllamav3 -hq)")
         p_sub.add_argument("--no-cleanup", "-nc", action="store_true", help="Keep w-* working dirs and logs")
         p_sub.add_argument("--no-readme", action="store_true", help="Skip README stage")
         p_sub.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
@@ -180,6 +181,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Template for output directory. Fields: {model}, {model_name}, {bpw}")
     q.add_argument("--w-template", default="{model}/w-{bpw}",
                    help="Template for working directory. Fields: {model}, {model_name}, {bpw}")
+    q.add_argument("-hq", action="store_true", help="Enable high-quality quantization (exllamav3 -hq)")
     q.add_argument("--dry", action="store_true", help="Print what would run, but do not execute.")
     q.add_argument("--continue-on-error", action="store_true", help="Keep going after failures.")
     q.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
@@ -294,6 +296,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     device_ratios = _parse_device_ratios(getattr(args, "device_ratios", None), devices_i)
     device_ratios_str = ",".join(device_ratios) if device_ratios else None
     layers = _parse_layers(getattr(args, "layers", 2)) if hasattr(args, "layers") else 2
+
+    # Inject -hq into quant_args when flag is set
+    if getattr(args, "hq", False) and "-hq" not in pt.quant_args:
+        pt.quant_args.append("-hq")
 
     if cmd == "repo":
         # Process each model, continuing on error
