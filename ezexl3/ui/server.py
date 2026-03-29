@@ -403,15 +403,16 @@ async def handle_chat_launch(request: web.Request) -> web.Response:
     else:
         chat_cmd = [sys.executable, "-m", "ezexl3", "chat", "--port", str(port), "--host", host, "--no-browser"]
 
-    # Launch detached chat process
-    await asyncio.create_subprocess_exec(
-        *chat_cmd,
-        stdout=None, stderr=None,
-        start_new_session=True,
-    )
+    # Spawn the chat process AFTER we release the port (during cleanup).
+    # aiohttp cleanup runs after the TCP server socket is closed.
+    import subprocess as _sp
+
+    async def _spawn_chat(app):
+        _sp.Popen(chat_cmd, start_new_session=True)
+    request.app.on_cleanup.append(_spawn_chat)
 
     # Schedule graceful shutdown — SIGINT lets aiohttp close connections
-    # cleanly so the browser doesn't get a raw TCP reset.
+    # cleanly, release the port, then run cleanup (which spawns chat).
     async def _graceful_exit():
         await asyncio.sleep(1)
         os.kill(os.getpid(), signal.SIGINT)

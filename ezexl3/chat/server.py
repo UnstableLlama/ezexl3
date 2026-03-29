@@ -266,12 +266,16 @@ async def handle_ui_launch(request: web.Request) -> web.Response:
         ui_cmd = [sys.executable, "-m", "ezexl3", "ui", "--port", str(port),
                   "--host", host, "--no-browser"]
 
-    await asyncio.create_subprocess_exec(
-        *ui_cmd, stdout=None, stderr=None, start_new_session=True,
-    )
+    # Spawn the UI process AFTER we release the port (during cleanup).
+    # aiohttp cleanup runs after the TCP server socket is closed.
+    import subprocess as _sp
+
+    async def _spawn_ui(app):
+        _sp.Popen(ui_cmd, start_new_session=True)
+    request.app.on_cleanup.append(_spawn_ui)
 
     # Schedule graceful shutdown — SIGINT lets aiohttp close connections
-    # cleanly so the browser doesn't get a raw TCP reset.
+    # cleanly, release the port, then run cleanup (which spawns UI).
     async def _graceful_exit():
         await asyncio.sleep(1)
         os.kill(os.getpid(), signal.SIGINT)
