@@ -410,14 +410,12 @@ async def handle_chat_launch(request: web.Request) -> web.Response:
         start_new_session=True,
     )
 
-    # Tell the client to redirect, then exit the process.
-    # Use os._exit from a background thread to avoid async task exceptions.
-    import threading
-    def _delayed_exit():
-        import time
-        time.sleep(1)
-        os._exit(0)
-    threading.Thread(target=_delayed_exit, daemon=True).start()
+    # Schedule graceful shutdown — SIGINT lets aiohttp close connections
+    # cleanly so the browser doesn't get a raw TCP reset.
+    async def _graceful_exit():
+        await asyncio.sleep(1)
+        os.kill(os.getpid(), signal.SIGINT)
+    asyncio.ensure_future(_graceful_exit())
 
     return web.json_response({"ok": True, "url": f"http://{host}:{port}"})
 
