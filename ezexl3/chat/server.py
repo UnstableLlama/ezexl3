@@ -32,6 +32,14 @@ async def _no_cache_static(request: web.Request, handler):
 def create_app(engine: ChatEngine) -> web.Application:
     app = web.Application(middlewares=[_no_cache_static])
     app["engine"] = engine
+    app["_spawn_on_exit"] = None  # set by handle_ui_launch
+
+    async def _cleanup_spawn(app):
+        cmd = app.get("_spawn_on_exit")
+        if cmd:
+            import subprocess
+            subprocess.Popen(cmd, start_new_session=True)
+    app.on_cleanup.append(_cleanup_spawn)
 
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/status", handle_status)
@@ -266,13 +274,9 @@ async def handle_ui_launch(request: web.Request) -> web.Response:
         ui_cmd = [sys.executable, "-m", "ezexl3", "ui", "--port", str(port),
                   "--host", host, "--no-browser"]
 
-    # Spawn the UI process AFTER we release the port (during cleanup).
-    # aiohttp cleanup runs after the TCP server socket is closed.
-    import subprocess as _sp
-
-    async def _spawn_ui(app):
-        _sp.Popen(ui_cmd, start_new_session=True)
-    request.app.on_cleanup.append(_spawn_ui)
+    # Store the command — the pre-registered cleanup handler will spawn it
+    # after aiohttp has released the port.
+    request.app["_spawn_on_exit"] = ui_cmd
 
     # Schedule graceful shutdown — SIGINT lets aiohttp close connections
     # cleanly, release the port, then run cleanup (which spawns UI).

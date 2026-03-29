@@ -403,13 +403,9 @@ async def handle_chat_launch(request: web.Request) -> web.Response:
     else:
         chat_cmd = [sys.executable, "-m", "ezexl3", "chat", "--port", str(port), "--host", host, "--no-browser"]
 
-    # Spawn the chat process AFTER we release the port (during cleanup).
-    # aiohttp cleanup runs after the TCP server socket is closed.
-    import subprocess as _sp
-
-    async def _spawn_chat(app):
-        _sp.Popen(chat_cmd, start_new_session=True)
-    request.app.on_cleanup.append(_spawn_chat)
+    # Store the command — the pre-registered cleanup handler will spawn it
+    # after aiohttp has released the port.
+    request.app["_spawn_on_exit"] = chat_cmd
 
     # Schedule graceful shutdown — SIGINT lets aiohttp close connections
     # cleanly, release the port, then run cleanup (which spawns chat).
@@ -478,6 +474,14 @@ async def _no_cache_static(request: web.Request, handler):
 def create_app() -> web.Application:
     app = web.Application(middlewares=[_no_cache_static])
     app["job_manager"] = JobManager()
+    app["_spawn_on_exit"] = None  # set by handle_chat_launch
+
+    async def _cleanup_spawn(app):
+        cmd = app.get("_spawn_on_exit")
+        if cmd:
+            import subprocess
+            subprocess.Popen(cmd, start_new_session=True)
+    app.on_cleanup.append(_cleanup_spawn)
 
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/browse", handle_browse)
