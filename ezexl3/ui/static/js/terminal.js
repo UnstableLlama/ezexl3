@@ -13,6 +13,25 @@ function clearTerminal() {
 
 function appendTerminal(text, className) {
   const el = terminalEl();
+
+  // Handle \r (carriage return): replace the current (last) line
+  if (text.includes("\r")) {
+    const parts = text.split("\r");
+    // Anything before first \r appends normally
+    if (parts[0]) _appendChunk(el, parts[0], className);
+    // Each subsequent part replaces the current line
+    for (let i = 1; i < parts.length; i++) {
+      _replaceLastLine(el);
+      if (parts[i]) _appendChunk(el, parts[i], className);
+    }
+  } else {
+    _appendChunk(el, text, className);
+  }
+  // Auto-scroll
+  el.scrollTop = el.scrollHeight;
+}
+
+function _appendChunk(el, text, className) {
   if (className) {
     const span = document.createElement("span");
     span.className = className;
@@ -21,8 +40,25 @@ function appendTerminal(text, className) {
   } else {
     el.appendChild(document.createTextNode(text));
   }
-  // Auto-scroll
-  el.scrollTop = el.scrollHeight;
+}
+
+function _replaceLastLine(el) {
+  // Walk backwards removing nodes until we hit a newline or run out
+  while (el.lastChild) {
+    const node = el.lastChild;
+    const text = node.textContent;
+    const nlIdx = text.lastIndexOf("\n");
+    if (nlIdx !== -1) {
+      // Keep up to and including the newline
+      if (node.nodeType === Node.TEXT_NODE) {
+        node.textContent = text.slice(0, nlIdx + 1);
+      } else {
+        node.textContent = text.slice(0, nlIdx + 1);
+      }
+      return;
+    }
+    el.removeChild(node);
+  }
 }
 
 async function runCommand() {
