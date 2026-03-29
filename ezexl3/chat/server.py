@@ -270,12 +270,12 @@ async def handle_ui_launch(request: web.Request) -> web.Response:
         *ui_cmd, stdout=None, stderr=None, start_new_session=True,
     )
 
-    import threading
-    def _delayed_exit():
-        import time
-        time.sleep(1)
-        os._exit(0)
-    threading.Thread(target=_delayed_exit, daemon=True).start()
+    # Schedule graceful shutdown — SIGINT lets aiohttp close connections
+    # cleanly so the browser doesn't get a raw TCP reset.
+    async def _graceful_exit():
+        await asyncio.sleep(1)
+        os.kill(os.getpid(), signal.SIGINT)
+    asyncio.ensure_future(_graceful_exit())
 
     return web.json_response({"ok": True, "url": f"http://{host}:{port}"})
 
