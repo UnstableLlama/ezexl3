@@ -74,6 +74,23 @@ function createFieldEl(field) {
     toggle.appendChild(slider);
     labelRow.appendChild(toggle);
   }
+  if (field.headerToggle) {
+    const ht = field.headerToggle;
+    const wrap = document.createElement("label");
+    wrap.className = "header-toggle";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.id = `field-${ht.name}`;
+    wrap.appendChild(cb);
+    const slider = document.createElement("span");
+    slider.className = "toggle-slider";
+    wrap.appendChild(slider);
+    const text = document.createElement("span");
+    text.className = "header-toggle-label";
+    text.textContent = ht.label;
+    wrap.appendChild(text);
+    labelRow.appendChild(wrap);
+  }
   row.appendChild(labelRow);
 
   if (field.help) {
@@ -224,6 +241,14 @@ function collectArgs() {
   for (const field of cmd.fields) {
     const el = document.getElementById(`field-${field.name}`);
     if (!el) continue;
+
+    // Collect headerToggle if checked
+    if (field.headerToggle) {
+      const htEl = document.getElementById(`field-${field.headerToggle.name}`);
+      if (htEl && htEl.checked) {
+        args.push(field.headerToggle.flag);
+      }
+    }
 
     if (field.type === "boolean") {
       if (el.checked) {

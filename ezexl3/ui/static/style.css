@@ -458,6 +458,40 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   margin-bottom: 4px;
 }
 .form-label-row .form-label { margin-bottom: 0; }
+.header-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.header-toggle input[type="checkbox"] { display: none; }
+.header-toggle .toggle-slider {
+  width: 28px;
+  height: 16px;
+  border-radius: 8px;
+}
+.header-toggle .toggle-slider::after {
+  width: 10px;
+  height: 10px;
+  top: 2px;
+  left: 2px;
+}
+.header-toggle input:checked + .toggle-slider {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.header-toggle input:checked + .toggle-slider::after {
+  transform: translateX(12px);
+  background: #fff;
+}
+.header-toggle-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.header-toggle input:checked ~ .header-toggle-label {
+  color: var(--accent);
+}
 .field-toggle {
   display: flex;
   align-items: center;
