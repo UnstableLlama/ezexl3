@@ -168,13 +168,14 @@ async def handle_gpus(request: web.Request) -> web.Response:
     gpus = []
     try:
         import torch
-        for i in range(torch.cuda.device_count()):
-            props = torch.cuda.get_device_properties(i)
-            gpus.append({
-                "index": i,
-                "name": props.name,
-                "vram_gb": round(props.total_mem / 1024**3, 1),
-            })
+        if torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                props = torch.cuda.get_device_properties(i)
+                gpus.append({
+                    "index": i,
+                    "name": props.name,
+                    "vram_gb": round(props.total_memory / 1024**3, 1),
+                })
     except Exception:
         pass
     return web.json_response({"gpus": gpus})
