@@ -134,6 +134,39 @@ body { display: flex; overflow: hidden; }
 
 .model-info { font-size: 12px; color: var(--text-muted); line-height: 1.6; word-break: break-all; }
 
+/* ── Dashboard switch button ──────────────────────────────────── */
+#dashboard-switch {
+  margin-bottom: 12px;
+}
+.switch-btn {
+  width: 100%; padding: 10px 12px;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text-muted);
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  text-transform: uppercase; letter-spacing: .06em;
+  position: relative; overflow: hidden;
+  transition: border-color .15s, color .15s;
+}
+.switch-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+.switch-btn.disabled {
+  opacity: 0.35; cursor: not-allowed;
+}
+.switch-flash {
+  display: none;
+  position: absolute; inset: 0;
+  background: rgba(239, 68, 68, 0.9);
+  color: #fff; font-size: 11px; font-weight: 600;
+  align-items: center; justify-content: center;
+  z-index: 1;
+  animation: switch-fade 1.5s ease forwards;
+}
+.switch-flash.show { display: flex; }
+@keyframes switch-fade {
+  0%   { opacity: 1; }
+  70%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
 /* ── Model Panel ──────────────────────────────────────────────── */
 #model-panel {
   margin-bottom: 16px;

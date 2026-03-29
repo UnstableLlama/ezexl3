@@ -95,7 +95,29 @@ body {
   color: var(--text-dim);
 }
 .nav-divider { height: 1px; background: var(--border); margin: 4px 12px; }
-.nav-btn.disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+.nav-btn.disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* Flash warning on disabled nav buttons */
+.nav-btn .nav-flash {
+  display: none;
+  position: absolute;
+  inset: 0;
+  background: rgba(239, 68, 68, 0.9);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+  z-index: 1;
+  animation: flash-fade 1.5s ease forwards;
+}
+.nav-btn .nav-flash.show { display: flex; }
+@keyframes flash-fade {
+  0%   { opacity: 1; }
+  70%  { opacity: 1; }
+  100% { opacity: 0; }
+}
 
 .sidebar-section { padding: 4px 0; }
 .gpu-info { padding: 4px 16px 12px; }
