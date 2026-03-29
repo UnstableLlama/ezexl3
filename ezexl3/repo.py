@@ -1247,17 +1247,23 @@ def run_measure_single_bpw(
         res_label = res.get("label", "")
         phase = res.get("phase", "")
         gpu = res.get("device", "?")
+        phase_tag = phase.upper()
 
-        if event == "done":
+        if event == "start":
+            msg = f"🧪 [GPU {gpu}] START {res_label} {phase_tag}"
+            gpu_status[gpu] = f"{res_label} {phase_tag} | starting..."
+        elif event == "done":
             row = res["row"]
             if phase == "kl":
-                msg = f"    ✅ {res_label} KL: {row.get('KL Div', 'N/A')}"
+                kl_val = row.get("KL Div", "N/A")
+                msg = f"✅ [GPU {gpu}] DONE {res_label} KL: KL={kl_val}"
             else:
-                msg = f"    ✅ {res_label} PPL: {row.get('PPL r-100', 'N/A')}"
+                ppl_val = row.get("PPL r-100", "N/A")
+                msg = f"✅ [GPU {gpu}] DONE {res_label} PPL: PPL={ppl_val}"
             gpu_status[gpu] = "idle"
         elif event == "error":
             failures += 1
-            msg = f"    🔴 FAIL {res_label} {phase.upper()}: {res['error']}"
+            msg = f"🔴 [GPU {gpu}] FAIL {res_label} {phase_tag}: {res['error']}"
             gpu_status[gpu] = "idle"
         else:
             continue
