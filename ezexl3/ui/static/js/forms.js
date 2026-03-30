@@ -431,7 +431,8 @@ function toggleMetaLock(key) {
 
 function syncMetaLockState() {
   // When a job starts/stops, toggle the run-locked class on lock buttons
-  // to prevent unlocking during a run
+  // to prevent unlocking during a run — but not while waiting for metadata
+  if (metadataWaitingDir) return;
   const locks = document.querySelectorAll(".meta-lock.locked");
   for (const btn of locks) {
     btn.classList.toggle("run-locked", jobRunning);
@@ -542,18 +543,10 @@ function showMetadataWait(modelDir) {
     panel.classList.add("metadata-waiting");
   }
 
-  // Unlock ALL fields so the user can review and edit everything
-  for (const f of META_FIELDS) {
-    const field = document.querySelector(`.meta-field[data-key="${f.key}"]`);
-    const lockBtn = document.querySelector(`.meta-lock[data-key="${f.key}"]`);
-    const input = document.getElementById(`meta-${f.key}`);
-    if (field) field.classList.remove("locked");
-    if (lockBtn) {
-      lockBtn.classList.remove("locked", "run-locked");
-      lockBtn.textContent = "\u{1F513}";
-      lockBtn.title = "Lock this field";
-    }
-    if (input) input.readOnly = false;
+  // Allow lock toggles even though a job is running (user needs to lock fields)
+  const locks = document.querySelectorAll(".meta-lock");
+  for (const btn of locks) {
+    btn.classList.remove("run-locked");
   }
 
   const btn = document.getElementById("metadata-confirm");
