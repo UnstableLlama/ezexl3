@@ -448,8 +448,6 @@ async function loadMetadataDefaults(force) {
     const res = await fetch(`/api/metadata?model_dir=${encodeURIComponent(modelDir)}`);
     if (!res.ok) return;
     const data = await res.json();
-    const savedLocks = data._locked || {};
-
     for (const f of META_FIELDS) {
       const input = document.getElementById(`meta-${f.key}`);
       if (!input) continue;
@@ -459,16 +457,6 @@ async function loadMetadataDefaults(force) {
       if (data[f.key] && (!input.value || force)) {
         input.value = data[f.key];
       }
-      // Restore lock state from saved JSON (only when not in waiting mode)
-      if (!metadataWaitingDir && savedLocks[f.key]) {
-        const lockBtn = document.querySelector(`.meta-lock[data-key="${f.key}"]`);
-        if (field && lockBtn && !field.classList.contains("locked")) {
-          field.classList.add("locked");
-          lockBtn.classList.add("locked");
-          lockBtn.textContent = "\u{1F512}";
-          lockBtn.title = "Unlock this field";
-          input.readOnly = true;
-        }
       }
     }
     updateMetadataConfirm();
