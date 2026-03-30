@@ -214,6 +214,16 @@ function updateRunButton() {
     stopBtn.style.display = "none";
   }
   if (typeof updateChatButton === "function") updateChatButton();
+  if (typeof syncMetaLockState === "function") syncMetaLockState();
+}
+
+
+function checkMetadataWait(text) {
+  const match = text.match(/<<EZEXL3:WAITING_METADATA:(.+?)>>/);
+  if (!match) return;
+  if (typeof showMetadataWait === "function") {
+    showMetadataWait(match[1]);
+  }
 }
 
 
