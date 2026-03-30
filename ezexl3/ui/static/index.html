@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ezexl3 dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Sidebar -->
+<div id="sidebar">
+  <div class="sidebar-header">
+    <span class="logo-text">ezexl3</span>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-label">Commands</div>
+    <button class="nav-btn active" data-cmd="repo">
+      <span class="nav-icon">&#9654;</span> Repo
+      <span class="nav-sub">Full Pipeline</span>
+    </button>
+    <button class="nav-btn" data-cmd="quantize">
+      <span class="nav-icon">&#9638;</span> Quantize
+      <span class="nav-sub">Quantize Only</span>
+    </button>
+    <button class="nav-btn" data-cmd="measure">
+      <span class="nav-icon">&#9636;</span> Measure
+      <span class="nav-sub">KL + PPL</span>
+    </button>
+    <button class="nav-btn" data-cmd="readme">
+      <span class="nav-icon">&#9998;</span> README
+      <span class="nav-sub">Generate</span>
+    </button>
+    <div class="nav-divider"></div>
+    <button class="nav-btn" data-cmd="chat">
+      <span class="nav-icon">&#9993;</span> Chat
+      <span class="nav-sub">Opens in new tab</span>
+      <span class="nav-flash" id="chat-flash">Run underway</span>
+    </button>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="nav-section-label">GPUs</div>
+    <div id="gpu-info" class="gpu-info">
+      <span class="text-dim">Detecting...</span>
+    </div>
+  </div>
+</div>
+
+<!-- Main content -->
+<div id="main">
+  <div id="header">
+    <button id="toggle-sidebar" title="Toggle sidebar">&#9776;</button>
+    <span id="header-title">ezexl3 dashboard</span>
+  </div>
+
+  <div id="content">
+    <!-- Upper panel with tab switching -->
+    <div id="upper-panel">
+      <!-- Tab bar -->
+      <div id="tab-bar">
+        <div class="tab-bar-left">
+          <button class="tab-btn active" data-tab="command">
+            <span id="tab-command-label">Repo</span>
+          </button>
+          <button class="tab-btn" data-tab="data">Data</button>
+        </div>
+        <p id="command-desc" class="tab-bar-desc">Quantize &rarr; Measure KL+PPL &rarr; README</p>
+      </div>
+
+      <!-- Command form tab -->
+      <div id="form-panel" class="tab-content active">
+        <div id="form-body">
+          <div id="form-fields"></div>
+          <div id="metadata-panel" class="metadata-panel" style="display:none">
+            <div class="metadata-title">README Metadata</div>
+            <div id="metadata-fields"></div>
+            <button id="metadata-confirm" class="action-btn primary metadata-confirm-btn" style="display:none">Resume</button>
+          </div>
+        </div>
+        <div id="form-actions">
+          <button id="run-btn" class="action-btn primary">Run</button>
+          <button id="stop-btn" class="action-btn danger" style="display:none">Stop</button>
+          <button id="clear-btn" class="action-btn secondary">Clear</button>
+        </div>
+      </div>
+
+      <!-- Data tab -->
+      <div id="data-panel" class="tab-content">
+        <div id="data-content">
+          <div id="data-table-wrap">
+            <table id="data-table">
+              <thead>
+                <tr>
+                  <th>BPW</th>
+                  <th>KL Div</th>
+                  <th>PPL</th>
+                  <th>GiB</th>
+                </tr>
+              </thead>
+              <tbody id="data-table-body">
+              </tbody>
+            </table>
+            <div id="data-empty" class="data-empty">No measurement data yet. Run a repo or measure command to begin.</div>
+          </div>
+          <div id="data-splitter" class="data-splitter"><div class="data-splitter-grip"></div></div>
+          <div id="data-graph-wrap">
+            <div id="data-graph-placeholder" class="data-graph-placeholder">Graph will appear after 2+ measurements</div>
+            <div id="data-graph"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Drag handle -->
+    <div id="splitter">
+      <div class="splitter-grip"></div>
+    </div>
+
+    <!-- Terminal output -->
+    <div id="terminal-panel">
+      <div id="terminal-header">
+        <span class="terminal-title">Output</span>
+        <span id="terminal-status" class="terminal-status"></span>
+      </div>
+      <pre id="terminal-output"></pre>
+    </div>
+  </div>
+</div>
+
+<!-- File browser modal -->
+<div id="browser-modal" style="display:none">
+  <div class="browser-dialog">
+    <div class="browser-header">
+      <span class="browser-title">Select Directory</span>
+      <button id="browser-close-btn" class="browser-close">&times;</button>
+    </div>
+    <input type="text" id="browser-path-input" class="browser-path-input" placeholder="Type a path and press Enter">
+    <div id="browser-current-path" class="browser-current-path"></div>
+    <div id="browser-indicator" class="browser-indicator" style="display:none"></div>
+    <div id="browser-entries" class="browser-entries"></div>
+    <div class="browser-footer">
+      <button id="browser-select-btn" class="action-btn primary">Select</button>
+    </div>
+  </div>
+</div>
+
+<!-- Scripts -->
+<script src="js/state.js"></script>
+<script src="js/commands.js"></script>
+<script src="js/forms.js"></script>
+<script src="js/browser.js"></script>
+<script src="js/terminal.js"></script>
+<script src="js/data.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

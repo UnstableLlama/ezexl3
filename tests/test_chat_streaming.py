@@ -78,6 +78,9 @@ class FakeTokenizer:
 # Install mocks before any project code is imported
 _mock_torch = MagicMock()
 _mock_torch.set_grad_enabled = MagicMock()
+_mock_torch.cuda.is_available.return_value = False
+_mock_torch.cuda.device_count.return_value = 0
+_mock_torch.cuda.empty_cache = MagicMock()
 sys.modules["torch"] = _mock_torch
 
 _mock_exl = MagicMock()
@@ -430,6 +433,187 @@ class TestTreeContextBridge(unittest.TestCase):
         converted = [tuple(pair) for pair in [["Q", "A"]]]
         self.assertEqual(len(converted), 1)
         self.assertEqual(converted[0], ("Q", "A"))
+
+
+# ---------------------------------------------------------------------------
+# Model management tests (no-model startup, browse, load, unload)
+# ---------------------------------------------------------------------------
+
+class TestNoModelStartup(AioHTTPTestCase):
+    """Tests for starting the server without a model loaded."""
+
+    async def get_application(self):
+        self.engine = ChatEngine.__new__(ChatEngine)
+        self.engine.model_dir = None
+        self.engine._devices = []
+        self.engine._device_ratios = None
+        self.engine._cache_size = 32768
+        self.engine._cache_quant = "6,6"
+        self.engine.model = None
+        self.engine.config = None
+        self.engine.cache = None
+        self.engine.tokenizer = None
+        self.engine.generator = None
+        self.engine.context_length = 0
+        self.engine.model_name = ""
+        self.engine.settings = ChatSettings()
+        self.engine.context = []
+        self.engine._current_job = None
+        self.engine._is_generating = False
+        return create_app(self.engine)
+
+    async def test_status_shows_not_loaded(self):
+        resp = await self.client.request("GET", "/api/status")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertFalse(data["loaded"])
+        self.assertEqual(data["model_name"], "")
+        self.assertEqual(data["context_length"], 0)
+        self.assertIn("gpus", data)
+
+    async def test_chat_returns_error_when_unloaded(self):
+        resp = await self.client.request(
+            "POST", "/api/chat",
+            json={"message": "Hello"},
+        )
+        self.assertEqual(resp.status, 200)
+        body = await resp.read()
+        events = parse_sse_events(body)
+        error_events = [e for e in events if isinstance(e, dict) and e.get("type") == "error"]
+        self.assertTrue(len(error_events) > 0)
+        self.assertIn("not loaded", error_events[0]["message"].lower())
+
+    async def test_settings_work_without_model(self):
+        resp = await self.client.request("GET", "/api/settings")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertIn("temperature", data)
+
+    async def test_gpus_endpoint(self):
+        resp = await self.client.request("GET", "/api/gpus")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertIn("gpus", data)
+        self.assertIsInstance(data["gpus"], list)
+
+    async def test_model_unload_when_not_loaded(self):
+        resp = await self.client.request("POST", "/api/model/unload")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertTrue(data["ok"])
+
+    async def test_model_load_missing_dir(self):
+        resp = await self.client.request(
+            "POST", "/api/model/load",
+            json={"model_dir": "/nonexistent/path/to/model"},
+        )
+        self.assertEqual(resp.status, 400)
+        data = await resp.json()
+        self.assertFalse(data["ok"])
+
+    async def test_model_load_empty_dir(self):
+        resp = await self.client.request(
+            "POST", "/api/model/load",
+            json={"model_dir": ""},
+        )
+        self.assertEqual(resp.status, 400)
+        data = await resp.json()
+        self.assertFalse(data["ok"])
+
+
+class TestBrowseEndpoint(AioHTTPTestCase):
+    """Tests for the file browser endpoint."""
+
+    async def get_application(self):
+        self.engine = ChatEngine.__new__(ChatEngine)
+        self.engine.model_dir = None
+        self.engine._devices = []
+        self.engine._device_ratios = None
+        self.engine._cache_size = 32768
+        self.engine._cache_quant = "6,6"
+        self.engine.model = None
+        self.engine.config = None
+        self.engine.cache = None
+        self.engine.tokenizer = None
+        self.engine.generator = None
+        self.engine.context_length = 0
+        self.engine.model_name = ""
+        self.engine.settings = ChatSettings()
+        self.engine.context = []
+        self.engine._current_job = None
+        self.engine._is_generating = False
+        return create_app(self.engine)
+
+    async def test_browse_default_path(self):
+        """Browse with no path should default to home directory."""
+        resp = await self.client.request("GET", "/api/browse")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertIn("current", data)
+        self.assertIn("entries", data)
+        self.assertIn("is_model", data)
+        self.assertIsInstance(data["entries"], list)
+
+    async def test_browse_root(self):
+        resp = await self.client.request("GET", "/api/browse?path=/")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(data["current"], "/")
+        self.assertIsNone(data["parent"])
+
+    async def test_browse_nonexistent_path(self):
+        resp = await self.client.request("GET", "/api/browse?path=/nonexistent/foobar")
+        self.assertEqual(resp.status, 400)
+
+    async def test_browse_entries_have_correct_format(self):
+        resp = await self.client.request("GET", "/api/browse?path=/")
+        data = await resp.json()
+        for entry in data["entries"]:
+            self.assertIn("name", entry)
+            self.assertIn("type", entry)
+            self.assertIn(entry["type"], ("dir", "file"))
+
+
+class TestEngineUnload(unittest.TestCase):
+    """Unit tests for engine unload/load_model methods."""
+
+    def test_unload_resets_state(self):
+        engine = make_test_engine()
+        self.assertTrue(engine.is_loaded)
+        engine.unload()
+        self.assertFalse(engine.is_loaded)
+        self.assertIsNone(engine.generator)
+        self.assertIsNone(engine.model)
+        self.assertEqual(engine.context_length, 0)
+        self.assertEqual(engine.context, [])
+        self.assertEqual(engine.model_name, "")
+        self.assertIsNone(engine.model_dir)
+
+    def test_unload_when_not_loaded(self):
+        """Unload on an already-unloaded engine should not raise."""
+        engine = ChatEngine.__new__(ChatEngine)
+        engine.model_dir = None
+        engine._devices = []
+        engine._device_ratios = None
+        engine._cache_size = 32768
+        engine._cache_quant = "6,6"
+        engine.model = None
+        engine.config = None
+        engine.cache = None
+        engine.tokenizer = None
+        engine.generator = None
+        engine.context_length = 0
+        engine.model_name = ""
+        engine.settings = ChatSettings()
+        engine.context = []
+        engine._current_job = None
+        engine._is_generating = False
+        engine.unload()  # Should not raise
+
+    def test_detect_gpus_returns_list(self):
+        # With mocked torch, cuda may not be "available"
+        result = ChatEngine.detect_gpus()
+        self.assertIsInstance(result, list)
 
 
 if __name__ == "__main__":

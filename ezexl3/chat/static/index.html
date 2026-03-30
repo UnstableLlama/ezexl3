@@ -12,6 +12,55 @@
 
 <!-- ── Sidebar ──────────────────────────────────────────────────── -->
 <div id="sidebar">
+
+  <!-- Dashboard switch button -->
+  <div id="dashboard-switch">
+    <button id="dashboard-btn" class="switch-btn" title="Switch to Dashboard UI">
+      &#9636; Dashboard
+      <span class="switch-flash" id="dashboard-flash">Model loaded</span>
+    </button>
+  </div>
+
+  <!-- Model Loading Panel -->
+  <div id="model-panel">
+    <div id="model-panel-toggle" class="section-header">
+      <span>Model</span>
+      <span id="model-panel-status" class="panel-badge">No model</span>
+      <span class="chevron">&#9660;</span>
+    </div>
+    <div id="model-panel-body" class="section-body">
+      <label class="sb-label">Model Directory</label>
+      <input type="text" id="browser-path-input" placeholder="Type a path and press Enter">
+      <div id="browser-list"></div>
+      <div id="browser-model-indicator" class="model-indicator" style="display:none"></div>
+
+      <label class="sb-label" style="margin-top:12px">GPU</label>
+      <label class="gpu-auto-label">
+        <input type="checkbox" id="auto-gpu" checked> Auto (all GPUs)
+      </label>
+      <div id="gpu-manual" style="display:none">
+        <div id="gpu-list"></div>
+      </div>
+
+      <div class="model-config-row">
+        <div class="model-config-field">
+          <label class="sb-label">Cache Size</label>
+          <input type="number" id="model-cache-size" value="32768" step="256">
+        </div>
+        <div class="model-config-field">
+          <label class="sb-label">Cache Quant</label>
+          <input type="text" id="model-cache-quant" value="6,6">
+        </div>
+      </div>
+
+      <div class="model-actions">
+        <button id="load-btn" class="sb-btn" disabled>Load</button>
+        <button id="unload-btn" class="sb-btn danger" disabled>Unload</button>
+      </div>
+      <div id="model-loading" class="model-loading" style="display:none">Loading model...</div>
+    </div>
+  </div>
+
   <h2>Settings</h2>
 
   <div class="sb-section">
@@ -130,7 +179,7 @@
     <div id="messages">
       <div id="empty-state">
         <div class="logo">&#x2728;</div>
-        <div class="hint">Send a message to start chatting</div>
+        <div class="hint" id="empty-hint">Send a message to start chatting</div>
       </div>
     </div>
   </div>
@@ -150,11 +199,12 @@
 <!-- Hidden file input for session load -->
 <input type="file" id="file-input" accept=".json" style="display:none">
 
-<!-- ── Scripts (order matters: state → tree → render → settings → chat → session → main) ── -->
+<!-- ── Scripts (order matters: state → tree → render → settings → model → chat → session → main) ── -->
 <script src="js/state.js"></script>
 <script src="js/tree.js"></script>
 <script src="js/render.js"></script>
 <script src="js/settings.js"></script>
+<script src="js/model.js"></script>
 <script src="js/chat.js"></script>
 <script src="js/session.js"></script>
 <script src="js/main.js"></script>

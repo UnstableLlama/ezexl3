@@ -36,10 +36,14 @@ function populateUI(status) {
   renderBans();
 
   // Model info
-  document.getElementById('model-info').innerHTML =
-    `<strong>${status.model_name}</strong><br>` +
-    `Context: ${(status.context_length || 0).toLocaleString()} tokens<br>` +
-    `${status.model_dir || ''}`;
+  if (status.loaded) {
+    document.getElementById('model-info').innerHTML =
+      `<strong>${status.model_name}</strong><br>` +
+      `Context: ${(status.context_length || 0).toLocaleString()} tokens<br>` +
+      `${status.model_dir || ''}`;
+  } else {
+    document.getElementById('model-info').innerHTML = '<em>No model loaded</em>';
+  }
   document.getElementById('header-model').textContent = status.model_name || '';
 }
 

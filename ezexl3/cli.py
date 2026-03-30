@@ -151,6 +151,7 @@ def build_parser() -> argparse.ArgumentParser:
             default=None,
             help="Device ratios for quantization only. Example: -r 1,1 (optional)",
         )
+        p_sub.add_argument("-hq", action="store_true", help="Enable high-quality quantization (exllamav3 -hq)")
         p_sub.add_argument("--no-cleanup", "-nc", action="store_true", help="Keep w-* working dirs and logs")
         p_sub.add_argument("--no-readme", action="store_true", help="Skip README stage")
         p_sub.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
@@ -180,6 +181,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Template for output directory. Fields: {model}, {model_name}, {bpw}")
     q.add_argument("--w-template", default="{model}/w-{bpw}",
                    help="Template for working directory. Fields: {model}, {model_name}, {bpw}")
+    q.add_argument("-hq", action="store_true", help="Enable high-quality quantization (exllamav3 -hq)")
     q.add_argument("--dry", action="store_true", help="Print what would run, but do not execute.")
     q.add_argument("--continue-on-error", action="store_true", help="Keep going after failures.")
     q.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
@@ -197,8 +199,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
     # --- chat ---
-    ch = sub.add_parser("chat", help="Launch web chat UI for a loaded model")
-    ch.add_argument("-m", "--model", required=True, help="Model directory")
+    ch = sub.add_parser("chat", help="Launch web chat UI (model optional — select in browser)")
+    ch.add_argument("-m", "--model", required=False, default=None, help="Model directory (optional: select in UI)")
     ch.add_argument("-d", "--devices", default="0", help="CUDA devices. Example: -d 0,1")
     ch.add_argument("-r", "--device-ratios", default=None, help="Device ratios. Example: -r 1,1")
     ch.add_argument("--host", default="127.0.0.1",
@@ -217,6 +219,14 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--no-graph", "-ng", action="store_true", help="Do not generate or embed the README SVG graph")
     r.add_argument("--no-measurement", "-nm", action="store_true", help="Remove KL/PPL columns from README and skip graph embedding")
     r.add_argument("--template", "-t", help="README template name (e.g., 'fire', 'basic')")
+
+    # --- ui (dashboard) ---
+    ui = sub.add_parser("ui", aliases=["dash", "dashboard"],
+                        help="Launch dashboard web UI")
+    ui.add_argument("--host", default="127.0.0.1",
+                    help="Bind address (default: 127.0.0.1)")
+    ui.add_argument("--port", type=int, default=8801, help="Port (default: 8801)")
+    ui.add_argument("--no-browser", action="store_true", help="Don't auto-open browser")
 
     return p
 
@@ -251,11 +261,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if cmd == "chat":
         from ezexl3.chat.server import run_server
-        # args.devices is already a list of strings from the normalization above
-        chat_devices = [int(d) for d in args.devices]
-        dr = args.device_ratios
-        if dr:
-            dr = ",".join(dr) if isinstance(dr, list) else dr
+        # When -m is omitted, launch UI-only (no model pre-loaded)
+        chat_devices = None
+        dr = None
+        if args.model:
+            chat_devices = [int(d) for d in args.devices]
+            dr = args.device_ratios
+            if dr:
+                dr = ",".join(dr) if isinstance(dr, list) else dr
         run_server(
             model_dir=args.model,
             devices=chat_devices,
@@ -268,12 +281,25 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         return 0
 
+    if cmd in ("ui", "dash", "dashboard"):
+        from ezexl3.ui.server import run_ui_server
+        run_ui_server(
+            host=args.host,
+            port=args.port,
+            open_browser=not args.no_browser,
+        )
+        return 0
+
     from ezexl3.repo import run_repo, run_quant_stage, run_measure_stage
 
     devices_i = _parse_devices(getattr(args, "devices", ["0"]))
     device_ratios = _parse_device_ratios(getattr(args, "device_ratios", None), devices_i)
     device_ratios_str = ",".join(device_ratios) if device_ratios else None
     layers = _parse_layers(getattr(args, "layers", 2)) if hasattr(args, "layers") else 2
+
+    # Inject -hq into quant_args when flag is set
+    if getattr(args, "hq", False) and "-hq" not in pt.quant_args:
+        pt.quant_args.append("-hq")
 
     if cmd == "repo":
         # Process each model, continuing on error

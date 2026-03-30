@@ -2,6 +2,7 @@ import io
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -86,7 +87,10 @@ class OptimizedStageTests(unittest.TestCase):
             def join(self):
                 return None
 
-        with patch("ezexl3.repo.Process", DummyProcess), patch("builtins.print") as mock_print:
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with patch("ezexl3.repo.Process", DummyProcess), redirect_stdout(buf):
             repo._run_optimized_compare_queue(
                 model_dir="/tmp/model",
                 compare_jobs=jobs,
@@ -95,7 +99,7 @@ class OptimizedStageTests(unittest.TestCase):
                 write_logs=False,
             )
 
-        printed = "\n".join(" ".join(str(x) for x in call.args) for call in mock_print.call_args_list)
+        printed = buf.getvalue()
         self.assertIn("[GPU 1] START compare 3-4", printed)
         self.assertIn("[GPU 1] DONE compare 3-4", printed)
 
@@ -158,7 +162,8 @@ class ProgressDisplayTests(unittest.TestCase):
             def join(self):
                 return None
 
-        with patch("ezexl3.repo.Process", DummyProcess), patch("builtins.print") as mock_print:
+        buf = io.StringIO()
+        with patch("ezexl3.repo.Process", DummyProcess), redirect_stdout(buf):
             repo._run_optimized_compare_queue(
                 model_dir="/tmp/model",
                 compare_jobs=jobs,
@@ -167,11 +172,9 @@ class ProgressDisplayTests(unittest.TestCase):
                 write_logs=False,
             )
 
-        printed = "\n".join(" ".join(str(x) for x in call.args) for call in mock_print.call_args_list)
+        printed = buf.getvalue()
         self.assertIn("[GPU 0] START compare 3-4", printed)
         self.assertIn("[GPU 0] DONE compare 3-4", printed)
-        # Progress events should not generate print() calls in non-TTY mode
-        self.assertNotIn("Measuring 45%", printed)
 
     def test_non_tty_skips_ansi_codes(self):
         """When stdout is not a TTY, no ANSI escape codes should appear in output."""

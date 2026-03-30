@@ -415,6 +415,51 @@ def _build_synthetic_bar(pct: int, width: int = 30) -> str:
     return "\u2501" * filled + "\u2500" * empty + f" {pct:3d}%"
 
 
+def _init_gpu_progress(use_ansi: bool, gpu_status: Dict[int, str]) -> None:
+    """Print the initial GPU status area (one line per GPU)."""
+    if use_ansi:
+        for d in sorted(gpu_status):
+            sys.stdout.write(f"\033[2K  GPU {d} | idle\n")
+        sys.stdout.flush()
+
+
+def _redraw_gpu_progress(
+    use_ansi: bool, gpu_status: Dict[int, str], num_lines: int,
+) -> None:
+    """Update the GPU progress area in-place."""
+    if use_ansi:
+        _clear_and_redraw_progress(gpu_status, num_lines)
+    else:
+        # Non-ANSI fallback: one \r-prefixed line per GPU so the dashboard
+        # terminal overwrites each GPU's progress span independently.
+        for gpu_id in sorted(gpu_status):
+            text = gpu_status[gpu_id]
+            if text != "idle":
+                sys.stdout.write(f"\rgpu{gpu_id}:  GPU {gpu_id} | {text}\n")
+        sys.stdout.flush()
+
+
+def _print_msg_with_progress(
+    msg: str, use_ansi: bool, gpu_status: Dict[int, str], num_lines: int,
+) -> None:
+    """Print a message, preserving the GPU progress area if ANSI is available."""
+    if use_ansi:
+        _print_above_progress(msg, gpu_status, num_lines)
+    else:
+        # Print on a new line (no \r so the dashboard finalizes the progress bar)
+        print(msg)
+
+
+def _cleanup_gpu_progress(use_ansi: bool, num_lines: int) -> None:
+    """Clear the GPU progress area after all tasks are done."""
+    if use_ansi:
+        sys.stdout.write(f"\033[{num_lines}A")
+        for _ in range(num_lines):
+            sys.stdout.write("\033[2K\n")
+        sys.stdout.write(f"\033[{num_lines}A")
+        sys.stdout.flush()
+
+
 def _build_optimized_jobs(model_dir: str, optimized_bpws: List[str]) -> Tuple[List[dict], List[dict]]:
     measurements_dir = os.path.join(model_dir, "measurements")
     os.makedirs(measurements_dir, exist_ok=True)
@@ -549,12 +594,7 @@ def _run_optimized_compare_queue(
     use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     gpu_status: Dict[int, str] = {d: "idle" for d in devices}
     num_lines = len(devices)
-
-    # Print initial progress area (one line per GPU)
-    if use_ansi:
-        for d in sorted(gpu_status):
-            sys.stdout.write(f"\033[2K  GPU {d} | idle\n")
-        sys.stdout.flush()
+    _init_gpu_progress(use_ansi, gpu_status)
 
     active_workers = len(devices)
     failures = 0
@@ -568,8 +608,7 @@ def _run_optimized_compare_queue(
 
         if event == "progress":
             gpu_status[gpu] = res["text"]
-            if use_ansi:
-                _clear_and_redraw_progress(gpu_status, num_lines)
+            _redraw_gpu_progress(use_ansi, gpu_status, num_lines)
             continue
 
         job = res["job"]
@@ -589,18 +628,9 @@ def _run_optimized_compare_queue(
         else:
             continue
 
-        if use_ansi:
-            _print_above_progress(msg, gpu_status, num_lines)
-        else:
-            print(msg)
+        _print_msg_with_progress(msg, use_ansi, gpu_status, num_lines)
 
-    # Clear the progress area
-    if use_ansi:
-        sys.stdout.write(f"\033[{num_lines}A")
-        for _ in range(num_lines):
-            sys.stdout.write("\033[2K\n")
-        sys.stdout.write(f"\033[{num_lines}A")
-        sys.stdout.flush()
+    _cleanup_gpu_progress(use_ansi, num_lines)
 
     for p in procs:
         p.join()
@@ -716,7 +746,10 @@ def _run_measure_subprocess(
     completed = 0
     last_send: float = 0.0
 
-    for line in proc.stdout:
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            break
         buf_lines.append(line)
         if log_f:
             log_f.write(line)
@@ -1083,6 +1116,30 @@ def _parse_measure_args(measure_args: List[str], default_devices: List[int]) -> 
     return ppl_rows, devices
 
 
+def _maybe_update_graph(model_dir: str, csv_path: str) -> None:
+    """Regenerate the SVG graph from the current CSV if there are >= 2 complete data points.
+
+    Rows with missing KL/PPL/GiB (NaN from partial measurement) are filtered
+    out so that make_plot never sees NaN values in axis-limit calculations.
+    """
+    import numpy as np
+    from ezexl3.graph_svg import load_series, make_plot
+
+    try:
+        bpw, kld, ppl, gib, _ = load_series(csv_path, drop_bf16=True)
+    except Exception:
+        return
+
+    valid = ~(np.isnan(kld) | np.isnan(ppl) | np.isnan(gib))
+    bpw, kld, ppl, gib = bpw[valid], kld[valid], ppl[valid], gib[valid]
+
+    if len(bpw) < 2:
+        return
+    basename = os.path.basename(os.path.abspath(model_dir)).lower()
+    svg_path = os.path.join(model_dir, f"{basename}.svg")
+    make_plot(bpw, kld, ppl, gib, title=basename, outfile=svg_path, add_checks=False)
+
+
 def _init_measure_db(model_dir: str, devices: List[int]) -> Tuple[str, str]:
     """Set up SQLite DB, migrate legacy CSVs. Returns (db_path, out_csv)."""
     out_csv = default_csv_path(model_dir)
@@ -1215,6 +1272,12 @@ def run_measure_single_bpw(
     task_descs = [f"{_task_to_csv_label(t['label'])} {t['phase'].upper()}" for t in all_tasks]
     print(f"  📊 Measuring {label}: {', '.join(task_descs)} on {n_workers} GPU(s)...")
 
+    use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+    gpu_status: Dict[int, str] = {d: "idle" for d in worker_devices}
+    num_lines = n_workers
+
+    _init_gpu_progress(use_ansi, gpu_status)
+
     # Result listener
     active_workers = n_workers
     failures = 0
@@ -1226,21 +1289,48 @@ def run_measure_single_bpw(
             continue
 
         event = res["event"]
+
         if event == "progress":
-            continue  # skip progress events for per-BPW measurement
+            gpu = res["device"]
+            gpu_status[gpu] = res["text"]
+            _redraw_gpu_progress(use_ansi, gpu_status, num_lines)
+            continue
 
         res_label = res.get("label", "")
         phase = res.get("phase", "")
+        gpu = res.get("device", "?")
+        phase_tag = phase.upper()
 
-        if event == "done":
+        if event == "start":
+            msg = f"🧪 [GPU {gpu}] START {res_label} {phase_tag}"
+            gpu_status[gpu] = f"{res_label} {phase_tag} | starting..."
+        elif event == "done":
             row = res["row"]
             if phase == "kl":
-                print(f"    ✅ {res_label} KL: {row.get('KL Div', 'N/A')}")
+                kl_val = row.get("KL Div", "N/A")
+                msg = f"✅ [GPU {gpu}] DONE {res_label} KL: KL={kl_val}"
             else:
-                print(f"    ✅ {res_label} PPL: {row.get('PPL r-100', 'N/A')}")
+                ppl_val = row.get("PPL r-100", "N/A")
+                msg = f"✅ [GPU {gpu}] DONE {res_label} PPL: PPL={ppl_val}"
+            gpu_status[gpu] = "idle"
+
+            # Live graph update after each measurement result
+            try:
+                out_csv = default_csv_path(model_dir)
+                export_csv(db_path, out_csv)
+                _maybe_update_graph(model_dir, out_csv)
+            except Exception:
+                pass  # non-critical
         elif event == "error":
             failures += 1
-            print(f"    🔴 FAIL {res_label} {phase.upper()}: {res['error']}")
+            msg = f"🔴 [GPU {gpu}] FAIL {res_label} {phase_tag}: {res['error']}"
+            gpu_status[gpu] = "idle"
+        else:
+            continue
+
+        _print_msg_with_progress(msg, use_ansi, gpu_status, num_lines)
+
+    _cleanup_gpu_progress(use_ansi, num_lines)
 
     for p in procs:
         p.join()
@@ -1499,14 +1589,29 @@ def run_measure_stage(
             print(f"✅ All catbench jobs complete: {n_svgs} SVGs generated.")
         return 0
 
-    # Queue: all KL first, then all PPL, then catbench, then sentinels
+    # Queue: interleave by BPW (lowest first), PPL then KL per BPW,
+    # so the live graph fills in from left to right.
     tasks: Queue = Queue()
     results: Queue = Queue()
 
-    for t in kl_tasks:
-        tasks.put(t)
+    # Build a combined per-BPW task list sorted by numeric BPW (ascending)
+    _bpw_tasks: Dict[str, List[dict]] = {}
     for t in ppl_tasks:
-        tasks.put(t)
+        _bpw_tasks.setdefault(t["label"], []).append(t)
+    for t in kl_tasks:
+        _bpw_tasks.setdefault(t["label"], []).append(t)
+
+    def _bpw_sort_key(label: str) -> float:
+        if label == "base":
+            return -1.0
+        try:
+            return float(label)
+        except ValueError:
+            return 999.0
+
+    for label in sorted(_bpw_tasks, key=_bpw_sort_key):
+        for t in _bpw_tasks[label]:
+            tasks.put(t)
     for t in catbench_tasks:
         tasks.put(t)
     for _ in devices:
@@ -1526,12 +1631,7 @@ def run_measure_stage(
     use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     gpu_status: Dict[int, str] = {d: "idle" for d in devices}
     num_lines = len(devices)
-
-    # Print initial progress area (one line per GPU)
-    if use_ansi:
-        for d in sorted(gpu_status):
-            sys.stdout.write(f"\033[2K  GPU {d} | idle\n")
-        sys.stdout.flush()
+    _init_gpu_progress(use_ansi, gpu_status)
 
     # Result listener loop
     active_workers = len(devices)
@@ -1548,8 +1648,7 @@ def run_measure_stage(
 
         if event == "progress":
             gpu_status[gpu] = res["text"]
-            if use_ansi:
-                _clear_and_redraw_progress(gpu_status, num_lines)
+            _redraw_gpu_progress(use_ansi, gpu_status, num_lines)
             continue
 
         label = res["label"]
@@ -1570,6 +1669,15 @@ def run_measure_stage(
                 ppl_val = row.get("PPL r-100", "N/A")
                 msg = f"✅ [GPU {gpu}] DONE {label} PPL: PPL={ppl_val}"
             gpu_status[gpu] = "idle"
+
+            # Live graph update: export CSV and regenerate SVG after each
+            # KL/PPL result so the graph renders progressively.
+            if phase in ("kl", "ppl"):
+                try:
+                    export_csv(db_path, out_csv)
+                    _maybe_update_graph(model_dir, out_csv)
+                except Exception:
+                    pass  # non-critical, final export happens below
         elif event == "error":
             failures += 1
             msg = f"🔴 [GPU {gpu}] FAIL {label} {phase_tag}: {res['error']}"
@@ -1577,23 +1685,14 @@ def run_measure_stage(
         else:
             continue
 
-        if use_ansi:
-            _print_above_progress(msg, gpu_status, num_lines)
-        else:
-            print(msg)
+        _print_msg_with_progress(msg, use_ansi, gpu_status, num_lines)
 
-    # Clear the progress area
-    if use_ansi:
-        sys.stdout.write(f"\033[{num_lines}A")
-        for _ in range(num_lines):
-            sys.stdout.write("\033[2K\n")
-        sys.stdout.write(f"\033[{num_lines}A")
-        sys.stdout.flush()
+    _cleanup_gpu_progress(use_ansi, num_lines)
 
     for p in procs:
         p.join()
 
-    # Export database to CSV for downstream consumers (readme, graph_svg)
+    # Final export of database to CSV for downstream consumers (readme, graph_svg)
     export_csv(db_path, out_csv)
 
     # Batch SVG generation after all catbench jobs
