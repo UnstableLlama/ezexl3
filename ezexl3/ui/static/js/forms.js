@@ -425,6 +425,8 @@ function toggleMetaLock(key) {
     if (input) input.readOnly = true;
   }
 
+  // Sync lock state to disk so backend always sees current UI state
+  saveMetadata();
   updateMetadataConfirm();
 }
 
