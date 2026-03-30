@@ -214,6 +214,7 @@ function updateRunButton() {
     stopBtn.style.display = "none";
   }
   if (typeof updateChatButton === "function") updateChatButton();
+  if (typeof syncMetaLockState === "function") syncMetaLockState();
 }
 
 

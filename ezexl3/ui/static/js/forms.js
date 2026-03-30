@@ -313,7 +313,7 @@ function saveModelDir(dir) {
 }
 
 
-// ── Metadata panel (README fields with pin checkboxes) ───────────
+// ── Metadata panel (README fields with lock buttons) ─────────────
 
 const META_FIELDS = [
   { key: "AUTHOR", label: "Author", help: "Model author / organization" },
@@ -353,24 +353,6 @@ function renderMetadataPanel(commandKey) {
     label.className = "meta-label";
     label.textContent = f.label;
     row.appendChild(label);
-
-    const pin = document.createElement("label");
-    pin.className = "meta-pin";
-    pin.title = "Pin this field";
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.className = "meta-pin-cb";
-    cb.dataset.key = f.key;
-    cb.addEventListener("change", () => {
-      div.classList.toggle("pinned", cb.checked);
-      updateMetadataConfirm();
-    });
-    const icon = document.createElement("span");
-    icon.className = "meta-pin-icon";
-    icon.innerHTML = "&#x1F4CC;";
-    pin.appendChild(cb);
-    pin.appendChild(icon);
-    row.appendChild(pin);
     div.appendChild(row);
 
     if (f.help) {
@@ -380,13 +362,27 @@ function renderMetadataPanel(commandKey) {
       div.appendChild(help);
     }
 
+    // Input + lock button side by side
+    const inputRow = document.createElement("div");
+    inputRow.className = "meta-input-row";
+
     const input = document.createElement("input");
     input.type = "text";
     input.className = "meta-input";
     input.id = `meta-${f.key}`;
     input.addEventListener("input", updateMetadataConfirm);
-    div.appendChild(input);
+    inputRow.appendChild(input);
 
+    const lockBtn = document.createElement("button");
+    lockBtn.type = "button";
+    lockBtn.className = "meta-lock";
+    lockBtn.dataset.key = f.key;
+    lockBtn.title = "Lock this field";
+    lockBtn.textContent = "\u{1F513}";  // unlocked
+    lockBtn.addEventListener("click", () => toggleMetaLock(f.key));
+    inputRow.appendChild(lockBtn);
+
+    div.appendChild(inputRow);
     container.appendChild(div);
   }
 
@@ -396,8 +392,50 @@ function renderMetadataPanel(commandKey) {
     modelInput.addEventListener("change", () => loadMetadataDefaults(true));
   }
 
+  // Apply run-locked state if a job is already running
+  syncMetaLockState();
   updateMetadataConfirm();
   loadMetadataDefaults(false);
+}
+
+
+function toggleMetaLock(key) {
+  const lockBtn = document.querySelector(`.meta-lock[data-key="${key}"]`);
+  if (!lockBtn) return;
+
+  const field = lockBtn.closest(".meta-field");
+  const input = document.getElementById(`meta-${key}`);
+  const isLocked = field.classList.contains("locked");
+
+  if (isLocked) {
+    // Prevent unlock during a run
+    if (jobRunning) return;
+    // Unlock
+    field.classList.remove("locked");
+    lockBtn.classList.remove("locked");
+    lockBtn.textContent = "\u{1F513}";  // unlocked
+    lockBtn.title = "Lock this field";
+    if (input) input.readOnly = false;
+  } else {
+    // Lock
+    field.classList.add("locked");
+    lockBtn.classList.add("locked");
+    lockBtn.textContent = "\u{1F512}";  // locked
+    lockBtn.title = "Unlock this field";
+    if (input) input.readOnly = true;
+  }
+
+  updateMetadataConfirm();
+}
+
+
+function syncMetaLockState() {
+  // When a job starts/stops, toggle the run-locked class on lock buttons
+  // to prevent unlocking during a run
+  const locks = document.querySelectorAll(".meta-lock.locked");
+  for (const btn of locks) {
+    btn.classList.toggle("run-locked", jobRunning);
+  }
 }
 
 
@@ -412,11 +450,12 @@ async function loadMetadataDefaults(force) {
 
     for (const f of META_FIELDS) {
       const input = document.getElementById(`meta-${f.key}`);
-      if (input && data[f.key]) {
-        // Only overwrite if empty or force-refreshing
-        if (!input.value || force) {
-          input.value = data[f.key];
-        }
+      if (!input) continue;
+      // Don't overwrite locked fields
+      const field = input.closest(".meta-field");
+      if (field && field.classList.contains("locked")) continue;
+      if (data[f.key] && (!input.value || force)) {
+        input.value = data[f.key];
       }
     }
   } catch (e) { /* non-critical */ }
@@ -454,17 +493,17 @@ async function confirmMetadata() {
 
 
 function updateMetadataConfirm() {
-  const allPinned = META_FIELDS.every(f => {
-    const cb = document.querySelector(`.meta-pin-cb[data-key="${f.key}"]`);
+  const allLocked = META_FIELDS.every(f => {
+    const field = document.querySelector(`.meta-field[data-key="${f.key}"]`);
     const input = document.getElementById(`meta-${f.key}`);
-    return cb && cb.checked && input && input.value.trim();
+    return field && field.classList.contains("locked") && input && input.value.trim();
   });
 
   const btn = document.getElementById("metadata-confirm");
-  if (btn) btn.disabled = !allPinned;
+  if (btn) btn.disabled = !allLocked;
 
-  // Pre-fill mode: auto-save when all pinned and not waiting for pipeline
-  if (allPinned && !metadataWaitingDir) {
+  // Pre-fill mode: auto-save when all locked and not waiting for pipeline
+  if (allLocked && !metadataWaitingDir) {
     saveMetadata();
   }
 }
