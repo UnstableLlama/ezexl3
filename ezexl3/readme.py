@@ -1,9 +1,15 @@
 import csv
+import json
 import os
 import re
+import sys
+import time
 from typing import List, Dict, Optional
 
 from ezexl3.graph_svg import generate_iceblink_svg
+
+_META_FILENAME = ".ezexl3_readme_meta.json"
+_META_KEYS = ("AUTHOR", "MODEL", "REPOLINK", "USER")
 
 
 def get_hf_username() -> str:
@@ -18,35 +24,94 @@ def get_hf_username() -> str:
     return os.environ.get("USER", "USER")
 
 
-def prompt_metadata(model_dir: str, bpws: List[str], interactive: bool = True) -> Dict[str, str]:
-    """Interactively prompt user for README metadata with smart defaults."""
+def _metadata_path(model_dir: str) -> str:
+    return os.path.join(model_dir, _META_FILENAME)
+
+
+def _read_saved_metadata(model_dir: str) -> Optional[Dict[str, str]]:
+    path = _metadata_path(model_dir)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _write_saved_metadata(model_dir: str, meta: Dict) -> None:
+    os.makedirs(model_dir, exist_ok=True)
+    with open(_metadata_path(model_dir), "w") as f:
+        json.dump(meta, f, indent=2)
+
+
+def _compute_defaults(model_dir: str) -> Dict[str, str]:
+    """Compute sensible default metadata from the model directory name."""
     model_name = os.path.basename(os.path.abspath(model_dir))
-
     parts = model_name.split("-", 1)
-    default_author = parts[0] if len(parts) > 1 else "AUTHOR"
-    default_model = parts[1] if len(parts) > 1 else model_name
+    author = parts[0] if len(parts) > 1 else "AUTHOR"
+    model = parts[1] if len(parts) > 1 else model_name
+    user = get_hf_username()
+    repolink = f"https://huggingface.co/{author}/{model}"
+    return {"AUTHOR": author, "MODEL": model, "REPOLINK": repolink, "USER": user}
 
-    default_user = get_hf_username()
-    default_repolink = f"https://huggingface.co/{default_author}/{default_model}"
+
+def _wait_for_dashboard_metadata(model_dir: str, defaults: Dict[str, str]) -> Dict[str, str]:
+    """Write defaults with a waiting flag and poll until the dashboard confirms."""
+    waiting_meta = dict(defaults)
+    waiting_meta["_waiting"] = True
+    _write_saved_metadata(model_dir, waiting_meta)
+
+    print(f"\n<<EZEXL3:WAITING_METADATA:{model_dir}>>")
+    print("⏳ Waiting for README metadata from dashboard...")
+    print("   Fill in the metadata form and click 'Confirm & Continue'")
+    sys.stdout.flush()
+
+    poll_count = 0
+    while True:
+        time.sleep(1)
+        poll_count += 1
+        if poll_count % 30 == 0:
+            print("⏳ Still waiting for metadata...")
+            sys.stdout.flush()
+        saved = _read_saved_metadata(model_dir)
+        if saved and not saved.get("_waiting"):
+            print("📝 Metadata received from dashboard")
+            result = {k: saved.get(k, defaults.get(k, "")) for k in _META_KEYS}
+            result["QUANT_METHOD"] = "exl3"
+            result["QUANT_TOOL"] = "exllamav3"
+            return result
+
+
+def prompt_metadata(model_dir: str, bpws: List[str], interactive: bool = True) -> Dict[str, str]:
+    """Collect README metadata from saved file, dashboard, or interactive prompts."""
+    defaults = _compute_defaults(model_dir)
+
+    # Check for saved metadata (pre-filled from dashboard or previous run)
+    saved = _read_saved_metadata(model_dir)
+    if saved and not saved.get("_waiting") and all(saved.get(k) for k in _META_KEYS):
+        print(f"📝 Using saved README metadata from {_META_FILENAME}")
+        result = {k: saved[k] for k in _META_KEYS}
+        result["QUANT_METHOD"] = "exl3"
+        result["QUANT_TOOL"] = "exllamav3"
+        return result
 
     if not interactive:
-        return {
-            "AUTHOR": default_author,
-            "MODEL": default_model,
-            "REPOLINK": default_repolink,
-            "USER": default_user,
-            "QUANT_METHOD": "exl3",
-            "QUANT_TOOL": "exllamav3",
-        }
+        defaults["QUANT_METHOD"] = "exl3"
+        defaults["QUANT_TOOL"] = "exllamav3"
+        return defaults
 
+    # Non-TTY (dashboard subprocess): wait for metadata via file
+    if not sys.stdin.isatty():
+        return _wait_for_dashboard_metadata(model_dir, defaults)
+
+    # Interactive TTY: prompt user
     print("\n📝 Please provide metadata for the README (ENTER to use defaults):")
 
-    author = input(f"Author [{default_author}]: ").strip() or default_author
-    model = input(f"Model [{default_model}]: ").strip() or default_model
-
-    repolink = input(f"Repo Link [{default_repolink}]: ").strip() or default_repolink
-
-    user = input(f"Quantized By (HuggingFace Username) [{default_user}]: ").strip() or default_user
+    author = input(f"Author [{defaults['AUTHOR']}]: ").strip() or defaults["AUTHOR"]
+    model = input(f"Model [{defaults['MODEL']}]: ").strip() or defaults["MODEL"]
+    repolink = input(f"Repo Link [{defaults['REPOLINK']}]: ").strip() or defaults["REPOLINK"]
+    user = input(f"Quantized By (HuggingFace Username) [{defaults['USER']}]: ").strip() or defaults["USER"]
 
     return {
         "AUTHOR": author,

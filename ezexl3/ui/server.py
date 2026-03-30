@@ -385,6 +385,51 @@ def _bpw_key(label: str) -> float:
         return float("inf")
 
 
+async def handle_metadata_get(request: web.Request) -> web.Response:
+    """Return saved README metadata or computed defaults for a model directory."""
+    model_dir = request.query.get("model_dir", "").strip()
+    if not model_dir:
+        return web.json_response({"error": "No model_dir"}, status=400)
+
+    meta_path = os.path.join(model_dir, ".ezexl3_readme_meta.json")
+    if os.path.exists(meta_path):
+        try:
+            data = json.loads(Path(meta_path).read_text("utf-8"))
+            return web.json_response(data)
+        except Exception:
+            pass
+
+    try:
+        from ezexl3.readme import _compute_defaults
+        defaults = await asyncio.to_thread(_compute_defaults, model_dir)
+        defaults["_defaults"] = True
+        return web.json_response(defaults)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_metadata_set(request: web.Request) -> web.Response:
+    """Save README metadata to the model directory, clearing any waiting flag."""
+    data = await request.json()
+    model_dir = data.get("model_dir", "").strip()
+    if not model_dir:
+        return web.json_response({"error": "No model_dir"}, status=400)
+
+    meta = {
+        "AUTHOR": data.get("AUTHOR", ""),
+        "MODEL": data.get("MODEL", ""),
+        "REPOLINK": data.get("REPOLINK", ""),
+        "USER": data.get("USER", ""),
+        "_waiting": False,
+    }
+
+    meta_path = os.path.join(model_dir, ".ezexl3_readme_meta.json")
+    os.makedirs(model_dir, exist_ok=True)
+    Path(meta_path).write_text(json.dumps(meta, indent=2), "utf-8")
+
+    return web.json_response({"ok": True})
+
+
 async def handle_chat_launch(request: web.Request) -> web.Response:
     """Shut down the dashboard and launch the chat UI in its place."""
     manager: JobManager = request.app["job_manager"]
@@ -494,6 +539,8 @@ def create_app() -> web.Application:
     app.router.add_get("/api/run/status", handle_run_status)
     app.router.add_get("/api/data", handle_data)
     app.router.add_get("/api/graph", handle_graph)
+    app.router.add_get("/api/metadata", handle_metadata_get)
+    app.router.add_post("/api/metadata", handle_metadata_set)
     app.router.add_post("/api/chat/launch", handle_chat_launch)
     app.router.add_get("/api/config", handle_config_get)
     app.router.add_post("/api/config", handle_config_set)

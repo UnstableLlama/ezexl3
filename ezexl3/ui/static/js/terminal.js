@@ -147,7 +147,10 @@ async function streamJob(jobId) {
         try {
           const event = JSON.parse(payload);
           if (event.type === "stdout") {
-            appendTerminal(event.text);
+            checkMetadataWait(event.text);
+            if (!event.text.includes("<<EZEXL3:")) {
+              appendTerminal(event.text);
+            }
           } else if (event.type === "stderr") {
             appendTerminal(event.text, "term-stderr");
           } else if (event.type === "exit") {
@@ -211,4 +214,13 @@ function updateRunButton() {
     stopBtn.style.display = "none";
   }
   if (typeof updateChatButton === "function") updateChatButton();
+}
+
+
+function checkMetadataWait(text) {
+  const match = text.match(/<<EZEXL3:WAITING_METADATA:(.+?)>>/);
+  if (!match) return;
+  if (typeof showMetadataWait === "function") {
+    showMetadataWait(match[1]);
+  }
 }
