@@ -61,6 +61,8 @@ def create_app(engine: ChatEngine) -> web.Application:
     app.router.add_post("/api/model/load", handle_model_load)
     app.router.add_post("/api/model/unload", handle_model_unload)
     app.router.add_post("/api/ui/launch", handle_ui_launch)
+    app.router.add_get("/api/config", handle_config_get)
+    app.router.add_post("/api/config", handle_config_set)
     app.router.add_static("/", STATIC_DIR, show_index=False, append_version=True)
 
     return app
@@ -292,6 +294,44 @@ async def handle_ui_launch(request: web.Request) -> web.Response:
     asyncio.ensure_future(_graceful_exit())
 
     return web.json_response({"ok": True, "url": f"http://{host}:{port}"})
+
+
+# ---------------------------------------------------------------------------
+# Persistent user config (shared with dashboard: ~/.config/ezexl3/ui.json)
+# ---------------------------------------------------------------------------
+
+def _config_path() -> Path:
+    xdg = os.environ.get("XDG_CONFIG_HOME", "")
+    base = Path(xdg) if xdg else Path.home() / ".config"
+    return base / "ezexl3" / "ui.json"
+
+
+def _load_config() -> dict:
+    p = _config_path()
+    if p.is_file():
+        try:
+            return json.loads(p.read_text("utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def _save_config(data: dict) -> None:
+    p = _config_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, indent=2), "utf-8")
+
+
+async def handle_config_get(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_load_config))
+
+
+async def handle_config_set(request: web.Request) -> web.Response:
+    incoming = await request.json()
+    cfg = await asyncio.to_thread(_load_config)
+    cfg.update(incoming)
+    await asyncio.to_thread(_save_config, cfg)
+    return web.json_response({"ok": True})
 
 
 # ---------------------------------------------------------------------------

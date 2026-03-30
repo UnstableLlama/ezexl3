@@ -77,8 +77,14 @@ async function initModelPanel(status) {
     setModelPanelLoaded(status.model_name);
   } else {
     setModelPanelUnloaded();
-    // Start browsing at home directory
-    await browseTo('');
+    // Browse to last-used model directory, or fall back to home
+    let startPath = '';
+    try {
+      const cfgRes = await fetch('/api/config');
+      const cfg = await cfgRes.json();
+      if (cfg.last_model_dir) startPath = cfg.last_model_dir;
+    } catch (_) {}
+    await browseTo(startPath);
   }
 }
 
@@ -142,6 +148,7 @@ async function browseTo(path) {
     renderBreadcrumb(data.current);
     renderBrowserEntries(data);
     updateLoadButton();
+    if (data.is_model) saveModelDir(data.current);
   } catch (e) {
     list.innerHTML = `<div class="browser-error">Failed to browse</div>`;
   }
@@ -288,6 +295,14 @@ async function loadModel() {
     loadingEl.textContent = 'Error: ' + e.message;
     loadBtn.disabled = !browseIsModel;
   }
+}
+
+function saveModelDir(dir) {
+  fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ last_model_dir: dir }),
+  }).catch(() => {});
 }
 
 async function unloadModel() {
