@@ -457,7 +457,6 @@ async function loadMetadataDefaults(force) {
       if (data[f.key] && (!input.value || force)) {
         input.value = data[f.key];
       }
-      }
     }
     updateMetadataConfirm();
   } catch (e) { /* non-critical */ }
