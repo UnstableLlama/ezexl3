@@ -64,7 +64,7 @@ def _wait_for_dashboard_metadata(model_dir: str, defaults: Dict[str, str]) -> Di
 
     print(f"\n<<EZEXL3:WAITING_METADATA:{model_dir}>>")
     print("⏳ Waiting for README metadata from dashboard...")
-    print("   Fill in the metadata form and click 'Confirm & Continue'")
+    print("   Review the metadata fields, lock all four, and click 'Resume'")
     sys.stdout.flush()
 
     poll_count = 0
@@ -83,13 +83,21 @@ def _wait_for_dashboard_metadata(model_dir: str, defaults: Dict[str, str]) -> Di
             return result
 
 
+def _all_fields_locked(saved: Dict) -> bool:
+    """Check if all metadata fields were locked in the dashboard."""
+    locked = saved.get("_locked", {})
+    return all(locked.get(k) for k in _META_KEYS)
+
+
 def prompt_metadata(model_dir: str, bpws: List[str], interactive: bool = True) -> Dict[str, str]:
     """Collect README metadata from saved file, dashboard, or interactive prompts."""
     defaults = _compute_defaults(model_dir)
 
-    # Check for saved metadata (pre-filled from dashboard or previous run)
+    # Check for saved metadata — only auto-use if ALL fields are locked
     saved = _read_saved_metadata(model_dir)
-    if saved and not saved.get("_waiting") and all(saved.get(k) for k in _META_KEYS):
+    if (saved and not saved.get("_waiting")
+            and all(saved.get(k) for k in _META_KEYS)
+            and _all_fields_locked(saved)):
         print(f"📝 Using saved README metadata from {_META_FILENAME}")
         result = {k: saved[k] for k in _META_KEYS}
         result["QUANT_METHOD"] = "exl3"
@@ -103,7 +111,9 @@ def prompt_metadata(model_dir: str, bpws: List[str], interactive: bool = True) -
 
     # Non-TTY (dashboard subprocess): wait for metadata via file
     if not sys.stdin.isatty():
-        return _wait_for_dashboard_metadata(model_dir, defaults)
+        # Use saved values as starting point if they exist
+        starting = {k: (saved or defaults).get(k, defaults[k]) for k in _META_KEYS}
+        return _wait_for_dashboard_metadata(model_dir, starting)
 
     # Interactive TTY: prompt user
     print("\n📝 Please provide metadata for the README (ENTER to use defaults):")
