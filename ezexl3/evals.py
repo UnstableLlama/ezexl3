@@ -8,7 +8,6 @@ and its results are persisted to the measurement database.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import re
@@ -23,6 +22,17 @@ if TYPE_CHECKING:
     from multiprocessing import Queue
 
 from ezexl3.measure_db import _EVAL_COL_TO_CSV, read_all_rows
+
+# ---------------------------------------------------------------------------
+# Vendored script paths
+# ---------------------------------------------------------------------------
+
+_VENDOR_DIR = os.path.join(os.path.dirname(__file__), "vendor")
+
+
+def _vendor_script(name: str) -> str:
+    """Return the path to a vendored eval script."""
+    return os.path.join(_VENDOR_DIR, f"eval_{name}.py")
 
 
 # ---------------------------------------------------------------------------
@@ -115,35 +125,18 @@ EVAL_QUEUE_ORDER = ["longctx", "diversity", "perf", "mmlu", "humaneval", "ifbenc
 
 
 # ---------------------------------------------------------------------------
-# Script discovery
+# Script discovery (vendored)
 # ---------------------------------------------------------------------------
 
-def _find_exllamav3_eval_dir() -> str:
-    """Locate the eval/ directory inside the exllamav3 package."""
-    spec = importlib.util.find_spec("exllamav3")
-    if spec is None or spec.origin is None:
-        raise RuntimeError(
-            "exllamav3 is not installed. Install exllamav3 from source to use eval scripts."
-        )
-    pkg_dir = os.path.dirname(spec.origin)          # .../exllamav3/
-    repo_dir = os.path.dirname(pkg_dir)              # .../
-    eval_dir = os.path.join(repo_dir, "eval")
-    if not os.path.isdir(eval_dir):
-        raise RuntimeError(
-            f"exllamav3 eval/ directory not found at {eval_dir}. "
-            "Make sure exllamav3 is installed from source (not just the wheel)."
-        )
-    return eval_dir
-
-
 def find_eval_script(eval_name: str) -> str:
-    """Return the full path to an eval script."""
-    eval_def = EVAL_REGISTRY[eval_name]
-    eval_dir = _find_exllamav3_eval_dir()
-    script = os.path.join(eval_dir, eval_def.script_name)
-    if not os.path.isfile(script):
-        raise FileNotFoundError(f"Eval script not found: {script}")
-    return script
+    """Return the full path to the vendored eval script."""
+    path = _vendor_script(eval_name)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(
+            f"Vendored eval script not found: {path}. "
+            "This is a packaging error — the script should be bundled with ezexl3."
+        )
+    return path
 
 
 # ---------------------------------------------------------------------------

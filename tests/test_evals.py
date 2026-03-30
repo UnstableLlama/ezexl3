@@ -326,28 +326,16 @@ class TestMeasureDBEvalColumns:
 # ---------------------------------------------------------------------------
 
 class TestBuildEvalCmd:
-    def test_mmlu_cmd(self, tmp_path, monkeypatch):
-        # Create a fake eval script
-        eval_dir = tmp_path / "eval"
-        eval_dir.mkdir()
-        (eval_dir / "mmlu.py").write_text("# fake")
-        monkeypatch.setattr(
-            "ezexl3.evals._find_exllamav3_eval_dir",
-            lambda: str(eval_dir),
-        )
+    def test_mmlu_cmd(self, tmp_path):
         cmd = build_eval_cmd("mmlu", str(tmp_path), 0, str(tmp_path), "4", 10)
         assert "-fs" in cmd
         idx = cmd.index("-fs")
         assert cmd[idx + 1] == "10"
+        # Verify it uses the vendored script path
+        assert "vendor" in cmd[1]
+        assert "eval_mmlu.py" in cmd[1]
 
-    def test_humaneval_creates_output_dir(self, tmp_path, monkeypatch):
-        eval_dir = tmp_path / "eval"
-        eval_dir.mkdir()
-        (eval_dir / "humaneval.py").write_text("# fake")
-        monkeypatch.setattr(
-            "ezexl3.evals._find_exllamav3_eval_dir",
-            lambda: str(eval_dir),
-        )
+    def test_humaneval_creates_output_dir(self, tmp_path):
         base = str(tmp_path)
         cmd = build_eval_cmd("humaneval", base, 0, base, "4", 50)
         out_dir = os.path.join(base, "evals", "humaneval")
@@ -355,3 +343,10 @@ class TestBuildEvalCmd:
         assert "-spt" in cmd
         idx = cmd.index("-spt")
         assert cmd[idx + 1] == "50"
+
+    def test_vendored_scripts_exist(self):
+        """All vendored eval scripts must exist in the package."""
+        from ezexl3.evals import _vendor_script
+        for name in EVAL_REGISTRY:
+            path = _vendor_script(name)
+            assert os.path.isfile(path), f"Vendored script missing: {path}"
