@@ -490,7 +490,26 @@ async function saveMetadata() {
 
 
 async function confirmMetadata() {
-  await saveMetadata();
+  // Save with _confirm flag to clear the _waiting state on disk
+  const dir = getModelDir() || metadataWaitingDir;
+  if (dir) {
+    const meta = { model_dir: dir, _confirm: true };
+    const locked = {};
+    for (const f of META_FIELDS) {
+      const input = document.getElementById(`meta-${f.key}`);
+      const field = document.querySelector(`.meta-field[data-key="${f.key}"]`);
+      meta[f.key] = input ? input.value.trim() : "";
+      locked[f.key] = !!(field && field.classList.contains("locked"));
+    }
+    meta._locked = locked;
+    try {
+      await fetch("/api/metadata", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(meta),
+      });
+    } catch (e) { /* non-critical */ }
+  }
 
   const panel = document.getElementById("metadata-panel");
   panel.classList.remove("metadata-waiting");
