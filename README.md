@@ -1,54 +1,72 @@
 # ezexl3
 
-**ezexl3** is a single-command quantization and measurement pipeline that generates high-quality, HuggingFace-ready exl3 repos automatically.
-
-It wraps the exllamav3 quantization and evaluation workflow into a tool that has:
-- Interleaved quantize → verify pipeline: each BPW is quantized then immediately verified (KL + PPL) before proceeding, halting on error
-- Multi-GPU acceleration for both quantization and verification — KL and PPL run in parallel on 2+ GPUs
-- Supports optimized BPWs, (2.1 bpw, 3.5 bpw etc.)
-- Measures KL divergence + PPL @ 200k tokens, recording data to CSV
-- Generates a HuggingFace-ready `README.md` with your measurements using customizable templates
-- Embeds an SVG graph from the measurement CSV in the README
-- Optional catbench integration — generates SVG kitten drawings at each BPW and assembles them into a grid
-- Checkpoints and resumes intelligently
-all from one command.
-
-# Pipeline:
-<p align="center">
-model → [quantize → verify KL+PPL] per BPW → optimize → catbench → graph → README
-</p>
-
----
-
-## Installation
-
-This tool requires a local installation of [exllamav3](https://github.com/turboderp-org/exllamav3).
+**ezexl3** is a complete exl3 quantization lifecycle tool: quantize, verify, benchmark, visualize, and chat. One pip install, one CLI.
 
 ```bash
-# 1. Make sure you have exllamav3 installed.
+pip install ezexl3
+```
 
-# 2. Clone and install ezexl3
-git clone https://github.com/UnstableLlama/ezexl3
+or for custom templates, use a local editable install
+
+```bash
+git clone https://github.com/UnstableLlama/ezexl3/
 cd ezexl3
 pip install -e .
 ```
 
+
+Requires a local installation of [exllamav3](https://github.com/turboderp-org/exllamav3).
+
 ---
 
-## Usage
+## Quick Start
 
-### Quantize a full repository
-Run the entire pipeline (quantize → verify → README):
+### Dashboard
+```bash
+ezexl3 ui
+```
+Launches a web dashboard on port 8801. Every CLI subcommand is a clickable form with live terminal output via SSE streaming. Real-time measurement table and SVG graph update as your quant runs. GPU auto-detection. Boolean arguments exposed as toggles. This is the easiest way to use ezexl3.
+
+<p align="center">
+  <img src="docs/dashboard.png" width="49%" />
+  <img src="docs/data.png" width="49%" />
+</p>
+
+### Chat
+```bash
+ezexl3 chat
+```
+Launches a lightweight chat web interface for testing quantized models. Browse to your model in the file picker, select GPUs, click load. Branching conversation tree with regeneration, message editing, and sibling navigation. Exllama native, based on chat.py and the generator. No CLI flags needed.
+
+<p align="center">
+  <img src="docs/chat.png" width="65%" />
+</p>
+
+### CLI Pipeline
+Run the full pipeline from the command line:
 ```bash
 ezexl3 repo -m /path/to/base_model -b 2,2.5,3,4,5,6 -d 0,1 -t basic
 ```
-Then ezexl3 automatically:
 
-- Quantizes each BPW one at a time, immediately running KL divergence and perplexity verification after each one. If verification fails, the pipeline halts — no time wasted quantizing remaining BPWs on top of a bad quant. With 2+ GPUs, KL and PPL run in parallel during verification.
+---
 
-- Saves measurements to modelNameMeasured.csv in the base model folder, and makes a stylish dark mode SVG graph with the data.
+## What the pipeline does
 
-- Generates a README.md for a HuggingFace repo in the base model folder. (with optional customizable templates)
+ezexl3 wraps the exllamav3 quantization and evaluation workflow into a single command that:
+- Interleaves quantize → verify per BPW: each BPW is quantized then immediately verified (KL + PPL) before proceeding, halting on error
+- Multi-GPU acceleration for both quantization and verification. KL and PPL run in parallel on 2+ GPUs
+- Supports optimized BPWs (2.1 bpw, 3.5 bpw etc.)
+- Measures KL divergence + PPL @ 200k tokens, recording data to CSV
+- Generates a HuggingFace-ready `README.md` with your measurements using customizable templates
+- Embeds an SVG graph from the measurement CSV in the README
+- Optional catbench integration. Generates SVG kitten drawings at each BPW and assembles them into a grid
+- Checkpoints and resumes intelligently
+
+```
+model → [quantize → verify KL+PPL] per BPW → optimize → catbench → graph → README
+```
+
+---
 
 ### Single-stage subcommands
 If you only want to run specific stages:
