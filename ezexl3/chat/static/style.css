@@ -333,7 +333,7 @@ body { display: flex; overflow: hidden; }
 }
 
 /* Dialogue quotes */
-.dialogue { color: #c5e8ed; }
+.dialogue { color: #d4f1f9; font-weight: 600; }
 
 /* Think blocks */
 .think-block {
