@@ -71,7 +71,14 @@
 
       <!-- Command form tab -->
       <div id="form-panel" class="tab-content active">
-        <div id="form-fields"></div>
+        <div id="form-body">
+          <div id="form-fields"></div>
+          <div id="metadata-panel" class="metadata-panel" style="display:none">
+            <div class="metadata-title">README Metadata</div>
+            <div id="metadata-fields"></div>
+            <button id="metadata-confirm" class="action-btn primary metadata-confirm-btn" style="display:none">Confirm &amp; Continue</button>
+          </div>
+        </div>
         <div id="form-actions">
           <button id="run-btn" class="action-btn primary">Run</button>
           <button id="stop-btn" class="action-btn danger" style="display:none">Stop</button>

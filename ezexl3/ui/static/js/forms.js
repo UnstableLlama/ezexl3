@@ -42,6 +42,9 @@ function renderForm(commandKey) {
     }
     container.appendChild(grid);
   }
+
+  // Metadata panel for commands that generate READMEs
+  renderMetadataPanel(commandKey);
 }
 
 
@@ -307,4 +310,189 @@ function saveModelDir(dir) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ last_model_dir: dir }),
   }).catch(() => {});
+}
+
+
+// ── Metadata panel (README fields with pin checkboxes) ───────────
+
+const META_FIELDS = [
+  { key: "AUTHOR", label: "Author", help: "Model author / organization" },
+  { key: "MODEL", label: "Model Name", help: "Base model name" },
+  { key: "REPOLINK", label: "Repo Link", help: "Link to original model" },
+  { key: "USER", label: "Quantized By", help: "Your HuggingFace username" },
+];
+
+function renderMetadataPanel(commandKey) {
+  const panel = document.getElementById("metadata-panel");
+  const cmd = COMMANDS[commandKey];
+
+  if (!cmd || !cmd.hasMetadata) {
+    panel.style.display = "none";
+    return;
+  }
+
+  panel.style.display = "";
+  // Preserve waiting state across re-renders
+  if (metadataWaitingDir) {
+    panel.classList.add("metadata-waiting");
+    document.getElementById("metadata-confirm").style.display = "";
+  }
+
+  const container = document.getElementById("metadata-fields");
+  container.innerHTML = "";
+
+  for (const f of META_FIELDS) {
+    const div = document.createElement("div");
+    div.className = "meta-field";
+    div.dataset.key = f.key;
+
+    const row = document.createElement("div");
+    row.className = "meta-field-row";
+
+    const label = document.createElement("label");
+    label.className = "meta-label";
+    label.textContent = f.label;
+    row.appendChild(label);
+
+    const pin = document.createElement("label");
+    pin.className = "meta-pin";
+    pin.title = "Pin this field";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "meta-pin-cb";
+    cb.dataset.key = f.key;
+    cb.addEventListener("change", () => {
+      div.classList.toggle("pinned", cb.checked);
+      updateMetadataConfirm();
+    });
+    const icon = document.createElement("span");
+    icon.className = "meta-pin-icon";
+    icon.innerHTML = "&#x1F4CC;";
+    pin.appendChild(cb);
+    pin.appendChild(icon);
+    row.appendChild(pin);
+    div.appendChild(row);
+
+    if (f.help) {
+      const help = document.createElement("div");
+      help.className = "meta-help";
+      help.textContent = f.help;
+      div.appendChild(help);
+    }
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "meta-input";
+    input.id = `meta-${f.key}`;
+    input.addEventListener("input", updateMetadataConfirm);
+    div.appendChild(input);
+
+    container.appendChild(div);
+  }
+
+  // Wire model dir changes to reload defaults
+  const modelInput = document.getElementById("field-models");
+  if (modelInput) {
+    modelInput.addEventListener("change", () => loadMetadataDefaults(true));
+  }
+
+  updateMetadataConfirm();
+  loadMetadataDefaults(false);
+}
+
+
+async function loadMetadataDefaults(force) {
+  const modelDir = getModelDir();
+  if (!modelDir) return;
+
+  try {
+    const res = await fetch(`/api/metadata?model_dir=${encodeURIComponent(modelDir)}`);
+    if (!res.ok) return;
+    const data = await res.json();
+
+    for (const f of META_FIELDS) {
+      const input = document.getElementById(`meta-${f.key}`);
+      if (input && data[f.key]) {
+        // Only overwrite if empty or force-refreshing
+        if (!input.value || force) {
+          input.value = data[f.key];
+        }
+      }
+    }
+  } catch (e) { /* non-critical */ }
+}
+
+
+async function saveMetadata() {
+  const dir = getModelDir() || metadataWaitingDir;
+  if (!dir) return;
+
+  const meta = { model_dir: dir };
+  for (const f of META_FIELDS) {
+    const input = document.getElementById(`meta-${f.key}`);
+    meta[f.key] = input ? input.value.trim() : "";
+  }
+
+  try {
+    await fetch("/api/metadata", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(meta),
+    });
+  } catch (e) { /* non-critical */ }
+}
+
+
+async function confirmMetadata() {
+  await saveMetadata();
+
+  const panel = document.getElementById("metadata-panel");
+  panel.classList.remove("metadata-waiting");
+  document.getElementById("metadata-confirm").style.display = "none";
+  metadataWaitingDir = null;
+}
+
+
+function updateMetadataConfirm() {
+  const allPinned = META_FIELDS.every(f => {
+    const cb = document.querySelector(`.meta-pin-cb[data-key="${f.key}"]`);
+    const input = document.getElementById(`meta-${f.key}`);
+    return cb && cb.checked && input && input.value.trim();
+  });
+
+  const btn = document.getElementById("metadata-confirm");
+  if (btn) btn.disabled = !allPinned;
+
+  // Pre-fill mode: auto-save when all pinned and not waiting for pipeline
+  if (allPinned && !metadataWaitingDir) {
+    saveMetadata();
+  }
+}
+
+
+function showMetadataWait(modelDir) {
+  metadataWaitingDir = modelDir;
+
+  // If current command doesn't have a metadata panel, switch to readme
+  if (!COMMANDS[activeCommand]?.hasMetadata) {
+    selectCommand("readme");
+  }
+
+  switchTab("command");
+
+  const panel = document.getElementById("metadata-panel");
+  if (panel) {
+    panel.style.display = "";
+    panel.classList.add("metadata-waiting");
+  }
+
+  const btn = document.getElementById("metadata-confirm");
+  if (btn) {
+    btn.style.display = "";
+    btn.addEventListener("click", confirmMetadata);
+  }
+
+  // Populate with defaults the subprocess wrote
+  loadMetadataDefaults(true);
+  updateMetadataConfirm();
 }

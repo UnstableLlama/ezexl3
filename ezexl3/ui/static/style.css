@@ -525,6 +525,102 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   pointer-events: none;
 }
 
+/* Form body layout (side-by-side with metadata panel) */
+#form-body {
+  display: flex;
+  gap: 24px;
+  flex: 1;
+  min-height: 0;
+}
+#form-body > #form-fields { flex: 1; min-width: 0; }
+
+/* ── Metadata panel ─────────────────────────────────────────────── */
+.metadata-panel {
+  flex: 0 0 290px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  align-self: flex-start;
+}
+.metadata-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.meta-field { margin-bottom: 10px; }
+.meta-field:last-child { margin-bottom: 0; }
+.meta-field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 3px;
+}
+.meta-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.meta-help {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-bottom: 3px;
+}
+.meta-input {
+  width: 100%;
+  padding: 5px 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+.meta-input:focus { border-color: var(--accent); }
+
+/* Pin checkbox */
+.meta-pin {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+.meta-pin-cb { display: none; }
+.meta-pin-icon {
+  font-size: 13px;
+  opacity: 0.25;
+  transition: opacity 0.2s, transform 0.2s;
+}
+.meta-pin-cb:checked + .meta-pin-icon {
+  opacity: 1;
+  transform: rotate(-15deg);
+}
+.meta-field.pinned .meta-input {
+  border-color: var(--green-dim);
+  background: rgba(34, 197, 94, 0.04);
+}
+
+/* Waiting state — pulse glow */
+.metadata-panel.metadata-waiting {
+  border-color: var(--accent);
+  animation: metadata-pulse 2s ease-in-out infinite;
+}
+@keyframes metadata-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+  50% { box-shadow: 0 0 14px 3px rgba(99, 102, 241, 0.25); }
+}
+.metadata-confirm-btn {
+  width: 100%;
+  margin-top: 14px;
+}
+
 /* Form actions */
 #form-actions {
   display: flex;

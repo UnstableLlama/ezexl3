@@ -7,6 +7,7 @@ const COMMANDS = {
     label: "Repo",
     subtitle: "Full Pipeline",
     description: "Quantize \u2192 Measure KL+PPL \u2192 README",
+    hasMetadata: true,
     fields: [
       { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "BF16/base model directory" },
       { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "Target bits per weight", headerToggle: { name: "hq", flag: "-hq", label: "-hq" } },
@@ -62,6 +63,7 @@ const COMMANDS = {
     label: "README",
     subtitle: "Generate README",
     description: "Generate HuggingFace README from existing CSV",
+    hasMetadata: true,
     fields: [
       { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "Directory with measurement CSV" },
       { name: "template", flag: "-t", type: "template", label: "Template", help: "README template style" },

@@ -6,3 +6,4 @@ let jobRunning = false;
 let templates = [];
 let gpus = [];
 let savedConfig = {};
+let metadataWaitingDir = null;
