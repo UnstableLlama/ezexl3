@@ -225,3 +225,12 @@ function checkMetadataWait(text) {
     showMetadataWait(match[1]);
   }
 }
+
+
+function checkMetadataWait(text) {
+  const match = text.match(/<<EZEXL3:WAITING_METADATA:(.+?)>>/);
+  if (!match) return;
+  if (typeof showMetadataWait === "function") {
+    showMetadataWait(match[1]);
+  }
+}
