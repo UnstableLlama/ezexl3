@@ -416,13 +416,26 @@ async def handle_metadata_set(request: web.Request) -> web.Response:
     if not model_dir:
         return web.json_response({"error": "No model_dir"}, status=400)
 
+    # Only clear _waiting when the dashboard explicitly confirms (Resume click)
+    confirm = data.get("_confirm", False)
+
+    # Read existing state to preserve _waiting unless confirming
+    meta_path = os.path.join(model_dir, ".ezexl3_readme_meta.json")
+    existing_waiting = False
+    if not confirm and os.path.exists(meta_path):
+        try:
+            existing = json.loads(Path(meta_path).read_text("utf-8"))
+            existing_waiting = existing.get("_waiting", False)
+        except Exception:
+            pass
+
     meta = {
         "AUTHOR": data.get("AUTHOR", ""),
         "MODEL": data.get("MODEL", ""),
         "REPOLINK": data.get("REPOLINK", ""),
         "USER": data.get("USER", ""),
         "_locked": data.get("_locked", {}),
-        "_waiting": False,
+        "_waiting": existing_waiting if not confirm else False,
     }
 
     meta_path = os.path.join(model_dir, ".ezexl3_readme_meta.json")
