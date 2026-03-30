@@ -7,9 +7,10 @@ function renderForm(commandKey) {
   const container = document.getElementById("form-fields");
   container.innerHTML = "";
 
-  const required = cmd.fields.filter(f => f.required && f.type !== "boolean");
-  const optional = cmd.fields.filter(f => !f.required && f.type !== "boolean" || (f.type === "boolean" && f.toggleable));
-  const booleans = cmd.fields.filter(f => f.type === "boolean" && !f.toggleable);
+  const required = cmd.fields.filter(f => f.required && f.type !== "boolean" && !f.section);
+  const optional = cmd.fields.filter(f => !f.required && !f.section && (f.type !== "boolean" || f.toggleable));
+  const booleans = cmd.fields.filter(f => f.type === "boolean" && !f.toggleable && !f.section);
+  const evals = cmd.fields.filter(f => f.section === "evals");
 
   // Required fields
   if (required.length) {
@@ -41,6 +42,23 @@ function renderForm(commandKey) {
       grid.appendChild(createToggleEl(field));
     }
     container.appendChild(grid);
+  }
+
+  // Evals section (below flags, above run/cancel)
+  if (evals.length) {
+    const heading = document.createElement("div");
+    heading.className = "form-section-label";
+    heading.textContent = "Evals";
+    container.appendChild(heading);
+    for (const field of evals) {
+      if (field.type === "boolean") {
+        // Boolean evals (like longctx) render as toggleable boolean
+        const evField = Object.assign({}, field, { toggleable: true });
+        container.appendChild(createFieldEl(evField));
+      } else {
+        container.appendChild(createFieldEl(field));
+      }
+    }
   }
 
   // Metadata panel for commands that generate READMEs

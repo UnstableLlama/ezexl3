@@ -164,6 +164,19 @@ def build_parser() -> argparse.ArgumentParser:
                            help="Run SVG Catbench with N samples per model (default: 3 when flag present)")
         p_sub.add_argument("--no-verify", "-nv", action="store_true",
                            help="Skip per-BPW verification (batch all quants, then batch all measures)")
+        # Eval scripts (optional, a-la-carte)
+        p_sub.add_argument("-div", "--diversity", type=int, default=0, nargs="?", const=50,
+                           help="Run diversity eval with N samples (default: 50)")
+        p_sub.add_argument("-he", "--humaneval", type=int, default=0, nargs="?", const=200,
+                           help="Run HumanEval code gen eval with N samples/task (default: 200)")
+        p_sub.add_argument("-ifb", "--ifbench", type=int, default=0, nargs="?", const=16384,
+                           help="Run IFBench instruction following eval (default max_tokens: 16384)")
+        p_sub.add_argument("-lctx", "--longctx", type=int, default=0, nargs="?", const=1,
+                           help="Run long context understanding eval")
+        p_sub.add_argument("-mmlu", "--mmlu", type=int, default=0, nargs="?", const=5,
+                           help="Run MMLU knowledge benchmark with N fewshot examples (default: 5)")
+        p_sub.add_argument("-perf", "--perf", type=int, default=0, nargs="?", const=32768,
+                           help="Run inference performance benchmark (default max_length: 32768)")
 
     # --- repo (main command) ---
     repo = sub.add_parser("repo", help="Generate an EXL3 repo (quantize -> measure -> README)")
@@ -196,6 +209,19 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--no-cleanup", "-nc", action="store_true", help="Keep temporary shard CSVs and logs")
     m.add_argument("-cb", "--catbench", type=int, default=0, nargs="?", const=3,
                    help="Run SVG Catbench with N samples per model (default: 3 when flag present)")
+    # Eval scripts (optional, a-la-carte)
+    m.add_argument("-div", "--diversity", type=int, default=0, nargs="?", const=50,
+                   help="Run diversity eval with N samples (default: 50)")
+    m.add_argument("-he", "--humaneval", type=int, default=0, nargs="?", const=200,
+                   help="Run HumanEval code gen eval with N samples/task (default: 200)")
+    m.add_argument("-ifb", "--ifbench", type=int, default=0, nargs="?", const=16384,
+                   help="Run IFBench instruction following eval (default max_tokens: 16384)")
+    m.add_argument("-lctx", "--longctx", type=int, default=0, nargs="?", const=1,
+                   help="Run long context understanding eval")
+    m.add_argument("-mmlu", "--mmlu", type=int, default=0, nargs="?", const=5,
+                   help="Run MMLU knowledge benchmark with N fewshot examples (default: 5)")
+    m.add_argument("-perf", "--perf", type=int, default=0, nargs="?", const=32768,
+                   help="Run inference performance benchmark (default max_length: 32768)")
 
 
     # --- chat ---
@@ -301,6 +327,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     if getattr(args, "hq", False) and "-hq" not in pt.quant_args:
         pt.quant_args.append("-hq")
 
+    # Collect enabled eval flags into a dict: {name: arg_value}
+    _EVAL_FLAG_NAMES = ["diversity", "humaneval", "ifbench", "longctx", "mmlu", "perf"]
+    enabled_evals = {}
+    for name in _EVAL_FLAG_NAMES:
+        val = getattr(args, name, 0) or 0
+        if val:
+            enabled_evals[name] = val
+
     if cmd == "repo":
         # Process each model, continuing on error
         failed_models: List[str] = []
@@ -330,6 +364,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     optimized_measure_layers=layers,
                     catbench_n=getattr(args, "catbench", 0) or 0,
                     verify=(not args.no_verify),
+                    evals=enabled_evals or None,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
@@ -410,6 +445,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     write_logs=(not args.no_logs),
                     measure_args=pt.measure_args,
                     catbench_n=getattr(args, "catbench", 0) or 0,
+                    evals=enabled_evals or None,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
