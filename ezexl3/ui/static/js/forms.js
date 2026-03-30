@@ -459,6 +459,8 @@ async function loadMetadataDefaults(force) {
       }
     }
     updateMetadataConfirm();
+    // Sync on-disk state with current UI (clears stale _locked from previous sessions)
+    saveMetadata();
   } catch (e) { /* non-critical */ }
 }
 
