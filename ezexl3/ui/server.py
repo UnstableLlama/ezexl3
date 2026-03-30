@@ -420,6 +420,7 @@ async def handle_metadata_set(request: web.Request) -> web.Response:
         "MODEL": data.get("MODEL", ""),
         "REPOLINK": data.get("REPOLINK", ""),
         "USER": data.get("USER", ""),
+        "_locked": data.get("_locked", {}),
         "_waiting": False,
     }
 

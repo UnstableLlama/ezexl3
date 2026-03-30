@@ -447,6 +447,7 @@ async function loadMetadataDefaults(force) {
     const res = await fetch(`/api/metadata?model_dir=${encodeURIComponent(modelDir)}`);
     if (!res.ok) return;
     const data = await res.json();
+    const savedLocks = data._locked || {};
 
     for (const f of META_FIELDS) {
       const input = document.getElementById(`meta-${f.key}`);
@@ -457,7 +458,19 @@ async function loadMetadataDefaults(force) {
       if (data[f.key] && (!input.value || force)) {
         input.value = data[f.key];
       }
+      // Restore lock state from saved JSON (only when not in waiting mode)
+      if (!metadataWaitingDir && savedLocks[f.key]) {
+        const lockBtn = document.querySelector(`.meta-lock[data-key="${f.key}"]`);
+        if (field && lockBtn && !field.classList.contains("locked")) {
+          field.classList.add("locked");
+          lockBtn.classList.add("locked");
+          lockBtn.textContent = "\u{1F512}";
+          lockBtn.title = "Unlock this field";
+          input.readOnly = true;
+        }
+      }
     }
+    updateMetadataConfirm();
   } catch (e) { /* non-critical */ }
 }
 
@@ -467,10 +480,14 @@ async function saveMetadata() {
   if (!dir) return;
 
   const meta = { model_dir: dir };
+  const locked = {};
   for (const f of META_FIELDS) {
     const input = document.getElementById(`meta-${f.key}`);
+    const field = document.querySelector(`.meta-field[data-key="${f.key}"]`);
     meta[f.key] = input ? input.value.trim() : "";
+    locked[f.key] = !!(field && field.classList.contains("locked"));
   }
+  meta._locked = locked;
 
   try {
     await fetch("/api/metadata", {
@@ -523,6 +540,20 @@ function showMetadataWait(modelDir) {
   if (panel) {
     panel.style.display = "";
     panel.classList.add("metadata-waiting");
+  }
+
+  // Unlock ALL fields so the user can review and edit everything
+  for (const f of META_FIELDS) {
+    const field = document.querySelector(`.meta-field[data-key="${f.key}"]`);
+    const lockBtn = document.querySelector(`.meta-lock[data-key="${f.key}"]`);
+    const input = document.getElementById(`meta-${f.key}`);
+    if (field) field.classList.remove("locked");
+    if (lockBtn) {
+      lockBtn.classList.remove("locked", "run-locked");
+      lockBtn.textContent = "\u{1F513}";
+      lockBtn.title = "Lock this field";
+    }
+    if (input) input.readOnly = false;
   }
 
   const btn = document.getElementById("metadata-confirm");
