@@ -20,6 +20,12 @@ STATIC_DIR = Path(__file__).parent / "static"
 # Files that signal a valid model directory
 _MODEL_MARKERS = {"config.json"}
 
+# Typed app keys (avoids NotAppKeyWarning)
+_KEY_ENGINE = web.AppKey("engine", ChatEngine)
+_KEY_SPAWN = web.AppKey("_spawn_on_exit", list)
+_KEY_HOST = web.AppKey("_host", str)
+_KEY_PORT = web.AppKey("_port", int)
+
 
 @web.middleware
 async def _no_cache_static(request: web.Request, handler):
@@ -31,11 +37,11 @@ async def _no_cache_static(request: web.Request, handler):
 
 def create_app(engine: ChatEngine) -> web.Application:
     app = web.Application(middlewares=[_no_cache_static])
-    app["engine"] = engine
-    app["_spawn_on_exit"] = None  # set by handle_ui_launch
+    app[_KEY_ENGINE] = engine
+    app[_KEY_SPAWN] = None  # set by handle_ui_launch
 
     async def _cleanup_spawn(app):
-        cmd = app.get("_spawn_on_exit")
+        cmd = app.get(_KEY_SPAWN)
         if cmd:
             import subprocess
             subprocess.Popen(cmd, start_new_session=True)
@@ -73,17 +79,17 @@ async def handle_index(request: web.Request) -> web.Response:
 
 
 async def handle_status(request: web.Request) -> web.Response:
-    engine: ChatEngine = request.app["engine"]
+    engine: ChatEngine = request.app[_KEY_ENGINE]
     return web.json_response(engine.get_status())
 
 
 async def handle_get_settings(request: web.Request) -> web.Response:
-    engine: ChatEngine = request.app["engine"]
+    engine: ChatEngine = request.app[_KEY_ENGINE]
     return web.json_response(engine.settings.to_dict())
 
 
 async def handle_set_settings(request: web.Request) -> web.Response:
-    engine: ChatEngine = request.app["engine"]
+    engine: ChatEngine = request.app[_KEY_ENGINE]
     data = await request.json()
     # Merge incoming fields into current settings
     current = engine.settings.to_dict()
@@ -94,7 +100,7 @@ async def handle_set_settings(request: web.Request) -> web.Response:
 
 async def handle_chat(request: web.Request) -> web.Response:
     """SSE endpoint: streams token-by-token responses."""
-    engine: ChatEngine = request.app["engine"]
+    engine: ChatEngine = request.app[_KEY_ENGINE]
     data = await request.json()
     message = data.get("message", "").strip()
     if "context" in data:
@@ -125,19 +131,19 @@ async def handle_chat(request: web.Request) -> web.Response:
 
 
 async def handle_stop(request: web.Request) -> web.Response:
-    engine: ChatEngine = request.app["engine"]
+    engine: ChatEngine = request.app[_KEY_ENGINE]
     engine.cancel()
     return web.json_response({"ok": True})
 
 
 async def handle_clear(request: web.Request) -> web.Response:
-    engine: ChatEngine = request.app["engine"]
+    engine: ChatEngine = request.app[_KEY_ENGINE]
     engine.clear_context()
     return web.json_response({"ok": True})
 
 
 async def handle_session_save(request: web.Request) -> web.Response:
-    engine: ChatEngine = request.app["engine"]
+    engine: ChatEngine = request.app[_KEY_ENGINE]
     session_data = engine.save_session()
     return web.json_response(
         session_data,
@@ -148,7 +154,7 @@ async def handle_session_save(request: web.Request) -> web.Response:
 
 
 async def handle_session_load(request: web.Request) -> web.Response:
-    engine: ChatEngine = request.app["engine"]
+    engine: ChatEngine = request.app[_KEY_ENGINE]
     data = await request.json()
     engine.load_session(data)
     return web.json_response({"ok": True})
@@ -206,7 +212,7 @@ async def handle_browse(request: web.Request) -> web.Response:
 
 
 async def handle_model_load(request: web.Request) -> web.Response:
-    engine: ChatEngine = request.app["engine"]
+    engine: ChatEngine = request.app[_KEY_ENGINE]
     data = await request.json()
     model_dir = data.get("model_dir", "").strip()
     if not model_dir:
@@ -244,14 +250,14 @@ async def handle_model_load(request: web.Request) -> web.Response:
 
 
 async def handle_model_unload(request: web.Request) -> web.Response:
-    engine: ChatEngine = request.app["engine"]
+    engine: ChatEngine = request.app[_KEY_ENGINE]
     engine.unload()
     return web.json_response({"ok": True})
 
 
 async def handle_ui_launch(request: web.Request) -> web.Response:
     """Shut down the chat server and launch the dashboard UI in its place."""
-    engine: ChatEngine = request.app["engine"]
+    engine: ChatEngine = request.app[_KEY_ENGINE]
     if engine.is_loaded:
         return web.json_response(
             {"error": "Unload the model before switching to dashboard"},
@@ -262,8 +268,8 @@ async def handle_ui_launch(request: web.Request) -> web.Response:
             {"error": "Cannot switch while generating"}, status=409,
         )
 
-    host = request.app.get("_host", "127.0.0.1")
-    port = request.app.get("_port", 8800)
+    host = request.app.get(_KEY_HOST, "127.0.0.1")
+    port = request.app.get(_KEY_PORT, 8800)
 
     import shutil
     ezexl3_bin = shutil.which("ezexl3")
@@ -276,7 +282,7 @@ async def handle_ui_launch(request: web.Request) -> web.Response:
 
     # Store the command — the pre-registered cleanup handler will spawn it
     # after aiohttp has released the port.
-    request.app["_spawn_on_exit"] = ui_cmd
+    request.app[_KEY_SPAWN] = ui_cmd
 
     # Schedule graceful shutdown — SIGINT lets aiohttp close connections
     # cleanly, release the port, then run cleanup (which spawns UI).
@@ -363,8 +369,8 @@ def run_server(
 
     def _make_app():
         app = create_app(engine)
-        app["_host"] = host
-        app["_port"] = port
+        app[_KEY_HOST] = host
+        app[_KEY_PORT] = port
         if open_browser:
             async def _open_browser(_app):
                 import threading
