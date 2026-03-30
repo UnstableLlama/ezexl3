@@ -15,7 +15,6 @@ const COMMANDS = {
       { name: "device_ratios", flag: "-r", type: "csv", label: "Device Ratios", placeholder: "1,1", help: "VRAM ratios per device (optional)" },
       { name: "template", flag: "-t", type: "template", label: "Template", help: "README template style" },
       { name: "layers", flag: "-l", type: "select", choices: ["1", "2", "3"], default: "2", label: "Optimization Depth", help: "Layer depth for optimization", toggleable: true },
-      { name: "catbench", flag: "-cb", type: "number", label: "Catbench Samples", placeholder: "3", help: "SVG Catbench samples per BPW", toggleable: true },
       // Boolean flags
       { name: "no_verify", flag: "-nv", type: "boolean", label: "No Verify", help: "Batch mode: all quants then all measures" },
       { name: "no_cleanup", flag: "-nc", type: "boolean", label: "Keep Work Dirs", help: "Keep w-* working directories and logs" },
@@ -24,6 +23,14 @@ const COMMANDS = {
       { name: "no_prompt", flag: "-np", type: "boolean", label: "Headless", help: "Use defaults instead of prompting for README metadata" },
       { name: "no_graph", flag: "-ng", type: "boolean", label: "No Graph", help: "Skip SVG graph generation" },
       { name: "no_measurement", flag: "-nm", type: "boolean", label: "No Measurement", help: "Skip KL/PPL measurement entirely" },
+      // Evals section
+      { name: "catbench", flag: "-cb", type: "number", label: "Catbench", placeholder: "3", help: "SVG Catbench samples per BPW", toggleable: true, section: "evals" },
+      { name: "diversity", flag: "-div", type: "number", label: "Diversity", placeholder: "50", help: "Output diversity eval (N samples)", toggleable: true, section: "evals" },
+      { name: "humaneval", flag: "-he", type: "number", label: "HumanEval", placeholder: "200", help: "Code generation eval (N samples/task)", toggleable: true, section: "evals" },
+      { name: "ifbench", flag: "-ifb", type: "number", label: "IFBench", placeholder: "16384", help: "Instruction following eval (max tokens)", toggleable: true, section: "evals" },
+      { name: "longctx", flag: "-lctx", type: "boolean", label: "Long Context", help: "Long context understanding eval", section: "evals" },
+      { name: "mmlu", flag: "-mmlu", type: "number", label: "MMLU", placeholder: "5", help: "Knowledge benchmark (N fewshot examples)", toggleable: true, section: "evals" },
+      { name: "perf", flag: "-perf", type: "number", label: "Perf", placeholder: "32768", help: "Inference performance benchmark (max length)", toggleable: true, section: "evals" },
     ],
   },
 
@@ -53,9 +60,16 @@ const COMMANDS = {
       { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "Model directory with quantized outputs" },
       { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6" },
       { name: "devices", flag: "-d", type: "csv", default: "0", label: "CUDA Devices", placeholder: "0,1" },
-      { name: "catbench", flag: "-cb", type: "number", label: "Catbench Samples", placeholder: "3", help: "SVG Catbench samples per BPW", toggleable: true },
       { name: "no_logs", flag: "--no-logs", type: "boolean", label: "No Logs" },
       { name: "no_cleanup", flag: "-nc", type: "boolean", label: "Keep Temp Files" },
+      // Evals section
+      { name: "catbench", flag: "-cb", type: "number", label: "Catbench", placeholder: "3", help: "SVG Catbench samples per BPW", toggleable: true, section: "evals" },
+      { name: "diversity", flag: "-div", type: "number", label: "Diversity", placeholder: "50", help: "Output diversity eval (N samples)", toggleable: true, section: "evals" },
+      { name: "humaneval", flag: "-he", type: "number", label: "HumanEval", placeholder: "200", help: "Code generation eval (N samples/task)", toggleable: true, section: "evals" },
+      { name: "ifbench", flag: "-ifb", type: "number", label: "IFBench", placeholder: "16384", help: "Instruction following eval (max tokens)", toggleable: true, section: "evals" },
+      { name: "longctx", flag: "-lctx", type: "boolean", label: "Long Context", help: "Long context understanding eval", section: "evals" },
+      { name: "mmlu", flag: "-mmlu", type: "number", label: "MMLU", placeholder: "5", help: "Knowledge benchmark (N fewshot examples)", toggleable: true, section: "evals" },
+      { name: "perf", flag: "-perf", type: "number", label: "Perf", placeholder: "32768", help: "Inference performance benchmark (max length)", toggleable: true, section: "evals" },
     ],
   },
 

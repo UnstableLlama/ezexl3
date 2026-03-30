@@ -19,7 +19,9 @@ import sqlite3
 import time
 from typing import Dict, List, Optional, Set
 
-CSV_FIELDS = ["weights", "KL Div", "PPL r-100", "GiB"]
+CSV_FIELDS = ["weights", "KL Div", "PPL r-100", "GiB",
+               "Diversity", "HumanEval", "IFBench", "LongCtx",
+               "MMLU", "Perf Prefill t/s", "Perf Gen t/s"]
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS measurements (
@@ -29,6 +31,28 @@ CREATE TABLE IF NOT EXISTS measurements (
     gib      TEXT NOT NULL DEFAULT ''
 );
 """
+
+# Eval columns added via migration (ALTER TABLE) so existing DBs upgrade seamlessly.
+_EVAL_COLUMNS = [
+    "diversity_score",
+    "humaneval_pass",
+    "ifbench_score",
+    "longctx_score",
+    "mmlu_accuracy",
+    "perf_prefill_tps",
+    "perf_gen_tps",
+]
+
+# Maps DB column names to CSV header names.
+_EVAL_COL_TO_CSV = {
+    "diversity_score": "Diversity",
+    "humaneval_pass": "HumanEval",
+    "ifbench_score": "IFBench",
+    "longctx_score": "LongCtx",
+    "mmlu_accuracy": "MMLU",
+    "perf_prefill_tps": "Perf Prefill t/s",
+    "perf_gen_tps": "Perf Gen t/s",
+}
 
 # Retry / busy-timeout for concurrent writers
 _BUSY_TIMEOUT_MS = 30_000
@@ -42,6 +66,16 @@ def _db_path(model_dir: str) -> str:
     return os.path.join(model_dir, f"{base}Measured.db")
 
 
+def _migrate_eval_columns(conn: sqlite3.Connection) -> None:
+    """Add eval columns to an existing measurements table (idempotent)."""
+    for col in _EVAL_COLUMNS:
+        try:
+            conn.execute(f"ALTER TABLE measurements ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+    conn.commit()
+
+
 def _connect(db_path: str) -> sqlite3.Connection:
     os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
     conn = sqlite3.connect(db_path, timeout=_BUSY_TIMEOUT_MS / 1000)
@@ -49,6 +83,7 @@ def _connect(db_path: str) -> sqlite3.Connection:
     conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
     conn.execute(_SCHEMA)
     conn.commit()
+    _migrate_eval_columns(conn)
     return conn
 
 
@@ -62,27 +97,44 @@ def upsert_row(
     kl_div: str = "",
     ppl: str = "",
     gib: str = "",
+    **eval_kwargs: str,
 ) -> None:
     """Insert or field-level update a measurement row.
 
     Only non-empty values overwrite existing data, so a KL-only write
     won't blank out an earlier PPL value for the same label.
+
+    Extra keyword arguments whose names match ``_EVAL_COLUMNS`` are
+    persisted in the corresponding eval columns.
     """
+    # Build the base columns + any eval columns provided.
+    cols = ["weights", "kl_div", "ppl", "gib"]
+    vals: List[str] = [weights, str(kl_div), str(ppl), str(gib)]
+    for col in _EVAL_COLUMNS:
+        v = str(eval_kwargs.get(col, ""))
+        cols.append(col)
+        vals.append(v)
+
+    placeholders = ", ".join("?" for _ in cols)
+    col_names = ", ".join(cols)
+    # Build the ON CONFLICT SET clause — skip 'weights' (the PK).
+    set_clauses = []
+    for c in cols[1:]:
+        set_clauses.append(
+            f"{c} = CASE WHEN excluded.{c} != '' THEN excluded.{c} ELSE measurements.{c} END"
+        )
+    set_sql = ", ".join(set_clauses)
+
+    sql = (
+        f"INSERT INTO measurements ({col_names}) VALUES ({placeholders}) "
+        f"ON CONFLICT(weights) DO UPDATE SET {set_sql}"
+    )
+
     for attempt in range(_RETRY_ATTEMPTS):
         try:
             conn = _connect(db_path)
             try:
-                conn.execute(
-                    """\
-                    INSERT INTO measurements (weights, kl_div, ppl, gib)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(weights) DO UPDATE SET
-                        kl_div = CASE WHEN excluded.kl_div != '' THEN excluded.kl_div ELSE measurements.kl_div END,
-                        ppl    = CASE WHEN excluded.ppl    != '' THEN excluded.ppl    ELSE measurements.ppl    END,
-                        gib    = CASE WHEN excluded.gib    != '' THEN excluded.gib    ELSE measurements.gib    END
-                    """,
-                    (weights, str(kl_div), str(ppl), str(gib)),
-                )
+                conn.execute(sql, tuple(vals))
                 conn.commit()
             finally:
                 conn.close()
@@ -100,15 +152,22 @@ def read_all_rows(db_path: str) -> Dict[str, dict]:
         return {}
     conn = _connect(db_path)
     try:
-        cur = conn.execute("SELECT weights, kl_div, ppl, gib FROM measurements ORDER BY weights")
+        eval_col_sql = ", ".join(_EVAL_COLUMNS)
+        cur = conn.execute(
+            f"SELECT weights, kl_div, ppl, gib, {eval_col_sql} FROM measurements ORDER BY weights"
+        )
         out: Dict[str, dict] = {}
-        for weights, kl_div, ppl, gib in cur.fetchall():
-            out[weights] = {
+        for row in cur.fetchall():
+            weights, kl_div, ppl, gib = row[0], row[1], row[2], row[3]
+            d: dict = {
                 "weights": weights,
                 "KL Div": kl_div,
                 "PPL r-100": ppl,
                 "GiB": gib,
             }
+            for i, col in enumerate(_EVAL_COLUMNS):
+                d[_EVAL_COL_TO_CSV[col]] = row[4 + i]
+            out[weights] = d
         return out
     finally:
         conn.close()

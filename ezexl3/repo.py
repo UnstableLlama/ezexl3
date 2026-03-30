@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 from multiprocessing import Process, Queue
-from typing import Dict, IO, List, Optional, Tuple
+from typing import Any, Dict, IO, List, Optional, Tuple
 
 from ezexl3.quantize import run as quant_run, run_one as quant_run_one
 from ezexl3.measure import (
@@ -1053,6 +1053,31 @@ def _worker_measure(
                     "phase": phase, "row": {},
                 })
 
+            else:
+                # --- Eval scripts (diversity, humaneval, ifbench, ...) ---
+                from ezexl3.evals import (
+                    EVAL_REGISTRY, build_eval_cmd, run_eval_subprocess,
+                    RESULT_EXTRACTORS,
+                )
+                if phase in EVAL_REGISTRY:
+                    eval_def = EVAL_REGISTRY[phase]
+                    eval_arg = job.get("eval_arg", 0)
+                    eval_cmd = build_eval_cmd(
+                        phase, model_dir, device, base_dir, label, eval_arg,
+                    )
+                    eval_out = run_eval_subprocess(
+                        eval_cmd, device, results,
+                        f"{label} {eval_def.phase_label}",
+                        phase, log_f,
+                    )
+                    extractor = RESULT_EXTRACTORS[phase]
+                    result_dict = extractor(eval_out)
+                    upsert_row(db_path, weights=label, **result_dict)
+                    results.put({
+                        "event": "done", "device": device, "label": label,
+                        "phase": phase, "row": result_dict,
+                    })
+
         except Exception as e:
             import traceback
             if log_f:
@@ -1349,6 +1374,7 @@ def run_measure_stage(
     write_logs: bool = True,
     measure_args: Optional[List[str]] = None,
     catbench_n: int = 0,
+    evals: Optional[Dict[str, Any]] = None,
 ) -> int:
     model_dir = os.path.abspath(model_dir)
     bpws = [str(b) for b in bpws]
@@ -1477,7 +1503,36 @@ def run_measure_stage(
                               f"({total_avail:.1f} GiB available across {len(devices)} GPUs)")
             catbench_tasks = single_gpu
 
-    total_jobs = len(kl_tasks) + len(ppl_tasks) + len(catbench_tasks) + len(multi_gpu_catbench_tasks)
+    # --- Eval tasks ---
+    eval_tasks: List[dict] = []
+    skipped_eval: List[str] = []
+    enabled_evals = evals or {}
+
+    if enabled_evals:
+        from ezexl3.evals import EVAL_REGISTRY, EVAL_QUEUE_ORDER, eval_has_result
+
+        for eval_name in EVAL_QUEUE_ORDER:
+            if eval_name not in enabled_evals:
+                continue
+            eval_arg = enabled_evals[eval_name]
+            all_targets = list(bpws)
+            # Include base/bf16 for all evals
+            if "base" not in all_targets:
+                all_targets.append("base")
+            for bpw in all_targets:
+                label = _task_to_csv_label(bpw)
+                if eval_has_result(db_path, label, eval_name):
+                    skipped_eval.append(f"{label}/{eval_name}")
+                else:
+                    eval_tasks.append({
+                        "label": bpw, "phase": eval_name, "eval_arg": eval_arg,
+                    })
+
+        if skipped_eval:
+            print(f"🟦 skipping evals: {', '.join(skipped_eval)} (already measured)")
+
+    total_jobs = (len(kl_tasks) + len(ppl_tasks) + len(catbench_tasks)
+                  + len(multi_gpu_catbench_tasks) + len(eval_tasks))
 
     if total_jobs == 0:
         # Even with no inference jobs, regenerate SVGs from existing TXT files
@@ -1493,6 +1548,7 @@ def run_measure_stage(
     n_kl = len(kl_tasks)
     n_ppl = len(ppl_tasks)
     n_cat = len(catbench_tasks) + len(multi_gpu_catbench_tasks)
+    n_eval = len(eval_tasks)
 
     # --- Run multi-GPU catbench jobs first (sequentially, all GPUs) ---
     if multi_gpu_catbench_tasks:
@@ -1614,6 +1670,8 @@ def run_measure_stage(
             tasks.put(t)
     for t in catbench_tasks:
         tasks.put(t)
+    for t in eval_tasks:
+        tasks.put(t)
     for _ in devices:
         tasks.put(None)
 
@@ -1626,7 +1684,8 @@ def run_measure_stage(
         time.sleep(2.0)
 
     cat_msg = f" + {n_cat} CAT" if n_cat else ""
-    print(f"\n🚀 Measuring {n_kl} KL + {n_ppl} PPL{cat_msg} jobs on {len(devices)} GPUs...")
+    eval_msg = f" + {n_eval} EVAL" if n_eval else ""
+    print(f"\n🚀 Measuring {n_kl} KL + {n_ppl} PPL{cat_msg}{eval_msg} jobs on {len(devices)} GPUs...")
 
     use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     gpu_status: Dict[int, str] = {d: "idle" for d in devices}
@@ -1728,6 +1787,7 @@ def run_repo(
     optimized_measure_layers: int = 2,
     catbench_n: int = 0,
     verify: bool = True,
+    evals: Optional[Dict[str, Any]] = None,
 ) -> int:
     bpw_plan = _plan_repo_bpws(bpws)
     quant_bpws = bpw_plan["quant_integer_queue"]
@@ -1810,8 +1870,8 @@ def run_repo(
         # Export DB to CSV for downstream (readme, graph)
         export_csv(db_path, _out_csv)
 
-        # Catbench runs after all verification is done
-        if catbench_n > 0:
+        # Catbench + evals run after all verification is done
+        if catbench_n > 0 or evals:
             rc = run_measure_stage(
                 model_dir=model_dir,
                 bpws=measure_bpws,
@@ -1819,6 +1879,7 @@ def run_repo(
                 write_logs=write_logs,
                 measure_args=measure_args,
                 catbench_n=catbench_n,
+                evals=evals,
             )
             if rc != 0:
                 return rc
@@ -1849,7 +1910,7 @@ def run_repo(
             )
 
         # Stage 3: measure all
-        if do_measure or catbench_n > 0:
+        if do_measure or catbench_n > 0 or evals:
             rc = run_measure_stage(
                 model_dir=model_dir,
                 bpws=measure_bpws,
@@ -1857,6 +1918,7 @@ def run_repo(
                 write_logs=write_logs,
                 measure_args=measure_args,
                 catbench_n=catbench_n,
+                evals=evals,
             )
             if rc != 0:
                 return rc
