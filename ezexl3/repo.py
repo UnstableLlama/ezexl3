@@ -1069,6 +1069,7 @@ def _worker_measure(
                         eval_cmd, device, results,
                         f"{label} {eval_def.phase_label}",
                         phase, log_f,
+                        cuda_visible_devices=str(device),
                     )
                     extractor = RESULT_EXTRACTORS[phase]
                     result_dict = extractor(eval_out)
@@ -1375,6 +1376,8 @@ def run_measure_stage(
     measure_args: Optional[List[str]] = None,
     catbench_n: int = 0,
     evals: Optional[Dict[str, Any]] = None,
+    skip_kl: bool = False,
+    skip_ppl: bool = False,
 ) -> int:
     model_dir = os.path.abspath(model_dir)
     bpws = [str(b) for b in bpws]
@@ -1425,19 +1428,19 @@ def run_measure_stage(
         has_ppl = bool((row.get("PPL r-100") or "").strip())
 
         # base never needs KL (hardcoded to 0.0)
-        if bpw != "base" and not has_kl:
+        if bpw != "base" and not has_kl and not skip_kl:
             kl_tasks.append({"label": bpw, "phase": "kl"})
         elif bpw != "base":
             skipped_kl.append(label)
-        if not has_ppl:
+        if not has_ppl and not skip_ppl:
             ppl_tasks.append({"label": bpw, "phase": "ppl"})
         else:
             skipped_ppl.append(label)
 
-    # Always include base PPL if not yet measured
+    # Always include base PPL if not yet measured (unless skipped)
     base_label = "bf16"
     base_row = existing_rows.get(base_label, {})
-    if not bool((base_row.get("PPL r-100") or "").strip()):
+    if not bool((base_row.get("PPL r-100") or "").strip()) and not skip_ppl:
         if not any(t["label"] == "base" for t in ppl_tasks):
             ppl_tasks.append({"label": "base", "phase": "ppl"})
     else:
@@ -1788,6 +1791,8 @@ def run_repo(
     catbench_n: int = 0,
     verify: bool = True,
     evals: Optional[Dict[str, Any]] = None,
+    skip_kl: bool = False,
+    skip_ppl: bool = False,
 ) -> int:
     bpw_plan = _plan_repo_bpws(bpws)
     quant_bpws = bpw_plan["quant_integer_queue"]
@@ -1880,6 +1885,8 @@ def run_repo(
                 measure_args=measure_args,
                 catbench_n=catbench_n,
                 evals=evals,
+                skip_kl=skip_kl,
+                skip_ppl=skip_ppl,
             )
             if rc != 0:
                 return rc
@@ -1919,6 +1926,8 @@ def run_repo(
                 measure_args=measure_args,
                 catbench_n=catbench_n,
                 evals=evals,
+                skip_kl=skip_kl,
+                skip_ppl=skip_ppl,
             )
             if rc != 0:
                 return rc

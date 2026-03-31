@@ -160,11 +160,15 @@ def build_parser() -> argparse.ArgumentParser:
         p_sub.add_argument("--no-measurement", "-nm", action="store_true", help="Skip KL/PPL measurements (also disables README graph and KL/PPL table columns)")
         p_sub.add_argument("--template", "-t", help="README template name (e.g., 'fire', 'basic')")
         p_sub.add_argument("-l", "--layers", type=int, default=2, choices=[1, 2, 3], help="Layers used by optimized comparative measure stage (1-3, default: 2)")
-        p_sub.add_argument("-cb", "--catbench", type=int, default=0, nargs="?", const=3,
-                           help="Run SVG Catbench with N samples per model (default: 3 when flag present)")
         p_sub.add_argument("--no-verify", "-nv", action="store_true",
                            help="Skip per-BPW verification (batch all quants, then batch all measures)")
         # Eval scripts (optional, a-la-carte)
+        p_sub.add_argument("--no-kl", action="store_true",
+                           help="Skip KL divergence measurement")
+        p_sub.add_argument("--no-ppl", action="store_true",
+                           help="Skip perplexity measurement")
+        p_sub.add_argument("-cb", "--catbench", type=int, default=0, nargs="?", const=3,
+                           help="Run SVG Catbench with N samples per model (default: 3 when flag present)")
         p_sub.add_argument("-div", "--diversity", type=int, default=0, nargs="?", const=50,
                            help="Run diversity eval with N samples (default: 50)")
         p_sub.add_argument("-he", "--humaneval", type=int, default=0, nargs="?", const=200,
@@ -207,9 +211,13 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("-d", "--devices", default="0", help="CUDA devices for measurement. Example: -d 0,1")
     m.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
     m.add_argument("--no-cleanup", "-nc", action="store_true", help="Keep temporary shard CSVs and logs")
+    # Eval scripts (optional, a-la-carte)
+    m.add_argument("--no-kl", action="store_true",
+                   help="Skip KL divergence measurement")
+    m.add_argument("--no-ppl", action="store_true",
+                   help="Skip perplexity measurement")
     m.add_argument("-cb", "--catbench", type=int, default=0, nargs="?", const=3,
                    help="Run SVG Catbench with N samples per model (default: 3 when flag present)")
-    # Eval scripts (optional, a-la-carte)
     m.add_argument("-div", "--diversity", type=int, default=0, nargs="?", const=50,
                    help="Run diversity eval with N samples (default: 50)")
     m.add_argument("-he", "--humaneval", type=int, default=0, nargs="?", const=200,
@@ -365,6 +373,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     catbench_n=getattr(args, "catbench", 0) or 0,
                     verify=(not args.no_verify),
                     evals=enabled_evals or None,
+                    skip_kl=getattr(args, "no_kl", False),
+                    skip_ppl=getattr(args, "no_ppl", False),
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
@@ -446,6 +456,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     measure_args=pt.measure_args,
                     catbench_n=getattr(args, "catbench", 0) or 0,
                     evals=enabled_evals or None,
+                    skip_kl=getattr(args, "no_kl", False),
+                    skip_ppl=getattr(args, "no_ppl", False),
                 )
                 if rc != 0:
                     failed_models.append(model_dir)

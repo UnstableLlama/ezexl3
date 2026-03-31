@@ -285,6 +285,27 @@ class TestCLIEvalFlags:
         assert args.ifbench == 0
         assert args.longctx == 0
 
+    def test_no_kl_no_ppl_flags(self):
+        from ezexl3.cli import build_parser
+        parser = build_parser()
+        args = parser.parse_args(["repo", "-m", "/tmp/model", "-b", "4", "--no-kl", "--no-ppl"])
+        assert args.no_kl is True
+        assert args.no_ppl is True
+
+    def test_no_kl_no_ppl_default_off(self):
+        from ezexl3.cli import build_parser
+        parser = build_parser()
+        args = parser.parse_args(["repo", "-m", "/tmp/model", "-b", "4"])
+        assert args.no_kl is False
+        assert args.no_ppl is False
+
+    def test_measure_no_kl_no_ppl_flags(self):
+        from ezexl3.cli import build_parser
+        parser = build_parser()
+        args = parser.parse_args(["measure", "-m", "/tmp/model", "-b", "4", "--no-kl", "--no-ppl"])
+        assert args.no_kl is True
+        assert args.no_ppl is True
+
 
 # ---------------------------------------------------------------------------
 # Database column tests
@@ -334,6 +355,8 @@ class TestBuildEvalCmd:
         # Verify it uses the vendored script path
         assert "vendor" in cmd[1]
         assert "eval_mmlu.py" in cmd[1]
+        # Device is set via CUDA_VISIBLE_DEVICES, not -d
+        assert "-d" not in cmd
 
     def test_humaneval_creates_output_dir(self, tmp_path):
         base = str(tmp_path)
