@@ -1,4 +1,0 @@
-#!/bin/sh
-# Clear Python bytecode cache after checkout to prevent stale .pyc issues.
-# Install: git config core.hooksPath githooks
-find ezexl3/ -name '__pycache__' -exec rm -rf {} + 2>/dev/null
