@@ -1513,6 +1513,9 @@ def run_measure_stage(
 
     if enabled_evals:
         from ezexl3.evals import EVAL_REGISTRY, EVAL_QUEUE_ORDER, eval_has_result
+        print(f"DEBUG evals={evals!r} enabled_evals={enabled_evals!r} bpws={bpws!r}")
+    else:
+        print(f"DEBUG evals block NOT entered: evals={evals!r} enabled_evals={enabled_evals!r}")
 
         for eval_name in EVAL_QUEUE_ORDER:
             if eval_name not in enabled_evals:
