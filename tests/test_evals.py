@@ -346,6 +346,60 @@ class TestMeasureDBEvalColumns:
 # Command builder tests
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# CLI -> run_repo/run_measure_stage wiring tests
+# ---------------------------------------------------------------------------
+
+class TestEvalsCliWiring:
+    def test_repo_passes_evals_to_run_repo(self):
+        from unittest.mock import patch
+        argv = ["repo", "-m", "/tmp/model", "-b", "4", "--no-readme", "-div", "-mmlu", "10"]
+        with patch("ezexl3.repo.run_repo", return_value=0) as mock_run_repo:
+            from ezexl3.cli import main
+            rc = main(argv)
+        assert rc == 0
+        kwargs = mock_run_repo.call_args.kwargs
+        assert kwargs["evals"] is not None
+        assert "diversity" in kwargs["evals"]
+        assert kwargs["evals"]["diversity"] == 50  # const default
+        assert "mmlu" in kwargs["evals"]
+        assert kwargs["evals"]["mmlu"] == 10  # explicit value
+
+    def test_measure_passes_evals_to_run_measure_stage(self):
+        from unittest.mock import patch
+        argv = ["measure", "-m", "/tmp/model", "-b", "4", "-div", "100"]
+        with patch("ezexl3.repo.run_measure_stage", return_value=0) as mock_stage:
+            from ezexl3.cli import main
+            rc = main(argv)
+        assert rc == 0
+        kwargs = mock_stage.call_args.kwargs
+        assert kwargs["evals"] is not None
+        assert kwargs["evals"]["diversity"] == 100
+
+    def test_repo_passes_skip_kl_ppl(self):
+        from unittest.mock import patch
+        argv = ["repo", "-m", "/tmp/model", "-b", "4", "--no-readme", "--no-kl", "--no-ppl"]
+        with patch("ezexl3.repo.run_repo", return_value=0) as mock_run_repo:
+            from ezexl3.cli import main
+            rc = main(argv)
+        kwargs = mock_run_repo.call_args.kwargs
+        assert kwargs["skip_kl"] is True
+        assert kwargs["skip_ppl"] is True
+
+    def test_no_evals_passes_none(self):
+        from unittest.mock import patch
+        argv = ["repo", "-m", "/tmp/model", "-b", "4", "--no-readme"]
+        with patch("ezexl3.repo.run_repo", return_value=0) as mock_run_repo:
+            from ezexl3.cli import main
+            rc = main(argv)
+        kwargs = mock_run_repo.call_args.kwargs
+        assert kwargs["evals"] is None
+
+
+# ---------------------------------------------------------------------------
+# Command builder tests
+# ---------------------------------------------------------------------------
+
 class TestBuildEvalCmd:
     def test_mmlu_cmd(self, tmp_path):
         cmd = build_eval_cmd("mmlu", str(tmp_path), 0, str(tmp_path), "4", 10)
