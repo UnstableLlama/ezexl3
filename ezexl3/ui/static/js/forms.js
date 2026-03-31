@@ -134,6 +134,11 @@ function createFieldEl(field) {
     // Sync the label-row toggle with the hidden field checkbox
     const toggleCb = row.querySelector(`#toggle-${field.name}`);
     if (toggleCb) {
+      // defaultOn: start checked (e.g. KL Div and PPL are on by default)
+      if (field.defaultOn) {
+        toggleCb.checked = true;
+        input.checked = true;
+      }
       toggleCb.addEventListener("change", () => { input.checked = toggleCb.checked; });
     }
     return row;
@@ -213,7 +218,7 @@ function createFieldEl(field) {
     row.appendChild(input);
   }
 
-  // Wire up toggleable: start disabled, grey out until toggled on
+  // Wire up toggleable: start disabled (or enabled if defaultOn), grey out until toggled on
   if (field.toggleable) {
     const toggleCb = row.querySelector(`#toggle-${field.name}`);
     const setEnabled = (on) => {
@@ -221,7 +226,12 @@ function createFieldEl(field) {
       const inp = row.querySelector(`#field-${field.name}`);
       if (inp) inp.disabled = !on;
     };
-    setEnabled(false);
+    if (field.defaultOn) {
+      setEnabled(true);
+      if (toggleCb) toggleCb.checked = true;
+    } else {
+      setEnabled(false);
+    }
     toggleCb.addEventListener("change", () => setEnabled(toggleCb.checked));
   }
 
@@ -272,8 +282,11 @@ function collectArgs() {
     }
 
     if (field.type === "boolean") {
-      if (el.checked) {
-        args.push(field.flag);
+      if (field.invertFlag) {
+        // Inverted: emit flag when UNchecked (e.g. --no-kl when KL toggle is off)
+        if (!el.checked) args.push(field.flag);
+      } else {
+        if (el.checked) args.push(field.flag);
       }
       continue;
     }

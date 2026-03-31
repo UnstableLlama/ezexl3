@@ -193,12 +193,18 @@ def build_eval_cmd(
     label: str,
     eval_arg: int | bool = 0,
 ) -> List[str]:
-    """Build the subprocess command for an eval script."""
-    script_path = find_eval_script(eval_name)
-    eval_def = EVAL_REGISTRY[eval_name]
+    """Build the subprocess command for an eval script.
 
-    # All eval scripts use exllamav3's model_init, which takes -m and -d
-    cmd = [sys.executable, script_path, "-m", model_dir, "-d", str(device)]
+    Note: device selection is handled via CUDA_VISIBLE_DEVICES in the
+    subprocess environment, not via CLI args.  The eval scripts use
+    exllamav3's ``model_init`` which accepts ``-gs`` (GPU split / VRAM
+    allocation) but not ``-d``.
+    """
+    script_path = find_eval_script(eval_name)
+
+    # All eval scripts use exllamav3's model_init which takes -m for model dir.
+    # Device is set via CUDA_VISIBLE_DEVICES (handled by the subprocess runner).
+    cmd = [sys.executable, script_path, "-m", model_dir]
 
     if eval_name == "diversity":
         n_samples = eval_arg if isinstance(eval_arg, int) and eval_arg > 0 else 50
@@ -222,8 +228,8 @@ def build_eval_cmd(
         cmd += ["-o", out_file, "-mt", str(max_tokens), "-e"]
 
     elif eval_name == "longctx":
-        # longctx needs large cache
-        cmd += ["-gs", "65536"]
+        # longctx needs large cache for long document comprehension
+        cmd += ["-cs", "65536"]
 
     elif eval_name == "mmlu":
         fewshot = eval_arg if isinstance(eval_arg, int) and eval_arg > 0 else 5

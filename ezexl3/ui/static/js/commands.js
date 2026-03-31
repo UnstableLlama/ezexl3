@@ -23,7 +23,9 @@ const COMMANDS = {
       { name: "no_prompt", flag: "-np", type: "boolean", label: "Headless", help: "Use defaults instead of prompting for README metadata" },
       { name: "no_graph", flag: "-ng", type: "boolean", label: "No Graph", help: "Skip SVG graph generation" },
       { name: "no_measurement", flag: "-nm", type: "boolean", label: "No Measurement", help: "Skip KL/PPL measurement entirely" },
-      // Evals section
+      // Evals section — KL and PPL are on by default (inverted: emit flag when OFF)
+      { name: "no_kl", flag: "--no-kl", type: "boolean", label: "KL Divergence", help: "KL divergence measurement", section: "evals", defaultOn: true, invertFlag: true },
+      { name: "no_ppl", flag: "--no-ppl", type: "boolean", label: "Perplexity", help: "Perplexity measurement", section: "evals", defaultOn: true, invertFlag: true },
       { name: "catbench", flag: "-cb", type: "number", label: "Catbench", placeholder: "3", help: "SVG Catbench samples per BPW", toggleable: true, section: "evals" },
       { name: "diversity", flag: "-div", type: "number", label: "Diversity", placeholder: "50", help: "Output diversity eval (N samples)", toggleable: true, section: "evals" },
       { name: "humaneval", flag: "-he", type: "number", label: "HumanEval", placeholder: "200", help: "Code generation eval (N samples/task)", toggleable: true, section: "evals" },
@@ -62,7 +64,9 @@ const COMMANDS = {
       { name: "devices", flag: "-d", type: "csv", default: "0", label: "CUDA Devices", placeholder: "0,1" },
       { name: "no_logs", flag: "--no-logs", type: "boolean", label: "No Logs" },
       { name: "no_cleanup", flag: "-nc", type: "boolean", label: "Keep Temp Files" },
-      // Evals section
+      // Evals section — KL and PPL are on by default (inverted: emit flag when OFF)
+      { name: "no_kl", flag: "--no-kl", type: "boolean", label: "KL Divergence", help: "KL divergence measurement", section: "evals", defaultOn: true, invertFlag: true },
+      { name: "no_ppl", flag: "--no-ppl", type: "boolean", label: "Perplexity", help: "Perplexity measurement", section: "evals", defaultOn: true, invertFlag: true },
       { name: "catbench", flag: "-cb", type: "number", label: "Catbench", placeholder: "3", help: "SVG Catbench samples per BPW", toggleable: true, section: "evals" },
       { name: "diversity", flag: "-div", type: "number", label: "Diversity", placeholder: "50", help: "Output diversity eval (N samples)", toggleable: true, section: "evals" },
       { name: "humaneval", flag: "-he", type: "number", label: "HumanEval", placeholder: "200", help: "Code generation eval (N samples/task)", toggleable: true, section: "evals" },
