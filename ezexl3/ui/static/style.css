@@ -408,6 +408,7 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   display: flex;
   flex-wrap: wrap;
   gap: 8px 20px;
+  max-width: 460px;
 }
 .toggle-item {
   display: flex;
@@ -530,7 +531,7 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   display: flex;
   gap: 16px;
 }
-#form-body > #form-fields { flex: 1; min-width: 0; }
+#form-body > #form-fields { flex: 0 1 480px; min-width: 0; }
 
 /* ── Collapsible side panels ──────────────────────────────────── */
 #right-panels {
