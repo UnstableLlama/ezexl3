@@ -44,25 +44,14 @@ function renderForm(commandKey) {
     container.appendChild(grid);
   }
 
-  // Evals section (below flags, above run/cancel)
-  if (evals.length) {
-    const heading = document.createElement("div");
-    heading.className = "form-section-label";
-    heading.textContent = "Evals";
-    container.appendChild(heading);
-    for (const field of evals) {
-      if (field.type === "boolean") {
-        // Boolean evals (like longctx) render as toggleable boolean
-        const evField = Object.assign({}, field, { toggleable: true });
-        container.appendChild(createFieldEl(evField));
-      } else {
-        container.appendChild(createFieldEl(field));
-      }
-    }
-  }
-
-  // Metadata panel for commands that generate READMEs
+  // Side panels (right column)
+  renderEvalsPanel(commandKey);
   renderMetadataPanel(commandKey);
+
+  // Show/hide right panels container
+  const rightPanels = document.getElementById("right-panels");
+  const hasRight = cmd.hasMetadata || evals.length > 0;
+  rightPanels.style.display = hasRight ? "" : "none";
 }
 
 
@@ -564,6 +553,32 @@ function updateMetadataConfirm() {
   // Pre-fill mode: auto-save when all locked and not waiting for pipeline
   if (allLocked && !metadataWaitingDir) {
     saveMetadata();
+  }
+}
+
+
+function renderEvalsPanel(commandKey) {
+  const panel = document.getElementById("evals-panel");
+  const container = document.getElementById("evals-fields");
+  container.innerHTML = "";
+
+  const cmd = COMMANDS[commandKey];
+  const evals = cmd ? cmd.fields.filter(f => f.section === "evals") : [];
+
+  if (!evals.length) {
+    panel.style.display = "none";
+    return;
+  }
+
+  panel.style.display = "";
+
+  for (const field of evals) {
+    // Compact: omit help text in side panel
+    const compactField = Object.assign({}, field, { help: null });
+    if (field.type === "boolean") {
+      Object.assign(compactField, { toggleable: true });
+    }
+    container.appendChild(createFieldEl(compactField));
   }
 }
 

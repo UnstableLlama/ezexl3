@@ -72,6 +72,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Splitter drag
   initSplitter();
 
+  // Collapsible side panels
+  initCollapsiblePanels();
+
   // Select initial command
   selectCommand("repo");
 
@@ -180,6 +183,22 @@ async function checkRunningJob() {
   } catch (e) {
     // ignore
   }
+}
+
+
+function initCollapsiblePanels() {
+  const saved = JSON.parse(localStorage.getItem("panelCollapsed") || "{}");
+  document.querySelectorAll(".panel-header").forEach(header => {
+    const panel = header.closest(".side-panel");
+    const key = header.dataset.panel;
+    if (saved[key]) panel.classList.add("panel-collapsed");
+    header.addEventListener("click", () => {
+      panel.classList.toggle("panel-collapsed");
+      const state = JSON.parse(localStorage.getItem("panelCollapsed") || "{}");
+      state[key] = panel.classList.contains("panel-collapsed");
+      localStorage.setItem("panelCollapsed", JSON.stringify(state));
+    });
+  });
 }
 
 
