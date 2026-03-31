@@ -70,6 +70,76 @@ function _finalizeAllProgress(el) {
   }
 }
 
+async function runUploadAction(action) {
+  if (jobRunning) return;
+
+  // Check HF auth first
+  try {
+    const authRes = await fetch("/api/hf-auth");
+    const authData = await authRes.json();
+    if (!authData.authenticated) {
+      clearTerminal();
+      appendTerminal("Not logged in to HuggingFace. Run `hf login` in your terminal first.\n", "term-stderr");
+      terminalStatus().textContent = "HF auth required";
+      terminalStatus().className = "terminal-status error";
+      return;
+    }
+  } catch (e) {
+    // Continue anyway — the CLI will check auth too
+  }
+
+  const args = collectArgs();
+  if (args.error) {
+    terminalStatus().textContent = args.error;
+    terminalStatus().className = "terminal-status error";
+    return;
+  }
+
+  // Append --create-only for "create" action
+  if (action === "create") {
+    args.push("--create-only");
+  }
+
+  // Run as normal command
+  clearTerminal();
+  const cmdStr = `ezexl3 upload ${args.join(" ")}`;
+  appendTerminal(`$ ${cmdStr}\n`, "term-cmd");
+  appendTerminal("\n");
+
+  jobRunning = true;
+  updateRunButton();
+  terminalStatus().textContent = action === "create" ? "Creating repos..." : "Uploading...";
+  terminalStatus().className = "terminal-status running";
+
+  try {
+    const res = await fetch("/api/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: "upload", args }),
+    });
+    const data = await res.json();
+
+    if (data.error) {
+      appendTerminal(`Error: ${data.error}\n`, "term-stderr");
+      jobRunning = false;
+      updateRunButton();
+      terminalStatus().textContent = "Failed to start";
+      terminalStatus().className = "terminal-status error";
+      return;
+    }
+
+    activeJobId = data.job_id;
+    await streamJob(data.job_id);
+  } catch (e) {
+    appendTerminal(`Connection error: ${e.message}\n`, "term-stderr");
+    jobRunning = false;
+    updateRunButton();
+    terminalStatus().textContent = "Connection error";
+    terminalStatus().className = "terminal-status error";
+  }
+}
+
+
 async function runCommand() {
   if (jobRunning) return;
 
@@ -148,6 +218,7 @@ async function streamJob(jobId) {
           const event = JSON.parse(payload);
           if (event.type === "stdout") {
             checkMetadataWait(event.text);
+            checkBandwidth(event.text);
             if (!event.text.includes("<<EZEXL3:")) {
               appendTerminal(event.text);
             }
@@ -204,11 +275,17 @@ async function stopJob() {
 function updateRunButton() {
   const runBtn = document.getElementById("run-btn");
   const stopBtn = document.getElementById("stop-btn");
+  const createBtn = document.getElementById("create-repos-btn");
+  const uploadBtn = document.getElementById("upload-btn");
   if (jobRunning) {
     runBtn.disabled = true;
+    createBtn.disabled = true;
+    uploadBtn.disabled = true;
     stopBtn.style.display = "";
   } else {
     runBtn.disabled = false;
+    createBtn.disabled = false;
+    uploadBtn.disabled = false;
     stopBtn.style.display = "none";
   }
   if (typeof updateChatButton === "function") updateChatButton();
@@ -221,5 +298,15 @@ function checkMetadataWait(text) {
   if (!match) return;
   if (typeof showMetadataWait === "function") {
     showMetadataWait(match[1]);
+  }
+}
+
+function checkBandwidth(text) {
+  const match = text.match(/<<EZEXL3:BANDWIDTH:([\d.]+) MB\/s>>/);
+  if (!match) return;
+  const speed = parseFloat(match[1]);
+  if (speed >= 0.01) {
+    terminalStatus().textContent = `Uploading: ${speed.toFixed(1)} MB/s`;
+    terminalStatus().className = "terminal-status running";
   }
 }
