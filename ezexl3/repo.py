@@ -1639,7 +1639,7 @@ def run_measure_stage(
             sys.stdout.flush()
 
     # Remaining jobs (KL + PPL + single-GPU catbench) into shared queue
-    remaining_jobs = len(kl_tasks) + len(ppl_tasks) + len(catbench_tasks)
+    remaining_jobs = len(kl_tasks) + len(ppl_tasks) + len(catbench_tasks) + len(eval_tasks)
     if remaining_jobs == 0:
         if multi_gpu_catbench_tasks:
             catbench_out_dir = os.path.join(model_dir, "catbench")
