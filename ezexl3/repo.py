@@ -1525,15 +1525,19 @@ def run_measure_stage(
             # Include base/bf16 for all evals
             if "base" not in all_targets:
                 all_targets.append("base")
+            print(f"DEBUG {eval_name} targets={all_targets}")
             for bpw in all_targets:
                 label = _task_to_csv_label(bpw)
-                if eval_has_result(db_path, label, eval_name):
+                has = eval_has_result(db_path, label, eval_name)
+                print(f"DEBUG   {label}/{eval_name} has_result={has}")
+                if has:
                     skipped_eval.append(f"{label}/{eval_name}")
                 else:
                     eval_tasks.append({
                         "label": bpw, "phase": eval_name, "eval_arg": eval_arg,
                     })
 
+        print(f"DEBUG eval_tasks={len(eval_tasks)} skipped_eval={skipped_eval}")
         if skipped_eval:
             print(f"🟦 skipping evals: {', '.join(skipped_eval)} (already measured)")
 
