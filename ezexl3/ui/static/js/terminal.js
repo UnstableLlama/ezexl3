@@ -206,11 +206,9 @@ function updateRunButton() {
   const stopBtn = document.getElementById("stop-btn");
   if (jobRunning) {
     runBtn.disabled = true;
-    runBtn.textContent = "Running...";
     stopBtn.style.display = "";
   } else {
     runBtn.disabled = false;
-    runBtn.textContent = "Run";
     stopBtn.style.display = "none";
   }
   if (typeof updateChatButton === "function") updateChatButton();

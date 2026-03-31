@@ -73,16 +73,36 @@
       <div id="form-panel" class="tab-content active">
         <div id="form-body">
           <div id="form-fields"></div>
-          <div id="metadata-panel" class="metadata-panel" style="display:none">
-            <div class="metadata-title">README Metadata</div>
-            <div id="metadata-fields"></div>
-            <button id="metadata-confirm" class="action-btn primary metadata-confirm-btn" style="display:none">Resume</button>
+          <div id="right-panels">
+            <div id="metadata-panel" class="side-panel metadata-panel" style="display:none">
+              <div class="panel-header" data-panel="metadata">
+                <span class="panel-title">README Metadata</span>
+                <span class="panel-chevron">&#9662;</span>
+              </div>
+              <div class="panel-body-wrap">
+                <div class="panel-body">
+                  <div id="metadata-fields"></div>
+                  <button id="metadata-confirm" class="action-btn primary metadata-confirm-btn" style="display:none">Resume</button>
+                </div>
+              </div>
+            </div>
+            <div id="evals-panel" class="side-panel evals-panel" style="display:none">
+              <div class="panel-header" data-panel="evals">
+                <span class="panel-title">Evals</span>
+                <span class="panel-chevron">&#9662;</span>
+              </div>
+              <div class="panel-body-wrap">
+                <div class="panel-body">
+                  <div id="evals-fields"></div>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-        <div id="form-actions">
-          <button id="run-btn" class="action-btn primary">Run</button>
-          <button id="stop-btn" class="action-btn danger" style="display:none">Stop</button>
-          <button id="clear-btn" class="action-btn secondary">Clear</button>
+          <div id="action-column">
+            <button id="run-btn" class="action-btn action-sq primary">Run</button>
+            <button id="stop-btn" class="action-btn action-sq danger" style="display:none">Stop</button>
+            <button id="clear-btn" class="action-btn action-sq secondary">Clear</button>
+          </div>
         </div>
       </div>
 
