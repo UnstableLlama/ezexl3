@@ -587,6 +587,10 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
 .panel-body {
   overflow: hidden;
   padding: 0 14px 12px;
+  min-height: 0;
+}
+.side-panel.panel-collapsed .panel-body {
+  padding: 0;
 }
 
 /* Evals panel — compact spacing */
