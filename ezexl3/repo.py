@@ -1513,11 +1513,8 @@ def run_measure_stage(
 
     if enabled_evals:
         from ezexl3.evals import EVAL_REGISTRY, EVAL_QUEUE_ORDER, eval_has_result
-        print(f"DEBUG evals={evals!r} bpws={bpws!r}")
-        print(f"DEBUG EVAL_QUEUE_ORDER={EVAL_QUEUE_ORDER}")
 
         for eval_name in EVAL_QUEUE_ORDER:
-            print(f"DEBUG checking {eval_name}: in enabled_evals={eval_name in enabled_evals}")
             if eval_name not in enabled_evals:
                 continue
             eval_arg = enabled_evals[eval_name]
@@ -1525,19 +1522,15 @@ def run_measure_stage(
             # Include base/bf16 for all evals
             if "base" not in all_targets:
                 all_targets.append("base")
-            print(f"DEBUG {eval_name} targets={all_targets}")
             for bpw in all_targets:
                 label = _task_to_csv_label(bpw)
-                has = eval_has_result(db_path, label, eval_name)
-                print(f"DEBUG   {label}/{eval_name} has_result={has}")
-                if has:
+                if eval_has_result(db_path, label, eval_name):
                     skipped_eval.append(f"{label}/{eval_name}")
                 else:
                     eval_tasks.append({
                         "label": bpw, "phase": eval_name, "eval_arg": eval_arg,
                     })
 
-        print(f"DEBUG eval_tasks={len(eval_tasks)} skipped_eval={skipped_eval}")
         if skipped_eval:
             print(f"🟦 skipping evals: {', '.join(skipped_eval)} (already measured)")
 
