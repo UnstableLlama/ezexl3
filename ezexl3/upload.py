@@ -105,6 +105,43 @@ class BandwidthMonitor:
         if self._thread:
             self._thread.join(timeout=3)
             self._thread = None
+        # Clear the progress line so terminal output isn't stuck
+        print("", flush=True)
+
+
+def _upload_folder_graceful(api, folder_path: str, repo_id: str, commit_message: str,
+                            revision: Optional[str] = None,
+                            ignore_patterns: Optional[List[str]] = None) -> bool:
+    """Upload a folder, retrying without README.md if HF rejects metadata."""
+    try:
+        api.upload_folder(
+            folder_path=folder_path,
+            repo_id=repo_id,
+            revision=revision,
+            commit_message=commit_message,
+            ignore_patterns=ignore_patterns,
+        )
+        return True
+    except Exception as e:
+        err = str(e)
+        if "Invalid metadata in README.md" in err or "base_model" in err:
+            # HF rejected the README frontmatter — retry without it
+            print(f"  ⚠️  README.md has invalid HF metadata, uploading without it")
+            retry_ignore = list(ignore_patterns or []) + ["README.md"]
+            try:
+                api.upload_folder(
+                    folder_path=folder_path,
+                    repo_id=repo_id,
+                    revision=revision,
+                    commit_message=commit_message,
+                    ignore_patterns=retry_ignore,
+                )
+                return True
+            except Exception as e2:
+                print(f"  🔴 Failed even without README: {e2}")
+                return False
+        else:
+            raise
 
 
 # ── Repo creation ────────────────────────────────────────────────
@@ -203,7 +240,12 @@ def upload_branched(
                         commit_message=f"Upload {item}",
                     )
             except Exception as e:
-                print(f"  ⚠️  Failed to upload {item}: {e}")
+                err = str(e)
+                if item == "README.md" and ("Invalid metadata" in err or "base_model" in err):
+                    print(f"  ⚠️  README.md has invalid HF metadata — skipped")
+                    print(f"       Fix the base_model field in README frontmatter and re-upload")
+                else:
+                    print(f"  ⚠️  Failed to upload {item}: {e}")
     else:
         print("ℹ️  No shared artifacts found in model root")
 
@@ -217,14 +259,14 @@ def upload_branched(
 
         print(f"📤 Uploading {label} to branch...")
         try:
-            api.upload_folder(
-                folder_path=bpw_dir,
-                repo_id=repo_id,
-                revision=label,
+            ok = _upload_folder_graceful(
+                api, bpw_dir, repo_id,
                 commit_message=f"Upload {label} quantization",
+                revision=label,
                 ignore_patterns=ignore or None,
             )
-            print(f"  ✅ {label} uploaded")
+            if ok:
+                print(f"  ✅ {label} uploaded")
         except Exception as e:
             print(f"  🔴 Failed to upload {label}: {e}")
 
@@ -276,13 +318,13 @@ def upload_single(
 
         print(f"📤 Uploading to {repo_id}...")
         try:
-            api.upload_folder(
-                folder_path=bpw_dir,
-                repo_id=repo_id,
+            ok = _upload_folder_graceful(
+                api, bpw_dir, repo_id,
                 commit_message=f"Upload {label} quantization",
                 ignore_patterns=ignore or None,
             )
-            print(f"  ✅ {repo_id} uploaded")
+            if ok:
+                print(f"  ✅ {repo_id} uploaded")
         except Exception as e:
             print(f"  🔴 Failed to upload {repo_id}: {e}")
         finally:
