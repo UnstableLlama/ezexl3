@@ -7,12 +7,16 @@ import collections
 import ipaddress
 import json
 import os
+import re
 import shutil
 import signal
 import sys
 import tempfile
 import uuid
 import webbrowser
+
+# Strip ANSI escape sequences (cursor movement, colors, line clears)
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?\x07")
 from pathlib import Path
 
 from aiohttp import web
@@ -93,14 +97,20 @@ class JobManager:
             if not chunk:
                 break
             text = chunk.decode("utf-8", errors="replace")
-            # Split on \n to get individual lines, but preserve \r within lines
-            # so the frontend can handle progress bar updates
+            # Strip ANSI escape sequences (cursor movement, colors, line clears)
+            # that our simple terminal can't handle
+            text = _ANSI_RE.sub("", text)
+            # Split on \n, preserve \r within lines for progress bar handling
             lines = text.split("\n")
             for i, line in enumerate(lines):
                 if not line and i == len(lines) - 1:
                     break  # trailing empty after final \n
                 suffix = "\n" if i < len(lines) - 1 else ""
-                event = {"type": stream_type, "text": line + suffix}
+                segment = line + suffix
+                # Skip lines that are only whitespace/newlines (tqdm padding)
+                if not segment.strip():
+                    continue
+                event = {"type": stream_type, "text": segment}
                 job.output.append(event)
             job.notify()
 
