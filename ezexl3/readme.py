@@ -438,3 +438,137 @@ def run_readme(
         f.write(template)
 
     print(f"✅ Generated {readme_path}")
+
+
+def _format_bpw(bpw: str) -> str:
+    """Format a BPW string to standard label like '4.00bpw'."""
+    try:
+        return f"{float(bpw):.2f}bpw"
+    except ValueError:
+        return bpw
+
+
+def _discover_bpws(model_dir: str) -> List[str]:
+    """Auto-discover BPW subdirectories in the model dir."""
+    bpws = []
+    if not os.path.isdir(model_dir):
+        return bpws
+    for item in os.listdir(model_dir):
+        path = os.path.join(model_dir, item)
+        if not os.path.isdir(path):
+            continue
+        if item.startswith("w-"):
+            continue
+        try:
+            float(item)
+            bpws.append(item)
+        except ValueError:
+            continue
+    bpws.sort(key=lambda x: float(x))
+    return bpws
+
+
+def run_readme_single(
+    model_dir: str,
+    bpws: Optional[List[str]] = None,
+    template_name: Optional[str] = None,
+    interactive: bool = True,
+    include_graph: bool = True,
+    include_measurements: bool = True,
+    include_catbench: bool = False,
+) -> None:
+    """Generate per-BPW READMEs for single-bitrate (one repo per BPW) mode.
+
+    Each BPW gets a README.md in its subdirectory with:
+    - Title appended with the BPW label
+    - Data table links pointing to sibling repos instead of branches
+    - Download command for direct repo access (no --revision)
+    """
+    model_dir = os.path.abspath(model_dir)
+
+    # Auto-discover BPWs if not provided
+    if not bpws:
+        bpws = _discover_bpws(model_dir)
+        if not bpws:
+            print("🔴 No BPWs specified and none auto-detected in model directory.")
+            return
+
+    # Generate the standard branched README first as a base
+    run_readme(
+        model_dir,
+        template_name=template_name,
+        interactive=interactive,
+        include_graph=include_graph,
+        include_measurements=include_measurements,
+        bpws_hint=bpws,
+        include_catbench=include_catbench,
+    )
+
+    base_readme = os.path.join(model_dir, "README.md")
+    if not os.path.exists(base_readme):
+        print("⚠️  Could not generate base README for single-bitrate mode")
+        return
+
+    with open(base_readme) as f:
+        base_content = f.read()
+
+    # Extract user/model from the base README's metadata
+    meta = _read_saved_metadata(model_dir)
+    if not meta:
+        defaults = _compute_defaults(model_dir)
+        meta = defaults
+    user = meta.get("USER", "USER")
+    model = meta.get("MODEL", os.path.basename(model_dir))
+
+    # The base README uses links like: USER/MODEL-exl3/tree/X.XXbpw
+    quant_repo_base = f"{user}/{model}-exl3"
+
+    print(f"\n📝 Generating single-bitrate READMEs...")
+
+    for bpw in bpws:
+        label = _format_bpw(bpw)
+        content = base_content
+
+        # 1. Append BPW to the <h1> title
+        content = re.sub(
+            r'(<h1>)(.*?)(</h1>)',
+            rf'\1\2 — {label}\3',
+            content,
+        )
+
+        # 2. Rewrite data table links:
+        #    FROM: href=".../USER/MODEL-exl3/tree/X.XXbpw"
+        #    TO:   href=".../USER/MODEL-X.XXbpw-exl3"
+        #    Current BPW row: remove <a> wrapper, show bold plain text
+        for other_bpw in bpws:
+            other_label = _format_bpw(other_bpw)
+            old_href = f"https://huggingface.co/{quant_repo_base}/tree/{other_label}"
+            new_href = f"https://huggingface.co/{user}/{model}-{other_label}-exl3"
+
+            if other_bpw == bpw:
+                content = re.sub(
+                    rf'<a class="link-style" href="{re.escape(old_href)}">{re.escape(other_label)}</a>',
+                    f"<b>{other_label}</b>",
+                    content,
+                )
+            else:
+                content = content.replace(old_href, new_href)
+
+        # 3. Rewrite download command
+        #    FROM: hf download USER/MODEL-exl3 --revision "X.XXbpw" --local-dir ./MODEL-exl3-X.XXbpw
+        #    TO:   hf download USER/MODEL-X.XXbpw-exl3 --local-dir ./MODEL-X.XXbpw-exl3
+        content = re.sub(
+            rf'hf download {re.escape(quant_repo_base)} --revision "[^"]*" --local-dir \S+',
+            f"hf download {user}/{model}-{label}-exl3 --local-dir ./{model}-{label}-exl3",
+            content,
+        )
+
+        # Write into BPW subdirectory
+        bpw_dir = os.path.join(model_dir, bpw)
+        os.makedirs(bpw_dir, exist_ok=True)
+        out_path = os.path.join(bpw_dir, "README.md")
+        with open(out_path, "w") as f:
+            f.write(content)
+        print(f"  ✅ {label}/README.md")
+
+    print(f"✅ Generated {len(bpws)} single-bitrate READMEs")
