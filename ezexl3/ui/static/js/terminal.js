@@ -43,14 +43,15 @@ function _appendChunk(el, text, className) {
 }
 
 function _updateProgressLine(el, text) {
-  // Extract key prefix like "gpu0:" to support per-GPU progress lines
+  // Extract key prefix to support per-item progress lines
+  // Matches: "gpu0:", "filename.ext:", "...filename.ext:" (tqdm upload bars)
   const cleaned = text.replace(/\n$/, "");
-  const m = cleaned.match(/^(gpu\d+:)\s*/);
-  const key = m ? m[1] : "_default";
-  const display = m ? cleaned.slice(m[0].length) : cleaned;
+  const m = cleaned.match(/^(\s*(?:\.{3})?\S+?:)\s*/);
+  const key = m ? m[1].trim() : "_default";
+  const display = cleaned;
 
   // Find or create the ephemeral progress element for this key
-  let prog = el.querySelector(`.term-progress[data-key="${key}"]`);
+  let prog = el.querySelector(`.term-progress[data-key="${CSS.escape(key)}"]`);
   if (!prog) {
     prog = document.createElement("span");
     prog.className = "term-progress";
