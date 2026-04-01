@@ -203,7 +203,7 @@ async def handle_run(request: web.Request) -> web.Response:
     if not subcommand:
         return web.json_response({"error": "No command specified"}, status=400)
 
-    valid_commands = {"repo", "quantize", "quant", "measure", "readme"}
+    valid_commands = {"repo", "quantize", "quant", "measure", "readme", "upload"}
     if subcommand not in valid_commands:
         return web.json_response({"error": f"Invalid command: {subcommand}"}, status=400)
 
@@ -529,6 +529,20 @@ async def _no_cache_static(request: web.Request, handler):
 
 
 # ---------------------------------------------------------------------------
+# HuggingFace auth check
+# ---------------------------------------------------------------------------
+
+async def handle_hf_auth(request: web.Request) -> web.Response:
+    """Check if user is authenticated with HuggingFace."""
+    try:
+        from huggingface_hub import HfApi
+        info = await asyncio.to_thread(HfApi().whoami)
+        return web.json_response({"authenticated": True, "username": info.get("name", "")})
+    except Exception:
+        return web.json_response({"authenticated": False, "username": ""})
+
+
+# ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
 
@@ -547,6 +561,7 @@ def create_app() -> web.Application:
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/browse", handle_browse)
     app.router.add_get("/api/gpus", handle_gpus)
+    app.router.add_get("/api/hf-auth", handle_hf_auth)
     app.router.add_get("/api/templates", handle_templates)
     app.router.add_post("/api/run", handle_run)
     app.router.add_get("/api/run/{job_id}/stream", handle_run_stream)

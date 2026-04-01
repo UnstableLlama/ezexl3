@@ -254,6 +254,21 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--no-measurement", "-nm", action="store_true", help="Remove KL/PPL columns from README and skip graph embedding")
     r.add_argument("--template", "-t", help="README template name (e.g., 'fire', 'basic')")
 
+    # --- upload ---
+    u = sub.add_parser("upload", help="Upload quantized models to HuggingFace")
+    u.add_argument("-m", "--models", nargs="+", required=True, help="One or more model directories")
+    u.add_argument("-b", "--bpws", nargs="+", required=True, help="BPWs to upload (space or comma separated)")
+    u.add_argument("--mode", choices=["branched", "single"], default="branched",
+                   help="branched: single repo with branches per BPW. single: separate repo per BPW")
+    u.add_argument("--private", action="store_true", help="Create private HuggingFace repos")
+    u.add_argument("--small-only", action="store_true",
+                   help="Exclude large files (*.safetensors, *.bin, *.pt, *.ckpt)")
+    u.add_argument("--create-only", action="store_true",
+                   help="Only create repos/branches, do not upload files")
+    u.add_argument("--template", "-t", help="README template name for single-bitrate mode")
+    u.add_argument("--no-graph", "-ng", action="store_true", help="Do not include graph in single-bitrate READMEs")
+    u.add_argument("--no-measurement", "-nm", action="store_true", help="Remove KL/PPL columns from single-bitrate READMEs")
+
     # --- ui (dashboard) ---
     ui = sub.add_parser("ui", aliases=["dash", "dashboard"],
                         help="Launch dashboard web UI")
@@ -477,6 +492,31 @@ def main(argv: Optional[List[str]] = None) -> int:
                 include_measurements=(not args.no_measurement),
             )
         return 0
+
+    if cmd == "upload":
+        from ezexl3.upload import run_upload
+        failed_models: List[str] = []
+        for model_dir in args.models:
+            try:
+                rc = run_upload(
+                    model_dir=model_dir,
+                    bpws=args.bpws,
+                    mode=args.mode,
+                    private=args.private,
+                    small_only=args.small_only,
+                    create_only=args.create_only,
+                    template_name=args.template,
+                    include_graph=(not args.no_graph and not args.no_measurement),
+                    include_measurements=(not args.no_measurement),
+                )
+                if rc != 0:
+                    failed_models.append(model_dir)
+            except Exception as e:
+                print(f"Error uploading {model_dir}: {e}")
+                import traceback
+                traceback.print_exc()
+                failed_models.append(model_dir)
+        return 1 if failed_models else 0
 
     print(f"Command '{args.cmd}' not implemented yet.")
     return 1
