@@ -89,12 +89,19 @@ class JobManager:
 
     async def _read_stream(self, job: Job, stream, stream_type: str):
         while True:
-            line = await stream.readline()
-            if not line:
+            chunk = await stream.read(8192)
+            if not chunk:
                 break
-            text = line.decode("utf-8", errors="replace")
-            event = {"type": stream_type, "text": text}
-            job.output.append(event)
+            text = chunk.decode("utf-8", errors="replace")
+            # Split on \n to get individual lines, but preserve \r within lines
+            # so the frontend can handle progress bar updates
+            lines = text.split("\n")
+            for i, line in enumerate(lines):
+                if not line and i == len(lines) - 1:
+                    break  # trailing empty after final \n
+                suffix = "\n" if i < len(lines) - 1 else ""
+                event = {"type": stream_type, "text": line + suffix}
+                job.output.append(event)
             job.notify()
 
     async def _wait_exit(self, job: Job, proc: asyncio.subprocess.Process):
