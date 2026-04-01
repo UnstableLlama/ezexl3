@@ -73,6 +73,8 @@ class QuantizeFlagWiringTests(unittest.TestCase):
             dry_run=True,
             continue_on_error=True,
             optimized_measure_layers=1,
+            hq_bpws=set(),
+            hb8_bpws=set(),
         )
 
 

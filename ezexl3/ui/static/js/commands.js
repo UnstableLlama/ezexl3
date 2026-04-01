@@ -10,7 +10,12 @@ const COMMANDS = {
     hasMetadata: true,
     fields: [
       { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "BF16/base model directory" },
-      { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "Target bits per weight", headerToggle: { name: "hq", flag: "-hq", label: "-hq" } },
+      { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "Target bits per weight",
+        bpwPaintFlags: [
+          { name: "hq", flag: "-hq", label: "-hq", color: "#4a90d9" },
+          { name: "hb8", flag: "-hb8", label: "-hb 8", color: "#43a047" },
+        ]
+      },
       { name: "devices", flag: "-d", type: "csv", default: "0", label: "CUDA Devices", placeholder: "0,1", help: "GPU device indices" },
       { name: "device_ratios", flag: "-r", type: "csv", label: "Device Ratios", placeholder: "1,1", help: "VRAM ratios per device (optional)" },
       { name: "template", flag: "-t", type: "template", label: "Template", help: "README template style" },
@@ -42,7 +47,12 @@ const COMMANDS = {
     description: "Run quantization without measurement or README",
     fields: [
       { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "BF16/base model directory" },
-      { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "Target bits per weight", headerToggle: { name: "hq", flag: "-hq", label: "-hq" } },
+      { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "Target bits per weight",
+        bpwPaintFlags: [
+          { name: "hq", flag: "-hq", label: "-hq", color: "#4a90d9" },
+          { name: "hb8", flag: "-hb8", label: "-hb 8", color: "#43a047" },
+        ]
+      },
       { name: "devices", flag: "-d", type: "csv", default: "0", label: "CUDA Devices", placeholder: "0,1" },
       { name: "device_ratios", flag: "-r", type: "csv", label: "Device Ratios", placeholder: "1,1" },
       { name: "out_template", flag: "--out-template", type: "text", default: "{model}/{bpw}", label: "Output Template", help: "Fields: {model}, {model_name}, {bpw}" },
