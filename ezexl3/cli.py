@@ -249,6 +249,9 @@ def build_parser() -> argparse.ArgumentParser:
     # --- readme ---
     r = sub.add_parser("readme", help="README only (CSV -> README)")
     r.add_argument("-m", "--models", nargs="+", required=True, help="One or more model directories")
+    r.add_argument("-b", "--bpws", nargs="+", default=None, help="BPWs (required for single mode, auto-detected otherwise)")
+    r.add_argument("--mode", choices=["branched", "single"], default="branched",
+                   help="branched: single README. single: per-BPW READMEs with cross-linked repos")
     r.add_argument("--no-prompt", "-np", action="store_true", help="Use defaults for README instead of prompting")
     r.add_argument("--no-graph", "-ng", action="store_true", help="Do not generate or embed the README SVG graph")
     r.add_argument("--no-measurement", "-nm", action="store_true", help="Remove KL/PPL columns from README and skip graph embedding")
@@ -265,9 +268,6 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Exclude large files (*.safetensors, *.bin, *.pt, *.ckpt)")
     u.add_argument("--create-only", action="store_true",
                    help="Only create repos/branches, do not upload files")
-    u.add_argument("--template", "-t", help="README template name for single-bitrate mode")
-    u.add_argument("--no-graph", "-ng", action="store_true", help="Do not include graph in single-bitrate READMEs")
-    u.add_argument("--no-measurement", "-nm", action="store_true", help="Remove KL/PPL columns from single-bitrate READMEs")
 
     # --- ui (dashboard) ---
     ui = sub.add_parser("ui", aliases=["dash", "dashboard"],
@@ -482,15 +482,28 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1 if failed_models else 0
 
     if cmd == "readme":
-        from ezexl3.readme import run_readme
+        from ezexl3.readme import run_readme, run_readme_single
+        readme_bpws = args.bpws if hasattr(args, "bpws") and args.bpws else None
+        readme_mode = getattr(args, "mode", "branched")
         for model_dir in args.models:
-            run_readme(
-                model_dir,
-                template_name=args.template,
-                interactive=(not args.no_prompt),
-                include_graph=(not args.no_graph and not args.no_measurement),
-                include_measurements=(not args.no_measurement),
-            )
+            if readme_mode == "single":
+                run_readme_single(
+                    model_dir,
+                    bpws=readme_bpws,
+                    template_name=args.template,
+                    interactive=(not args.no_prompt),
+                    include_graph=(not args.no_graph and not args.no_measurement),
+                    include_measurements=(not args.no_measurement),
+                )
+            else:
+                run_readme(
+                    model_dir,
+                    template_name=args.template,
+                    interactive=(not args.no_prompt),
+                    include_graph=(not args.no_graph and not args.no_measurement),
+                    include_measurements=(not args.no_measurement),
+                    bpws_hint=readme_bpws,
+                )
         return 0
 
     if cmd == "upload":
@@ -505,9 +518,6 @@ def main(argv: Optional[List[str]] = None) -> int:
                     private=args.private,
                     small_only=args.small_only,
                     create_only=args.create_only,
-                    template_name=args.template,
-                    include_graph=(not args.no_graph and not args.no_measurement),
-                    include_measurements=(not args.no_measurement),
                 )
                 if rc != 0:
                     failed_models.append(model_dir)

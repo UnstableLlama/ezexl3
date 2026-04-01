@@ -84,6 +84,8 @@ const COMMANDS = {
     hasMetadata: true,
     fields: [
       { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "Directory with measurement CSV" },
+      { name: "bpws", flag: "-b", type: "csv", label: "BPWs", placeholder: "2,3,4,5,6", help: "BPWs (required for single mode, auto-detected otherwise)" },
+      { name: "mode", flag: "--mode", type: "select", choices: ["branched", "single"], default: "branched", label: "Mode", help: "Branched: single README. Single: per-BPW READMEs with cross-linked repos" },
       { name: "template", flag: "-t", type: "template", label: "Template", help: "README template style" },
       { name: "no_prompt", flag: "-np", type: "boolean", label: "Headless", help: "Use defaults for metadata" },
       { name: "no_graph", flag: "-ng", type: "boolean", label: "No Graph" },
@@ -94,18 +96,15 @@ const COMMANDS = {
   upload: {
     label: "Upload",
     subtitle: "HuggingFace",
-    description: "Create repos and upload quantized models to HuggingFace",
+    description: "Create repos and upload to HuggingFace",
     twoActions: true,
     fields: [
       { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "Directory with quantized models" },
       { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "BPWs to upload" },
       { name: "mode", flag: "--mode", type: "select", choices: ["branched", "single"], default: "branched", label: "Mode", help: "Branched: one repo with branches. Single: separate repo per BPW" },
-      { name: "template", flag: "-t", type: "template", label: "Template", help: "README template for single-bitrate mode" },
       // Boolean flags
       { name: "private", flag: "--private", type: "boolean", label: "Private Repos", help: "Create private HuggingFace repos" },
       { name: "small_only", flag: "--small-only", type: "boolean", label: "Small Files Only", help: "Exclude *.safetensors, *.bin, *.pt, *.ckpt" },
-      { name: "no_graph", flag: "-ng", type: "boolean", label: "No Graph", help: "Skip graph in single-bitrate READMEs" },
-      { name: "no_measurement", flag: "-nm", type: "boolean", label: "No Measurement", help: "Remove KL/PPL columns from READMEs" },
     ],
   },
 };

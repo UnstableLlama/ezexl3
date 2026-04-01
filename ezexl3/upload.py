@@ -1,23 +1,14 @@
 """Upload quantized models to HuggingFace Hub."""
 
 import os
-import re
 import shutil
 import sys
-import tempfile
 import threading
 import time
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 
 LARGE_FILE_PATTERNS = ["*.safetensors", "*.bin", "*.pt", "*.ckpt"]
-
-# Shared artifacts that live in the model root (not in per-BPW subdirs)
-SHARED_ARTIFACT_PATTERNS = [
-    "*.csv", "*.svg", "*.db",
-    "catbench/",
-    "evals/",
-]
 
 
 def check_hf_auth() -> str:
@@ -165,41 +156,42 @@ def upload_branched(
     bpws: List[str],
     small_only: bool = False,
 ) -> None:
-    """Upload to a single repo with branches."""
+    """Upload to a single repo with branches.
+
+    Uploads root-level artifacts (README, graph, CSV, catbench, evals)
+    to main, then each BPW subdirectory to its branch.
+    """
     from huggingface_hub import HfApi
 
     api = HfApi()
     ignore = _get_ignore_patterns(small_only)
     model_dir = os.path.abspath(model_dir)
 
-    # Upload main branch: README, graph, CSV, catbench, evals
+    # Upload main branch: README + any shared artifacts
+    print("📤 Uploading main branch artifacts...")
+    artifacts = _find_shared_artifacts(model_dir)
     readme_path = os.path.join(model_dir, "README.md")
     if os.path.exists(readme_path):
-        print("📤 Uploading main branch artifacts...")
-        # Collect root-level files (not BPW subdirs)
-        artifacts = _find_shared_artifacts(model_dir)
-        if os.path.exists(readme_path):
-            artifacts.append("README.md")
+        artifacts.append("README.md")
 
-        # Upload each artifact individually to main
-        for item in artifacts:
-            path = os.path.join(model_dir, item)
-            if os.path.isdir(path):
-                print(f"  📁 {item}/")
-                api.upload_folder(
-                    folder_path=path,
-                    path_in_repo=item,
-                    repo_id=repo_id,
-                    commit_message=f"Upload {item}",
-                )
-            elif os.path.isfile(path):
-                print(f"  📄 {item}")
-                api.upload_file(
-                    path_or_fileobj=path,
-                    path_in_repo=item,
-                    repo_id=repo_id,
-                    commit_message=f"Upload {item}",
-                )
+    for item in artifacts:
+        path = os.path.join(model_dir, item)
+        if os.path.isdir(path):
+            print(f"  📁 {item}/")
+            api.upload_folder(
+                folder_path=path,
+                path_in_repo=item,
+                repo_id=repo_id,
+                commit_message=f"Upload {item}",
+            )
+        elif os.path.isfile(path):
+            print(f"  📄 {item}")
+            api.upload_file(
+                path_or_fileobj=path,
+                path_in_repo=item,
+                repo_id=repo_id,
+                commit_message=f"Upload {item}",
+            )
 
     # Upload each BPW to its branch
     for bpw in bpws:
@@ -226,32 +218,19 @@ def upload_single(
     model: str,
     bpws: List[str],
     small_only: bool = False,
-    template_name: Optional[str] = None,
-    include_graph: bool = True,
-    include_measurements: bool = True,
-    include_catbench: bool = False,
 ) -> None:
-    """Upload to separate per-BPW repos, generating per-BPW READMEs."""
+    """Upload to separate per-BPW repos.
+
+    Expects READMEs already generated in each BPW subdirectory
+    (via `ezexl3 readme --mode single`). Copies shared artifacts
+    (CSV, SVG, catbench, evals) into each BPW folder temporarily
+    for the upload, then cleans up.
+    """
     from huggingface_hub import HfApi
 
     api = HfApi()
     ignore = _get_ignore_patterns(small_only)
     model_dir = os.path.abspath(model_dir)
-
-    # Generate per-BPW READMEs into each BPW subdirectory
-    print("📝 Generating per-BPW READMEs...")
-    _generate_single_bitrate_readmes(
-        model_dir=model_dir,
-        user=user,
-        model=model,
-        bpws=bpws,
-        template_name=template_name,
-        include_graph=include_graph,
-        include_measurements=include_measurements,
-        include_catbench=include_catbench,
-    )
-
-    # Copy shared artifacts into each BPW folder, then upload
     artifacts = _find_shared_artifacts(model_dir)
 
     for bpw in bpws:
@@ -268,7 +247,7 @@ def upload_single(
             src = os.path.join(model_dir, item)
             dst = os.path.join(bpw_dir, item)
             if os.path.exists(dst):
-                continue  # don't overwrite existing files
+                continue
             try:
                 if os.path.isdir(src):
                     shutil.copytree(src, dst)
@@ -288,7 +267,7 @@ def upload_single(
             )
             print(f"  ✅ {repo_id} uploaded")
         finally:
-            # Clean up copied artifacts
+            # Clean up temporarily copied artifacts
             for dst in copied:
                 try:
                     if os.path.isdir(dst):
@@ -297,105 +276,6 @@ def upload_single(
                         os.remove(dst)
                 except Exception:
                     pass
-
-
-# ── Single-bitrate README generation ──────────────────────────────
-
-def _generate_single_bitrate_readmes(
-    model_dir: str,
-    user: str,
-    model: str,
-    bpws: List[str],
-    template_name: Optional[str] = None,
-    include_graph: bool = True,
-    include_measurements: bool = True,
-    include_catbench: bool = False,
-) -> None:
-    """Generate a modified README for each BPW in single-bitrate mode.
-
-    Writes README.md into each {model_dir}/{bpw}/ subdirectory.
-    """
-    from ezexl3.readme import run_readme
-
-    # First, generate the standard README into model_dir so we have a base
-    run_readme(
-        model_dir,
-        template_name=template_name,
-        interactive=False,
-        include_graph=include_graph,
-        include_measurements=include_measurements,
-        bpws_hint=bpws,
-        include_catbench=include_catbench,
-    )
-
-    base_readme = os.path.join(model_dir, "README.md")
-    if not os.path.exists(base_readme):
-        print("⚠️  Could not generate base README for single-bitrate mode")
-        return
-
-    with open(base_readme) as f:
-        base_content = f.read()
-
-    # The base README uses links like: USER/MODEL-exl3/tree/X.XXbpw
-    # We need to rewrite these for each BPW's standalone repo
-    quant_repo_base = f"{user}/{model}-exl3"
-
-    for bpw in bpws:
-        label = _format_bpw(bpw)
-        content = base_content
-
-        # 1. Update the YAML front matter base_model_relation metadata
-        #    The title in <h1> says "AUTHOR / MODEL" — append the BPW
-        content = re.sub(
-            r'(<h1>)(.*?)(</h1>)',
-            rf'\1\2 — {label}\3',
-            content,
-        )
-
-        # 2. Rewrite data table links:
-        #    FROM: href="https://huggingface.co/USER/MODEL-exl3/tree/X.XXbpw"
-        #    TO:   href="https://huggingface.co/USER/MODEL-X.XXbpw-exl3"
-        #    For the CURRENT bpw row, remove the <a> wrapper
-        for other_bpw in bpws:
-            other_label = _format_bpw(other_bpw)
-            old_href = f"https://huggingface.co/{quant_repo_base}/tree/{other_label}"
-            new_href = f"https://huggingface.co/{user}/{model}-{other_label}-exl3"
-
-            if other_bpw == bpw:
-                # Current BPW: replace <a> with bold plain text
-                content = re.sub(
-                    rf'<a class="link-style" href="{re.escape(old_href)}">{re.escape(other_label)}</a>',
-                    f"<b>{other_label}</b>",
-                    content,
-                )
-            else:
-                # Sibling BPW: update link target
-                content = content.replace(old_href, new_href)
-
-        # 3. Rewrite the download command
-        #    FROM: hf download USER/MODEL-exl3 --revision "X.XXbpw" --local-dir ./MODEL-exl3-X.XXbpw
-        #    TO:   hf download USER/MODEL-X.XXbpw-exl3 --local-dir ./MODEL-X.XXbpw-exl3
-        old_download = re.compile(
-            rf'hf download {re.escape(quant_repo_base)} --revision "{re.escape(label)}" --local-dir \S+'
-        )
-        new_download = f"hf download {user}/{model}-{label}-exl3 --local-dir ./{model}-{label}-exl3"
-        content = old_download.sub(new_download, content)
-
-        # Also handle the case where DEFAULT_REVISION was used (first bpw label in the template)
-        # Replace any remaining download references to the branched repo
-        content = re.sub(
-            rf'hf download {re.escape(quant_repo_base)} --revision "[^"]*" --local-dir \S+',
-            new_download,
-            content,
-        )
-
-        # Write into BPW subdirectory
-        bpw_dir = os.path.join(model_dir, bpw)
-        os.makedirs(bpw_dir, exist_ok=True)
-        out_path = os.path.join(bpw_dir, "README.md")
-        with open(out_path, "w") as f:
-            f.write(content)
-        print(f"  📄 {label}/README.md")
 
 
 # ── Main entry point ──────────────────────────────────────────────
@@ -407,13 +287,9 @@ def run_upload(
     private: bool = False,
     small_only: bool = False,
     create_only: bool = False,
-    template_name: Optional[str] = None,
-    include_graph: bool = True,
-    include_measurements: bool = True,
-    include_catbench: bool = False,
 ) -> int:
-    """Top-level upload orchestrator."""
-    from ezexl3.readme import _compute_defaults, get_hf_username
+    """Top-level upload orchestrator. Agnostic to folder contents."""
+    from ezexl3.readme import _compute_defaults
 
     model_dir = os.path.abspath(model_dir)
     model_name = os.path.basename(model_dir)
@@ -421,9 +297,8 @@ def run_upload(
     # Auth check
     hf_user = check_hf_auth()
 
-    # Compute metadata
+    # Compute model name from directory
     defaults = _compute_defaults(model_dir)
-    user = hf_user
     model = defaults.get("MODEL", model_name)
 
     # Normalize BPWs
@@ -440,13 +315,10 @@ def run_upload(
     print(f"{'='*60}\n")
 
     if mode == "branched":
-        repo_id = f"{user}/{model}-exl3"
-
-        # Create
+        repo_id = f"{hf_user}/{model}-exl3"
         create_repos_branched(repo_id, bpws, private=private)
 
         if not create_only:
-            # Upload
             monitor = BandwidthMonitor()
             monitor.start()
             try:
@@ -455,22 +327,13 @@ def run_upload(
                 monitor.stop()
 
     elif mode == "single":
-        # Create
-        create_repos_single(user, model, bpws, private=private)
+        create_repos_single(hf_user, model, bpws, private=private)
 
         if not create_only:
-            # Upload
             monitor = BandwidthMonitor()
             monitor.start()
             try:
-                upload_single(
-                    model_dir, user, model, bpws,
-                    small_only=small_only,
-                    template_name=template_name,
-                    include_graph=include_graph,
-                    include_measurements=include_measurements,
-                    include_catbench=include_catbench,
-                )
+                upload_single(model_dir, hf_user, model, bpws, small_only=small_only)
             finally:
                 monitor.stop()
 
