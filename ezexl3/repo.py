@@ -1193,6 +1193,24 @@ def _build_quant_forwarded(
     return forwarded
 
 
+def _build_quant_forwarded_for_bpw(
+    quant_args: List[str],
+    devices: List[int],
+    device_ratios: Optional[str],
+    bpw: str,
+    hq_bpws: Optional[set] = None,
+    hb8_bpws: Optional[set] = None,
+) -> List[str]:
+    """Build per-BPW forwarded args, injecting -hq and/or -hb 8 as needed."""
+    forwarded = _build_quant_forwarded(quant_args, devices, device_ratios)
+    bpw_key = bpw.strip()
+    if hq_bpws and bpw_key in hq_bpws and "-hq" not in forwarded:
+        forwarded.append("-hq")
+    if hb8_bpws and bpw_key in hb8_bpws and "-hb" not in forwarded:
+        forwarded += ["-hb", "8"]
+    return forwarded
+
+
 def run_quant_stage(
     model_dir: str,
     bpws: List[str],
@@ -1204,6 +1222,8 @@ def run_quant_stage(
     dry_run: bool = False,
     continue_on_error: bool = False,
     optimized_measure_layers: int = 2,
+    hq_bpws: Optional[set] = None,
+    hb8_bpws: Optional[set] = None,
 ) -> int:
     if optimized_measure_layers not in (1, 2, 3):
         raise ValueError("optimized_measure_layers must be one of: 1, 2, 3")
@@ -1212,18 +1232,32 @@ def run_quant_stage(
     bpws = [str(b) for b in bpws]
     devices = list(devices)
 
-    forwarded = _build_quant_forwarded(quant_args, devices, device_ratios)
-
-    rc = quant_run(
-        models=[model_dir],
-        bpws=bpws,
-        forwarded=forwarded,
-        out_template=out_template,
-        w_template=w_template,
-        dry_run=dry_run,
-        continue_on_error=continue_on_error,
-    )
-    return rc
+    has_per_bpw_flags = bool(hq_bpws or hb8_bpws)
+    if has_per_bpw_flags:
+        # Per-BPW flags require individual invocations
+        for bpw in bpws:
+            forwarded = _build_quant_forwarded_for_bpw(
+                quant_args, devices, device_ratios, bpw, hq_bpws, hb8_bpws,
+            )
+            ok = quant_run_one(
+                model_dir, bpw, forwarded,
+                out_tmpl=out_template, w_tmpl=w_template, dry_run=dry_run,
+            )
+            if not ok and not continue_on_error:
+                return 1
+    else:
+        forwarded = _build_quant_forwarded(quant_args, devices, device_ratios)
+        rc = quant_run(
+            models=[model_dir],
+            bpws=bpws,
+            forwarded=forwarded,
+            out_template=out_template,
+            w_template=w_template,
+            dry_run=dry_run,
+            continue_on_error=continue_on_error,
+        )
+        return rc
+    return 0
 
 
 def run_measure_single_bpw(
@@ -1793,6 +1827,8 @@ def run_repo(
     evals: Optional[Dict[str, Any]] = None,
     skip_kl: bool = False,
     skip_ppl: bool = False,
+    hq_bpws: Optional[set] = None,
+    hb8_bpws: Optional[set] = None,
 ) -> int:
     bpw_plan = _plan_repo_bpws(bpws)
     quant_bpws = bpw_plan["quant_integer_queue"]
@@ -1811,7 +1847,6 @@ def run_repo(
         # Quantize each integer BPW, then immediately verify KL+PPL
         # before moving to the next. Halts on any failure.
         model_dir = os.path.abspath(model_dir)
-        forwarded = _build_quant_forwarded(quant_args, devices, device_ratios)
         ppl_rows, measure_devices = _parse_measure_args(measure_args or [], devices)
         db_path, _out_csv = _init_measure_db(model_dir, measure_devices)
 
@@ -1825,6 +1860,9 @@ def run_repo(
         for i, bpw in enumerate(quant_bpws):
             print(f"\n--- [{i+1}/{len(quant_bpws)}] BPW {bpw} ---")
 
+            forwarded = _build_quant_forwarded_for_bpw(
+                quant_args, devices, device_ratios, str(bpw), hq_bpws, hb8_bpws,
+            )
             ok = quant_run_one(
                 model_dir, str(bpw), forwarded,
                 out_tmpl="{model}/{bpw}",
@@ -1902,6 +1940,8 @@ def run_repo(
                 devices=devices,
                 device_ratios=device_ratios,
                 quant_args=quant_args,
+                hq_bpws=hq_bpws,
+                hb8_bpws=hb8_bpws,
             )
             if rc != 0:
                 return rc

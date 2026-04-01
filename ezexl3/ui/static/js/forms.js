@@ -84,22 +84,21 @@ function createFieldEl(field) {
     toggle.appendChild(slider);
     labelRow.appendChild(toggle);
   }
-  if (field.headerToggle) {
-    const ht = field.headerToggle;
-    const wrap = document.createElement("label");
-    wrap.className = "header-toggle";
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.id = `field-${ht.name}`;
-    wrap.appendChild(cb);
-    const slider = document.createElement("span");
-    slider.className = "toggle-slider";
-    wrap.appendChild(slider);
-    const text = document.createElement("span");
-    text.className = "header-toggle-label";
-    text.textContent = ht.label;
-    wrap.appendChild(text);
-    labelRow.appendChild(wrap);
+  if (field.bpwPaintFlags) {
+    const paintWrap = document.createElement("div");
+    paintWrap.className = "bpw-paint-buttons";
+    for (const pf of field.bpwPaintFlags) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "bpw-paint-btn";
+      btn.dataset.paintFlag = pf.name;
+      btn.dataset.paintColor = pf.color;
+      btn.textContent = pf.label;
+      btn.style.setProperty("--paint-color", pf.color);
+      btn.addEventListener("click", () => togglePaintMode(field.name, pf.name, btn));
+      paintWrap.appendChild(btn);
+    }
+    labelRow.appendChild(paintWrap);
   }
   row.appendChild(labelRow);
 
@@ -192,6 +191,28 @@ function createFieldEl(field) {
     if (field.placeholder) input.placeholder = field.placeholder;
     if (field.default !== undefined) input.value = field.default;
     row.appendChild(input);
+  } else if (field.type === "csv" && field.bpwPaintFlags) {
+    // Tokenized BPW input with paint-mode flag highlighting
+    const wrap = document.createElement("div");
+    wrap.className = "bpw-token-wrap";
+
+    input = document.createElement("input");
+    input.type = "text";
+    input.className = "form-input bpw-token-input";
+    input.id = `field-${field.name}`;
+    if (field.placeholder) input.placeholder = field.placeholder;
+
+    const tokenDisplay = document.createElement("div");
+    tokenDisplay.className = "bpw-token-display";
+    tokenDisplay.id = `tokens-${field.name}`;
+
+    // Sync: when input changes, rebuild tokens
+    input.addEventListener("input", () => rebuildBpwTokens(field.name, field.bpwPaintFlags));
+    input.addEventListener("change", () => rebuildBpwTokens(field.name, field.bpwPaintFlags));
+
+    wrap.appendChild(input);
+    wrap.appendChild(tokenDisplay);
+    row.appendChild(wrap);
   } else {
     // text, csv
     input = document.createElement("input");
@@ -225,6 +246,118 @@ function createFieldEl(field) {
   }
 
   return row;
+}
+
+
+// ── BPW Paint Mode System ────────────────────────────────────────
+// Per-BPW flag state: { fieldName: { bpwStr: Set<flagName> } }
+const bpwFlagState = {};
+// Active paint mode: { fieldName, flagName } or null
+let activePaint = null;
+
+function togglePaintMode(fieldName, flagName, btn) {
+  const allBtns = btn.parentElement.querySelectorAll(".bpw-paint-btn");
+
+  if (activePaint && activePaint.fieldName === fieldName && activePaint.flagName === flagName) {
+    // Deactivate current paint mode
+    btn.classList.remove("active");
+    activePaint = null;
+  } else {
+    // Deactivate any other, activate this one
+    allBtns.forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    activePaint = { fieldName, flagName };
+  }
+}
+
+function rebuildBpwTokens(fieldName, paintFlags) {
+  const input = document.getElementById(`field-${fieldName}`);
+  const display = document.getElementById(`tokens-${fieldName}`);
+  if (!input || !display) return;
+
+  const raw = input.value.replace(/\s+/g, "");
+  const parts = raw.split(",").filter(Boolean);
+
+  // Initialize state for this field if needed
+  if (!bpwFlagState[fieldName]) bpwFlagState[fieldName] = {};
+  // Clean up flags for BPWs no longer in the input
+  const currentSet = new Set(parts);
+  for (const key of Object.keys(bpwFlagState[fieldName])) {
+    if (!currentSet.has(key)) delete bpwFlagState[fieldName][key];
+  }
+
+  display.innerHTML = "";
+
+  parts.forEach((bpw, idx) => {
+    const token = document.createElement("span");
+    token.className = "bpw-token";
+    token.textContent = bpw;
+    token.dataset.bpw = bpw;
+
+    // Apply flag colors
+    const flags = bpwFlagState[fieldName][bpw] || new Set();
+    applyTokenColor(token, flags, paintFlags);
+
+    token.addEventListener("click", () => onTokenClick(fieldName, bpw, paintFlags));
+    display.appendChild(token);
+
+    // Add comma separator (not the last one)
+    if (idx < parts.length - 1) {
+      const sep = document.createElement("span");
+      sep.className = "bpw-token-sep";
+      sep.textContent = ",";
+      display.appendChild(sep);
+    }
+  });
+}
+
+function onTokenClick(fieldName, bpw, paintFlags) {
+  if (!bpwFlagState[fieldName]) bpwFlagState[fieldName] = {};
+  if (!bpwFlagState[fieldName][bpw]) bpwFlagState[fieldName][bpw] = new Set();
+
+  const flags = bpwFlagState[fieldName][bpw];
+
+  if (activePaint && activePaint.fieldName === fieldName) {
+    // Toggle the active paint flag on this BPW
+    if (flags.has(activePaint.flagName)) {
+      flags.delete(activePaint.flagName);
+    } else {
+      flags.add(activePaint.flagName);
+    }
+  } else {
+    // No paint mode active: clear all flags on this token
+    flags.clear();
+  }
+
+  rebuildBpwTokens(fieldName, paintFlags);
+}
+
+function applyTokenColor(token, flags, paintFlags) {
+  // Reset
+  token.style.backgroundColor = "";
+  token.style.color = "";
+  token.classList.remove("bpw-token-flagged");
+
+  if (flags.size === 0) return;
+
+  token.classList.add("bpw-token-flagged");
+  const flagNames = [...flags];
+
+  if (flagNames.length === 1) {
+    const pf = paintFlags.find(p => p.name === flagNames[0]);
+    if (pf) {
+      token.style.backgroundColor = pf.color;
+      token.style.color = "#fff";
+    }
+  } else if (flagNames.length >= 2) {
+    // Both flags: teal/cyan
+    token.style.backgroundColor = "#00897b";
+    token.style.color = "#fff";
+  }
+}
+
+function getBpwFlags(fieldName) {
+  return bpwFlagState[fieldName] || {};
 }
 
 
@@ -262,14 +395,6 @@ function collectArgs() {
     const el = document.getElementById(`field-${field.name}`);
     if (!el) continue;
 
-    // Collect headerToggle if checked
-    if (field.headerToggle) {
-      const htEl = document.getElementById(`field-${field.headerToggle.name}`);
-      if (htEl && htEl.checked) {
-        args.push(field.headerToggle.flag);
-      }
-    }
-
     if (field.type === "boolean") {
       if (field.invertFlag) {
         // Inverted: emit flag when UNchecked (e.g. --no-kl when KL toggle is off)
@@ -304,6 +429,18 @@ function collectArgs() {
     if (field.type === "csv") {
       // Normalize: strip spaces around commas so "-d 0, 1" becomes "-d 0,1"
       args.push(field.flag, val.replace(/\s*,\s*/g, ",").replace(/\s+/g, ","));
+      // Emit per-BPW paint flags (e.g. -hq 4,6 -hb8 8)
+      if (field.bpwPaintFlags) {
+        const flagState = getBpwFlags(field.name);
+        for (const pf of field.bpwPaintFlags) {
+          const flagged = Object.entries(flagState)
+            .filter(([, flags]) => flags.has(pf.name))
+            .map(([bpw]) => bpw);
+          if (flagged.length > 0) {
+            args.push(pf.flag, flagged.join(","));
+          }
+        }
+      }
     } else if (field.type === "select" || field.type === "template") {
       if (val) {
         args.push(field.flag, val);

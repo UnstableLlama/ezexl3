@@ -1,7 +1,7 @@
 import argparse
 import sys
 from dataclasses import dataclass
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Set
 from ezexl3 import __version__
 
 @dataclass
@@ -123,6 +123,29 @@ def _parse_layers(value: int) -> int:
         raise SystemExit("--layers must be one of: 1, 2, 3")
     return value
 
+
+def _parse_per_bpw_flag(
+    flag_val: Optional[List[str]], all_bpws: List[str]
+) -> Set[str]:
+    """Parse a per-BPW flag (like -hq or -hb8) into a set of BPW strings.
+
+    - None  → flag not provided → empty set
+    - []    → bare flag (no args) → applies to ALL BPWs
+    - ['4,6,8'] or ['4','6','8'] → specific BPWs
+    """
+    if flag_val is None:
+        return set()
+    if len(flag_val) == 0:
+        # Bare flag: normalize all_bpws to the same string form
+        return {_norm_bpw(b) for raw in all_bpws for b in raw.split(",")}
+    # Explicit BPW list: flatten comma-separated values
+    return {_norm_bpw(b) for raw in flag_val for b in raw.split(",")}
+
+
+def _norm_bpw(b: str) -> str:
+    """Normalize a BPW string for consistent comparison (strip whitespace)."""
+    return b.strip()
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="ezexl3",
@@ -151,7 +174,14 @@ def build_parser() -> argparse.ArgumentParser:
             default=None,
             help="Device ratios for quantization only. Example: -r 1,1 (optional)",
         )
-        p_sub.add_argument("-hq", action="store_true", help="Enable high-quality quantization (exllamav3 -hq)")
+        p_sub.add_argument("-hq", nargs="*", default=None,
+                           help="Enable high-quality quantization (exllamav3 -hq). "
+                                "Bare flag applies to all BPWs; with args applies to listed BPWs only. "
+                                "Example: -hq 4,6,8")
+        p_sub.add_argument("-hb8", nargs="*", default=None,
+                           help="Use 8-bit head quantization (exllamav3 -hb 8) instead of default 6. "
+                                "Bare flag applies to all BPWs; with args applies to listed BPWs only. "
+                                "Example: -hb8 6,8")
         p_sub.add_argument("--no-cleanup", "-nc", action="store_true", help="Keep w-* working dirs and logs")
         p_sub.add_argument("--no-readme", action="store_true", help="Skip README stage")
         p_sub.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
@@ -198,7 +228,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Template for output directory. Fields: {model}, {model_name}, {bpw}")
     q.add_argument("--w-template", default="{model}/w-{bpw}",
                    help="Template for working directory. Fields: {model}, {model_name}, {bpw}")
-    q.add_argument("-hq", action="store_true", help="Enable high-quality quantization (exllamav3 -hq)")
+    q.add_argument("-hq", nargs="*", default=None,
+                   help="Enable high-quality quantization (exllamav3 -hq). "
+                        "Bare flag applies to all BPWs; with args applies to listed BPWs only.")
+    q.add_argument("-hb8", nargs="*", default=None,
+                   help="Use 8-bit head quantization (exllamav3 -hb 8) instead of default 6. "
+                        "Bare flag applies to all BPWs; with args applies to listed BPWs only.")
     q.add_argument("--dry", action="store_true", help="Print what would run, but do not execute.")
     q.add_argument("--continue-on-error", action="store_true", help="Keep going after failures.")
     q.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
@@ -346,9 +381,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     device_ratios_str = ",".join(device_ratios) if device_ratios else None
     layers = _parse_layers(getattr(args, "layers", 2)) if hasattr(args, "layers") else 2
 
-    # Inject -hq into quant_args when flag is set
-    if getattr(args, "hq", False) and "-hq" not in pt.quant_args:
-        pt.quant_args.append("-hq")
+    # Build per-BPW flag sets from -hq and -hb8
+    hq_bpws = _parse_per_bpw_flag(getattr(args, "hq", None), args.bpws)
+    hb8_bpws = _parse_per_bpw_flag(getattr(args, "hb8", None), args.bpws)
 
     # Collect enabled eval flags into a dict: {name: arg_value}
     _EVAL_FLAG_NAMES = ["diversity", "humaneval", "ifbench", "longctx", "mmlu", "perf"]
@@ -390,6 +425,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     evals=enabled_evals or None,
                     skip_kl=getattr(args, "no_kl", False),
                     skip_ppl=getattr(args, "no_ppl", False),
+                    hq_bpws=hq_bpws,
+                    hb8_bpws=hb8_bpws,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
@@ -440,6 +477,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     dry_run=args.dry,
                     continue_on_error=args.continue_on_error,
                     optimized_measure_layers=layers,
+                    hq_bpws=hq_bpws,
+                    hb8_bpws=hb8_bpws,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)

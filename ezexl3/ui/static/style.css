@@ -459,39 +459,80 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   margin-bottom: 4px;
 }
 .form-label-row .form-label { margin-bottom: 0; }
-.header-toggle {
+/* ── BPW Paint Mode Buttons ─────────────────────────────────────── */
+.bpw-paint-buttons {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
+  gap: 5px;
+  margin-left: auto;
 }
-.header-toggle input[type="checkbox"] { display: none; }
-.header-toggle .toggle-slider {
-  width: 28px;
-  height: 16px;
-  border-radius: 8px;
-}
-.header-toggle .toggle-slider::after {
-  width: 10px;
-  height: 10px;
-  top: 2px;
-  left: 2px;
-}
-.header-toggle input:checked + .toggle-slider {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-.header-toggle input:checked + .toggle-slider::after {
-  transform: translateX(12px);
-  background: #fff;
-}
-.header-toggle-label {
+.bpw-paint-btn {
+  padding: 2px 8px;
   font-size: 11px;
-  color: var(--text-dim);
-  font-weight: 500;
+  font-weight: 600;
+  font-family: inherit;
+  border: 1.5px solid var(--paint-color, var(--border));
+  border-radius: 4px;
+  background: transparent;
+  color: var(--paint-color, var(--text-muted));
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  user-select: none;
+  line-height: 1.4;
 }
-.header-toggle input:checked ~ .header-toggle-label {
-  color: var(--accent);
+.bpw-paint-btn:hover {
+  background: color-mix(in srgb, var(--paint-color) 15%, transparent);
+}
+.bpw-paint-btn.active {
+  background: var(--paint-color);
+  color: #fff;
+  border-color: var(--paint-color);
+}
+
+/* ── BPW Token Display ─────────────────────────────────────────── */
+.bpw-token-wrap {
+  max-width: 460px;
+}
+.bpw-token-input {
+  width: 100%;
+  margin-bottom: 6px;
+}
+.bpw-token-display {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0;
+  min-height: 26px;
+  padding: 2px 0;
+}
+.bpw-token {
+  display: inline-block;
+  padding: 2px 6px;
+  font-size: 13px;
+  font-family: inherit;
+  font-weight: 500;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background-color 0.12s, color 0.12s;
+  user-select: none;
+  line-height: 1.5;
+  color: var(--text);
+  background: transparent;
+}
+.bpw-token:hover {
+  background: var(--bg-surface);
+}
+.bpw-token-flagged {
+  /* Colors set inline by JS — this class just adds the visual weight */
+  border-radius: 3px;
+}
+.bpw-token-flagged:hover {
+  filter: brightness(1.15);
+}
+.bpw-token-sep {
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 0 1px;
+  user-select: none;
 }
 .field-toggle {
   display: flex;
