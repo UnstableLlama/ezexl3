@@ -124,7 +124,10 @@ def create_repos_branched(
     for bpw in bpws:
         label = _format_bpw(bpw)
         print(f"  🌿 Creating branch: {label}")
-        api.create_branch(repo_id, branch=label, exist_ok=True)
+        try:
+            api.create_branch(repo_id, branch=label, exist_ok=True)
+        except Exception as e:
+            print(f"  ⚠️  Could not create branch {label}: {e}")
 
     print(f"✅ Repo ready with {len(bpws)} branches")
 
@@ -139,13 +142,18 @@ def create_repos_single(
     from huggingface_hub import HfApi
 
     api = HfApi()
+    created = 0
     for bpw in bpws:
         label = _format_bpw(bpw)
         repo_id = f"{user}/{model}-{label}-exl3"
         print(f"📦 Creating repo: {repo_id} (private={private})")
-        api.create_repo(repo_id, private=private, exist_ok=True)
+        try:
+            api.create_repo(repo_id, private=private, exist_ok=True)
+            created += 1
+        except Exception as e:
+            print(f"  ⚠️  Could not create {repo_id}: {e}")
 
-    print(f"✅ Created {len(bpws)} repos")
+    print(f"✅ Created {created}/{len(bpws)} repos")
 
 
 # ── Upload ────────────────────────────────────────────────────────
@@ -168,30 +176,36 @@ def upload_branched(
     model_dir = os.path.abspath(model_dir)
 
     # Upload main branch: README + any shared artifacts
-    print("📤 Uploading main branch artifacts...")
     artifacts = _find_shared_artifacts(model_dir)
     readme_path = os.path.join(model_dir, "README.md")
     if os.path.exists(readme_path):
         artifacts.append("README.md")
 
-    for item in artifacts:
-        path = os.path.join(model_dir, item)
-        if os.path.isdir(path):
-            print(f"  📁 {item}/")
-            api.upload_folder(
-                folder_path=path,
-                path_in_repo=item,
-                repo_id=repo_id,
-                commit_message=f"Upload {item}",
-            )
-        elif os.path.isfile(path):
-            print(f"  📄 {item}")
-            api.upload_file(
-                path_or_fileobj=path,
-                path_in_repo=item,
-                repo_id=repo_id,
-                commit_message=f"Upload {item}",
-            )
+    if artifacts:
+        print("📤 Uploading main branch artifacts...")
+        for item in artifacts:
+            path = os.path.join(model_dir, item)
+            try:
+                if os.path.isdir(path):
+                    print(f"  📁 {item}/")
+                    api.upload_folder(
+                        folder_path=path,
+                        path_in_repo=item,
+                        repo_id=repo_id,
+                        commit_message=f"Upload {item}",
+                    )
+                elif os.path.isfile(path):
+                    print(f"  📄 {item}")
+                    api.upload_file(
+                        path_or_fileobj=path,
+                        path_in_repo=item,
+                        repo_id=repo_id,
+                        commit_message=f"Upload {item}",
+                    )
+            except Exception as e:
+                print(f"  ⚠️  Failed to upload {item}: {e}")
+    else:
+        print("ℹ️  No shared artifacts found in model root")
 
     # Upload each BPW to its branch
     for bpw in bpws:
@@ -202,14 +216,17 @@ def upload_branched(
             continue
 
         print(f"📤 Uploading {label} to branch...")
-        api.upload_folder(
-            folder_path=bpw_dir,
-            repo_id=repo_id,
-            revision=label,
-            commit_message=f"Upload {label} quantization",
-            ignore_patterns=ignore or None,
-        )
-        print(f"  ✅ {label} uploaded")
+        try:
+            api.upload_folder(
+                folder_path=bpw_dir,
+                repo_id=repo_id,
+                revision=label,
+                commit_message=f"Upload {label} quantization",
+                ignore_patterns=ignore or None,
+            )
+            print(f"  ✅ {label} uploaded")
+        except Exception as e:
+            print(f"  🔴 Failed to upload {label}: {e}")
 
 
 def upload_single(
@@ -266,6 +283,8 @@ def upload_single(
                 ignore_patterns=ignore or None,
             )
             print(f"  ✅ {repo_id} uploaded")
+        except Exception as e:
+            print(f"  🔴 Failed to upload {repo_id}: {e}")
         finally:
             # Clean up temporarily copied artifacts
             for dst in copied:
