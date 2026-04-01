@@ -46,11 +46,24 @@ def _write_saved_metadata(model_dir: str, meta: Dict) -> None:
 
 
 def _compute_defaults(model_dir: str) -> Dict[str, str]:
-    """Compute sensible default metadata from the model directory name."""
+    """Compute sensible default metadata from the model directory name.
+
+    HF convention: directories are named Author_Model (underscore replaces
+    the HF slash). e.g. Qwen_Qwen3.5-0.8B → author=Qwen, model=Qwen3.5-0.8B.
+    Falls back to splitting on first hyphen if no underscore is present.
+    """
     model_name = os.path.basename(os.path.abspath(model_dir))
-    parts = model_name.split("-", 1)
-    author = parts[0] if len(parts) > 1 else "AUTHOR"
-    model = parts[1] if len(parts) > 1 else model_name
+    if "_" in model_name:
+        parts = model_name.split("_", 1)
+        author = parts[0]
+        model = parts[1]
+    elif "-" in model_name:
+        parts = model_name.split("-", 1)
+        author = parts[0]
+        model = parts[1]
+    else:
+        author = "AUTHOR"
+        model = model_name
     user = get_hf_username()
     repolink = f"https://huggingface.co/{author}/{model}"
     return {"AUTHOR": author, "MODEL": model, "REPOLINK": repolink, "USER": user}
