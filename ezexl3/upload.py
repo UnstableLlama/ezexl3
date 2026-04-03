@@ -367,12 +367,22 @@ def run_upload(
 
     print(f"\n{'='*60}")
     print(f"Upload: {model_name}")
-    print(f"Mode: {mode}")
+    print(f"Mode: {'BRANCHED (single repo, branches per BPW)' if mode == 'branched' else 'SINGLE (separate repo per BPW)'}")
     print(f"BPWs: {', '.join(bpw_labels)}")
     print(f"Private: {private}")
     print(f"Small files only: {small_only}")
     if create_only:
         print(f"Action: Create repos only")
+
+    # Show exactly what repos will be created
+    if mode == "branched":
+        repo_id = f"{hf_user}/{model}-exl3"
+        print(f"\nRepo: {repo_id}")
+        print(f"Branches: {', '.join(bpw_labels)}")
+    else:
+        print(f"\nRepos:")
+        for label in bpw_labels:
+            print(f"  {hf_user}/{model}-{label}-exl3")
     print(f"{'='*60}\n")
 
     if mode == "branched":
