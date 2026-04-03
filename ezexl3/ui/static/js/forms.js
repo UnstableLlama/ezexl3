@@ -84,22 +84,6 @@ function createFieldEl(field) {
     toggle.appendChild(slider);
     labelRow.appendChild(toggle);
   }
-  if (field.bpwPaintFlags) {
-    const paintWrap = document.createElement("div");
-    paintWrap.className = "bpw-paint-buttons";
-    for (const pf of field.bpwPaintFlags) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "bpw-paint-btn";
-      btn.dataset.paintFlag = pf.name;
-      btn.dataset.paintColor = pf.color;
-      btn.textContent = pf.label;
-      btn.style.setProperty("--paint-color", pf.color);
-      btn.addEventListener("click", () => togglePaintMode(field.name, pf.name, btn));
-      paintWrap.appendChild(btn);
-    }
-    labelRow.appendChild(paintWrap);
-  }
   row.appendChild(labelRow);
 
   if (field.help) {
@@ -298,7 +282,10 @@ function rebuildBpwTokens(fieldName, paintFlags) {
     const flags = bpwFlagState[fieldName][bpw] || new Set();
     applyTokenColor(token, flags, paintFlags);
 
-    token.addEventListener("click", () => onTokenClick(fieldName, bpw, paintFlags));
+    token.addEventListener("click", () => {
+      if (jobRunning) return;
+      onTokenClick(fieldName, bpw, paintFlags);
+    });
     display.appendChild(token);
 
     // Add comma separator (not the last one)
@@ -309,6 +296,32 @@ function rebuildBpwTokens(fieldName, paintFlags) {
       display.appendChild(sep);
     }
   });
+
+  // Append paint buttons inline after the tokens
+  if (parts.length > 0) {
+    const paintWrap = document.createElement("div");
+    paintWrap.className = "bpw-paint-buttons";
+    for (const pf of paintFlags) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "bpw-paint-btn";
+      btn.dataset.paintFlag = pf.name;
+      btn.dataset.paintColor = pf.color;
+      btn.textContent = pf.label;
+      btn.style.setProperty("--paint-color", pf.color);
+      if (jobRunning) btn.disabled = true;
+      // Restore active state if this paint mode is currently on
+      if (activePaint && activePaint.fieldName === fieldName && activePaint.flagName === pf.name) {
+        btn.classList.add("active");
+      }
+      btn.addEventListener("click", () => {
+        if (jobRunning) return;
+        togglePaintMode(fieldName, pf.name, btn);
+      });
+      paintWrap.appendChild(btn);
+    }
+    display.appendChild(paintWrap);
+  }
 }
 
 function onTokenClick(fieldName, bpw, paintFlags) {
@@ -358,6 +371,31 @@ function applyTokenColor(token, flags, paintFlags) {
 
 function getBpwFlags(fieldName) {
   return bpwFlagState[fieldName] || {};
+}
+
+
+function syncFormLockState() {
+  const container = document.getElementById("form-fields");
+  if (!container) return;
+
+  // Disable/enable all form inputs
+  for (const el of container.querySelectorAll("input, select, button.browse-btn")) {
+    el.disabled = jobRunning;
+  }
+  // Disable/enable all toggle sliders
+  for (const el of container.querySelectorAll(".toggle-item input, .field-toggle input")) {
+    el.disabled = jobRunning;
+  }
+  // Disable/enable paint buttons
+  for (const btn of document.querySelectorAll(".bpw-paint-btn")) {
+    btn.disabled = jobRunning;
+  }
+  // Disable/enable token clicks via CSS class
+  for (const display of document.querySelectorAll(".bpw-token-display")) {
+    display.classList.toggle("locked", jobRunning);
+  }
+  // Visual dim
+  container.classList.toggle("form-locked", jobRunning);
 }
 
 
