@@ -291,6 +291,7 @@ function updateRunButton() {
   }
   if (typeof updateChatButton === "function") updateChatButton();
   if (typeof syncMetaLockState === "function") syncMetaLockState();
+  if (typeof syncFormLockState === "function") syncFormLockState();
 }
 
 

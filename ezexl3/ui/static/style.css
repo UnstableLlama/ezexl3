@@ -461,9 +461,10 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
 .form-label-row .form-label { margin-bottom: 0; }
 /* ── BPW Paint Mode Buttons ─────────────────────────────────────── */
 .bpw-paint-buttons {
-  display: flex;
+  display: inline-flex;
   gap: 5px;
-  margin-left: auto;
+  margin-left: 8px;
+  vertical-align: middle;
 }
 .bpw-paint-btn {
   padding: 2px 8px;
@@ -533,6 +534,28 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   color: var(--text-dim);
   padding: 0 1px;
   user-select: none;
+}
+.bpw-token-display.locked .bpw-token {
+  cursor: default;
+  pointer-events: none;
+}
+.bpw-paint-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* ── Form lock during run ──────────────────────────────────────── */
+.form-locked .form-input,
+.form-locked .form-select,
+.form-locked .browse-btn {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.form-locked .toggle-item,
+.form-locked .field-toggle {
+  opacity: 0.45;
+  pointer-events: none;
 }
 .field-toggle {
   display: flex;
