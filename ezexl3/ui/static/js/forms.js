@@ -377,15 +377,15 @@ function applyTokenColor(token, flags, paintFlags) {
       // 2px color, 3px black — consistent sizing, black slightly larger
       const dir = pf.name === "hq" ? "180deg" : "90deg";
       token.style.backgroundImage =
-        `repeating-linear-gradient(${dir}, ${pf.color} 0px, ${pf.color} 2px, #000 2px, #000 5px)`;
+        `repeating-linear-gradient(${dir}, ${pf.color} 0px, ${pf.color} 2px, #000 2px, #000 6px)`;
     }
   } else if (flagNames.length >= 2) {
     // Both flags: teal/cyan with checkerboard (intersection of horizontal + vertical)
     const c = "#00897b";
     token.style.color = "#fff";
     token.style.backgroundImage =
-      `repeating-linear-gradient(180deg, ${c} 0px, ${c} 2px, transparent 2px, transparent 5px), ` +
-      `repeating-linear-gradient(90deg, ${c} 0px, ${c} 2px, transparent 2px, transparent 5px)`;
+      `repeating-linear-gradient(180deg, ${c} 0px, ${c} 2px, transparent 2px, transparent 6px), ` +
+      `repeating-linear-gradient(90deg, ${c} 0px, ${c} 2px, transparent 2px, transparent 6px)`;
     token.style.backgroundColor = "#000";
   }
 }
