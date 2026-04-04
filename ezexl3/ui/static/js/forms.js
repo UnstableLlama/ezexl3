@@ -380,10 +380,14 @@ function applyTokenColor(token, flags, paintFlags) {
       token.style.backgroundImage = stripe;
     }
   } else if (flagNames.length >= 2) {
-    // Both flags: teal/cyan with diagonal stripes
+    // Both flags: teal/cyan with checkerboard (intersection of horizontal + vertical)
     const c = "#00897b";
+    const cl = lighten(c, 0.25);
     token.style.color = "#fff";
-    token.style.backgroundImage = `repeating-linear-gradient(135deg, ${c} 0px, ${c} 3px, ${lighten(c, 0.25)} 3px, ${lighten(c, 0.25)} 5px)`;
+    token.style.backgroundImage =
+      `repeating-linear-gradient(180deg, transparent 0px, transparent 3px, ${cl}44 3px, ${cl}44 5px), ` +
+      `repeating-linear-gradient(90deg, transparent 0px, transparent 3px, ${cl}44 3px, ${cl}44 5px)`;
+    token.style.backgroundColor = c;
   }
 }
 
