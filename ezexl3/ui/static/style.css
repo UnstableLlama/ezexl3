@@ -492,13 +492,13 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   background:
     repeating-linear-gradient(180deg,
       var(--paint-color) 0px, var(--paint-color) 2px,
-      #000 2px, #000 5px);
+      #000 2px, #000 6px);
 }
 .bpw-paint-btn.active[data-paint-flag="hb8"] {
   background:
     repeating-linear-gradient(90deg,
       var(--paint-color) 0px, var(--paint-color) 2px,
-      #000 2px, #000 5px);
+      #000 2px, #000 6px);
 }
 
 /* ── BPW Token Display ─────────────────────────────────────────── */
