@@ -491,16 +491,14 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
 .bpw-paint-btn.active[data-paint-flag="hq"] {
   background:
     repeating-linear-gradient(180deg,
-      var(--paint-color) 0px, var(--paint-color) 3px,
-      transparent 3px, transparent 5px),
-    #000;
+      var(--paint-color) 0px, var(--paint-color) 2px,
+      #000 2px, #000 5px);
 }
 .bpw-paint-btn.active[data-paint-flag="hb8"] {
   background:
     repeating-linear-gradient(90deg,
-      var(--paint-color) 0px, var(--paint-color) 3px,
-      transparent 3px, transparent 5px),
-    #000;
+      var(--paint-color) 0px, var(--paint-color) 2px,
+      #000 2px, #000 5px);
 }
 
 /* ── BPW Token Display ─────────────────────────────────────────── */
