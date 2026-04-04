@@ -331,6 +331,12 @@ function onTokenClick(fieldName, bpw, paintFlags) {
   const flags = bpwFlagState[fieldName][bpw];
 
   if (activePaint && activePaint.fieldName === fieldName) {
+    // -opt can only be painted on fractional BPWs
+    const paintDef = paintFlags.find(p => p.name === activePaint.flagName);
+    if (paintDef && paintDef.fractionalOnly && !bpw.includes(".")) {
+      // Silently ignore click on non-fractional BPW for fractional-only flags
+      return;
+    }
     // Toggle the active paint flag on this BPW
     if (flags.has(activePaint.flagName)) {
       flags.delete(activePaint.flagName);
@@ -361,15 +367,30 @@ function applyTokenColor(token, flags, paintFlags) {
   token.style.backgroundColor = "";
   token.style.backgroundImage = "";
   token.style.color = "";
+  token.style.border = "";
   token.classList.remove("bpw-token-flagged");
 
   if (flags.size === 0) return;
 
   token.classList.add("bpw-token-flagged");
-  const flagNames = [...flags];
 
-  if (flagNames.length === 1) {
-    const pf = paintFlags.find(p => p.name === flagNames[0]);
+  // Separate border-only flags (opt) from stripe flags (hq, hb8)
+  const hasOpt = flags.has("opt");
+  const stripeFlags = [...flags].filter(f => f !== "opt");
+
+  // Apply red border for -opt (additive — stacks with stripe patterns)
+  if (hasOpt) {
+    token.style.border = "2px solid #d94a4a";
+  }
+
+  if (stripeFlags.length === 0) {
+    // -opt only: red border, no stripe fill
+    if (hasOpt) token.style.color = "";
+    return;
+  }
+
+  if (stripeFlags.length === 1) {
+    const pf = paintFlags.find(p => p.name === stripeFlags[0]);
     if (pf) {
       token.style.color = "#fff";
       // Accessibility: stripe patterns for color-impaired distinction
@@ -379,8 +400,8 @@ function applyTokenColor(token, flags, paintFlags) {
       token.style.backgroundImage =
         `repeating-linear-gradient(${dir}, ${pf.color} 0px, ${pf.color} 2px, #000 2px, #000 6px)`;
     }
-  } else if (flagNames.length >= 2) {
-    // Both flags: teal/cyan with checkerboard (intersection of horizontal + vertical)
+  } else if (stripeFlags.length >= 2) {
+    // Both hq + hb8: teal/cyan with checkerboard (intersection of horizontal + vertical)
     const c = "#00897b";
     token.style.color = "#fff";
     token.style.backgroundImage =

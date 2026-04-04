@@ -354,14 +354,14 @@ class InterleavedPipelineTests(unittest.TestCase):
 
         self.assertTrue(mock_run_repo.call_args.kwargs["verify"])
 
-    def test_verify_with_optimized_bpws(self):
-        """Optimized (fractional) BPWs are quantized, optimized, then verified."""
+    def test_verify_with_fractional_bpws_no_opt(self):
+        """Fractional BPWs without -opt are quantized directly (no optimization)."""
         patches = self._base_patches()
         mocks = {k: p.start() for k, p in patches.items()}
         try:
             rc = repo.run_repo(
                 model_dir="/tmp/model",
-                bpws=["3.5"],  # fractional → needs integer 3,4 + optimized 3.5
+                bpws=["3.5"],
                 devices=[0, 1],
                 device_ratios=None,
                 quant_args=[],
@@ -376,9 +376,34 @@ class InterleavedPipelineTests(unittest.TestCase):
                 p.stop()
 
         self.assertEqual(rc, 0)
-        # Optimized stage was called
+        mocks["_run_optimized_opt_stage"].assert_not_called()
+        measured_bpws = [c.kwargs["bpw"] for c in mocks["run_measure_single_bpw"].call_args_list]
+        self.assertIn("3.5", measured_bpws)
+
+    def test_verify_with_optimized_bpws(self):
+        """Fractional BPWs with -opt are quantized, optimized, then verified."""
+        patches = self._base_patches()
+        mocks = {k: p.start() for k, p in patches.items()}
+        try:
+            rc = repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["3.5"],
+                devices=[0, 1],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=True,
+                opt_bpws={"3.5"},
+            )
+        finally:
+            for p in patches.values():
+                p.stop()
+
+        self.assertEqual(rc, 0)
         mocks["_run_optimized_opt_stage"].assert_called_once()
-        # run_measure_single_bpw called for integer BPWs AND optimized 3.5
         measured_bpws = [c.kwargs["bpw"] for c in mocks["run_measure_single_bpw"].call_args_list]
         self.assertIn("3.5", measured_bpws)
 

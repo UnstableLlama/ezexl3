@@ -14,6 +14,7 @@ const COMMANDS = {
         bpwPaintFlags: [
           { name: "hq", flag: "-hq", label: "-hq", color: "#4a90d9" },
           { name: "hb8", flag: "-hb8", label: "-hb 8", color: "#43a047" },
+          { name: "opt", flag: "-opt", label: "-opt", color: "#d94a4a", borderOnly: true, fractionalOnly: true },
         ]
       },
       { name: "devices", flag: "-d", type: "csv", default: "0", label: "CUDA Devices", placeholder: "0,1", help: "GPU device indices" },
@@ -51,6 +52,7 @@ const COMMANDS = {
         bpwPaintFlags: [
           { name: "hq", flag: "-hq", label: "-hq", color: "#4a90d9" },
           { name: "hb8", flag: "-hb8", label: "-hb 8", color: "#43a047" },
+          { name: "opt", flag: "-opt", label: "-opt", color: "#d94a4a", borderOnly: true, fractionalOnly: true },
         ]
       },
       { name: "devices", flag: "-d", type: "csv", default: "0", label: "CUDA Devices", placeholder: "0,1" },

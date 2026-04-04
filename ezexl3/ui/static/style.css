@@ -500,6 +500,11 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
       var(--paint-color) 0px, var(--paint-color) 2px,
       #000 2px, #000 6px);
 }
+.bpw-paint-btn.active[data-paint-flag="opt"] {
+  background: transparent;
+  border: 2px solid var(--paint-color);
+  color: var(--paint-color);
+}
 
 /* ── BPW Token Display ─────────────────────────────────────────── */
 .bpw-token-wrap {

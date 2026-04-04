@@ -81,9 +81,22 @@ class QuantizeFlagWiringTests(unittest.TestCase):
 class QuantizeDecimalBpwTests(unittest.TestCase):
     """Tests for decimal bitrate quantization support in the quantize subcommand."""
 
-    def test_cli_quantize_decimal_bpw_plans_and_optimizes(self):
-        """Decimal BPW should quantize integer donors then run optimization."""
+    def test_cli_quantize_decimal_bpw_without_opt_quants_directly(self):
+        """Decimal BPW without -opt should quantize directly (no optimization)."""
         argv = ["quantize", "-m", "/tmp/model", "-b", "4.07", "-d", "0,1"]
+
+        with patch("ezexl3.repo.run_quant_stage", return_value=0) as mock_quant, \
+             patch("ezexl3.repo._run_optimized_opt_stage") as mock_opt:
+            rc = cli.main(argv)
+
+        self.assertEqual(rc, 0)
+        # Without -opt, 4.07 goes straight to quant queue
+        self.assertEqual(mock_quant.call_args.kwargs["bpws"], ["4.07"])
+        mock_opt.assert_not_called()
+
+    def test_cli_quantize_decimal_bpw_with_opt_plans_and_optimizes(self):
+        """Decimal BPW with -opt should quantize integer donors then run optimization."""
+        argv = ["quantize", "-m", "/tmp/model", "-b", "4.07", "-d", "0,1", "-opt", "4.07"]
 
         with patch("ezexl3.repo.run_quant_stage", return_value=0) as mock_quant, \
              patch("ezexl3.repo._run_optimized_opt_stage") as mock_opt:
@@ -102,8 +115,21 @@ class QuantizeDecimalBpwTests(unittest.TestCase):
         )
 
     def test_cli_quantize_mixed_bpws(self):
-        """Mixed integer+decimal BPWs should separate correctly."""
+        """Mixed integer+decimal BPWs without -opt: fractionals quant directly."""
         argv = ["quantize", "-m", "/tmp/model", "-b", "2", "4.07", "-d", "0"]
+
+        with patch("ezexl3.repo.run_quant_stage", return_value=0) as mock_quant, \
+             patch("ezexl3.repo._run_optimized_opt_stage") as mock_opt:
+            rc = cli.main(argv)
+
+        self.assertEqual(rc, 0)
+        # Without -opt, 4.07 goes into quant queue alongside 2
+        self.assertEqual(mock_quant.call_args.kwargs["bpws"], ["2", "4.07"])
+        mock_opt.assert_not_called()
+
+    def test_cli_quantize_mixed_bpws_with_opt(self):
+        """Mixed integer+decimal BPWs with -opt should separate correctly."""
+        argv = ["quantize", "-m", "/tmp/model", "-b", "2", "4.07", "-d", "0", "-opt", "4.07"]
 
         with patch("ezexl3.repo.run_quant_stage", return_value=0) as mock_quant, \
              patch("ezexl3.repo._run_optimized_opt_stage") as mock_opt:
@@ -139,11 +165,11 @@ class QuantizeDecimalBpwTests(unittest.TestCase):
         mock_quant.assert_called_once()
         mock_opt.assert_not_called()
 
-    def test_cli_quantize_custom_template_with_decimal_errors(self):
-        """Custom --out-template with decimal BPWs should error."""
+    def test_cli_quantize_custom_template_with_opt_decimal_errors(self):
+        """Custom --out-template with -opt decimal BPWs should error."""
         argv = [
             "quantize", "-m", "/tmp/model", "-b", "4.07",
-            "--out-template", "{model}/custom-{bpw}",
+            "--out-template", "{model}/custom-{bpw}", "-opt", "4.07",
         ]
 
         with patch("ezexl3.repo.run_quant_stage", return_value=0), \
@@ -152,9 +178,23 @@ class QuantizeDecimalBpwTests(unittest.TestCase):
 
         self.assertEqual(rc, 1)
 
+    def test_cli_quantize_custom_template_with_decimal_without_opt_ok(self):
+        """Custom --out-template with decimal BPWs without -opt should work fine."""
+        argv = [
+            "quantize", "-m", "/tmp/model", "-b", "4.07",
+            "--out-template", "{model}/custom-{bpw}",
+        ]
+
+        with patch("ezexl3.repo.run_quant_stage", return_value=0) as mock_quant, \
+             patch("ezexl3.repo._run_optimized_opt_stage") as mock_opt:
+            rc = cli.main(argv)
+
+        self.assertEqual(rc, 0)
+        mock_opt.assert_not_called()
+
     def test_cli_quantize_layers_passed_to_optimization(self):
         """The -l/--layers flag should be passed to the optimization stage."""
-        argv = ["quantize", "-m", "/tmp/model", "-b", "4.07", "-d", "0", "-l", "3"]
+        argv = ["quantize", "-m", "/tmp/model", "-b", "4.07", "-d", "0", "-l", "3", "-opt", "4.07"]
 
         with patch("ezexl3.repo.run_quant_stage", return_value=0), \
              patch("ezexl3.repo._run_optimized_opt_stage") as mock_opt:
@@ -165,7 +205,7 @@ class QuantizeDecimalBpwTests(unittest.TestCase):
 
     def test_cli_quantize_no_logs_passed_to_optimization(self):
         """The --no-logs flag should disable logs in the optimization stage."""
-        argv = ["quantize", "-m", "/tmp/model", "-b", "4.07", "-d", "0", "--no-logs"]
+        argv = ["quantize", "-m", "/tmp/model", "-b", "4.07", "-d", "0", "--no-logs", "-opt", "4.07"]
 
         with patch("ezexl3.repo.run_quant_stage", return_value=0), \
              patch("ezexl3.repo._run_optimized_opt_stage") as mock_opt:
@@ -176,7 +216,7 @@ class QuantizeDecimalBpwTests(unittest.TestCase):
 
     def test_cli_quantize_quant_failure_skips_optimization(self):
         """If quantization fails, optimization should be skipped."""
-        argv = ["quantize", "-m", "/tmp/model", "-b", "4.07", "-d", "0"]
+        argv = ["quantize", "-m", "/tmp/model", "-b", "4.07", "-d", "0", "-opt", "4.07"]
 
         with patch("ezexl3.repo.run_quant_stage", return_value=1) as mock_quant, \
              patch("ezexl3.repo._run_optimized_opt_stage") as mock_opt:
