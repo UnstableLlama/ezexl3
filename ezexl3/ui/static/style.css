@@ -484,9 +484,21 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   background: color-mix(in srgb, var(--paint-color) 15%, transparent);
 }
 .bpw-paint-btn.active {
-  background: var(--paint-color);
   color: #fff;
   border-color: var(--paint-color);
+}
+/* Stripe patterns on active buttons match their token patterns */
+.bpw-paint-btn.active[data-paint-flag="hq"] {
+  background: repeating-linear-gradient(180deg,
+    var(--paint-color) 0px, var(--paint-color) 3px,
+    color-mix(in srgb, var(--paint-color) 75%, #fff) 3px,
+    color-mix(in srgb, var(--paint-color) 75%, #fff) 5px);
+}
+.bpw-paint-btn.active[data-paint-flag="hb8"] {
+  background: repeating-linear-gradient(90deg,
+    var(--paint-color) 0px, var(--paint-color) 3px,
+    color-mix(in srgb, var(--paint-color) 75%, #fff) 3px,
+    color-mix(in srgb, var(--paint-color) 75%, #fff) 5px);
 }
 
 /* ── BPW Token Display ─────────────────────────────────────────── */

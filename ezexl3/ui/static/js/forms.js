@@ -345,9 +345,21 @@ function onTokenClick(fieldName, bpw, paintFlags) {
   rebuildBpwTokens(fieldName, paintFlags);
 }
 
+function lighten(hex, amount) {
+  // Lighten a hex color by mixing toward white
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const nr = Math.min(255, Math.round(r + (255 - r) * amount));
+  const ng = Math.min(255, Math.round(g + (255 - g) * amount));
+  const nb = Math.min(255, Math.round(b + (255 - b) * amount));
+  return `#${nr.toString(16).padStart(2,"0")}${ng.toString(16).padStart(2,"0")}${nb.toString(16).padStart(2,"0")}`;
+}
+
 function applyTokenColor(token, flags, paintFlags) {
   // Reset
   token.style.backgroundColor = "";
+  token.style.backgroundImage = "";
   token.style.color = "";
   token.classList.remove("bpw-token-flagged");
 
@@ -359,13 +371,23 @@ function applyTokenColor(token, flags, paintFlags) {
   if (flagNames.length === 1) {
     const pf = paintFlags.find(p => p.name === flagNames[0]);
     if (pf) {
-      token.style.backgroundColor = pf.color;
       token.style.color = "#fff";
+      // Accessibility: stripe patterns for color-impaired distinction
+      // -hq = horizontal stripes, -hb8 = vertical stripes
+      const stripe = pf.name === "hq"
+        ? `repeating-linear-gradient(180deg, ${pf.color} 0px, ${pf.color} 3px, ${lighten(pf.color, 0.25)} 3px, ${lighten(pf.color, 0.25)} 5px)`
+        : `repeating-linear-gradient(90deg, ${pf.color} 0px, ${pf.color} 3px, ${lighten(pf.color, 0.25)} 3px, ${lighten(pf.color, 0.25)} 5px)`;
+      token.style.backgroundImage = stripe;
     }
   } else if (flagNames.length >= 2) {
-    // Both flags: teal/cyan
-    token.style.backgroundColor = "#00897b";
+    // Both flags: teal/cyan with checkerboard (intersection of horizontal + vertical)
+    const c = "#00897b";
+    const cl = lighten(c, 0.25);
     token.style.color = "#fff";
+    token.style.backgroundImage =
+      `repeating-linear-gradient(180deg, transparent 0px, transparent 3px, ${cl}44 3px, ${cl}44 5px), ` +
+      `repeating-linear-gradient(90deg, transparent 0px, transparent 3px, ${cl}44 3px, ${cl}44 5px)`;
+    token.style.backgroundColor = c;
   }
 }
 
