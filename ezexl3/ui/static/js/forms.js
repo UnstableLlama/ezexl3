@@ -375,18 +375,18 @@ function applyTokenColor(token, flags, paintFlags) {
       // Accessibility: stripe patterns for color-impaired distinction
       // -hq = horizontal stripes, -hb8 = vertical stripes
       const stripe = pf.name === "hq"
-        ? `repeating-linear-gradient(180deg, ${pf.color} 0px, ${pf.color} 3px, ${lighten(pf.color, 0.25)} 3px, ${lighten(pf.color, 0.25)} 5px)`
-        : `repeating-linear-gradient(90deg, ${pf.color} 0px, ${pf.color} 3px, ${lighten(pf.color, 0.25)} 3px, ${lighten(pf.color, 0.25)} 5px)`;
+        ? `repeating-linear-gradient(180deg, ${pf.color} 0px, ${pf.color} 3px, transparent 3px, transparent 5px)`
+        : `repeating-linear-gradient(90deg, ${pf.color} 0px, ${pf.color} 3px, transparent 3px, transparent 5px)`;
       token.style.backgroundImage = stripe;
+      token.style.backgroundColor = "#000";
     }
   } else if (flagNames.length >= 2) {
     // Both flags: teal/cyan with checkerboard (intersection of horizontal + vertical)
     const c = "#00897b";
-    const cl = lighten(c, 0.25);
     token.style.color = "#fff";
     token.style.backgroundImage =
-      `repeating-linear-gradient(180deg, transparent 0px, transparent 3px, ${cl}44 3px, ${cl}44 5px), ` +
-      `repeating-linear-gradient(90deg, transparent 0px, transparent 3px, ${cl}44 3px, ${cl}44 5px)`;
+      `repeating-linear-gradient(180deg, transparent 0px, transparent 3px, #000 3px, #000 5px), ` +
+      `repeating-linear-gradient(90deg, transparent 0px, transparent 3px, #000 3px, #000 5px)`;
     token.style.backgroundColor = c;
   }
 }
