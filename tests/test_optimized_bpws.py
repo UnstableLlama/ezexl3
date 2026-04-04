@@ -10,19 +10,42 @@ from ezexl3 import repo
 
 
 class OptimizedBpwPlanningTests(unittest.TestCase):
-    def test_plan_repo_bpws_adds_integer_neighbors(self):
+    def test_plan_repo_bpws_fractional_without_opt_goes_to_quant_queue(self):
+        """Fractional BPWs without -opt are quantized directly (no optimization)."""
         plan = repo._plan_repo_bpws(["4", "4.07", "6.25"])
+
+        self.assertEqual(plan["requested_integers"], ["4"])
+        self.assertEqual(plan["requested_optimizeds"], [])
+        # Fractionals go straight into the quant queue alongside integers
+        self.assertEqual(plan["quant_integer_queue"], ["4", "4.07", "6.25"])
+        self.assertEqual(plan["measure_queue"], ["4", "4.07", "6.25"])
+
+    def test_plan_repo_bpws_opt_adds_integer_neighbors(self):
+        """Fractional BPWs with -opt need integer neighbors for optimization."""
+        plan = repo._plan_repo_bpws(["4", "4.07", "6.25"], opt_bpws={"4.07", "6.25"})
 
         self.assertEqual(plan["requested_integers"], ["4"])
         self.assertEqual(plan["requested_optimizeds"], ["4.07", "6.25"])
         self.assertEqual(plan["quant_integer_queue"], ["4", "5", "6", "7"])
         self.assertEqual(plan["measure_queue"], ["4", "5", "6", "7", "4.07", "6.25"])
 
+    def test_plan_repo_bpws_mixed_opt_and_standard_fractional(self):
+        """Only -opt fractionals trigger optimization; others quant directly."""
+        plan = repo._plan_repo_bpws(["4", "4.07", "6.25"], opt_bpws={"4.07"})
+
+        self.assertEqual(plan["requested_optimizeds"], ["4.07"])
+        # 6.25 goes to quant queue directly; 4.07 needs neighbors 4,5
+        self.assertIn("6.25", plan["quant_integer_queue"])
+        self.assertIn("5", plan["quant_integer_queue"])
+        self.assertNotIn("4.07", plan["quant_integer_queue"])
+        self.assertIn("4.07", plan["measure_queue"])
+
     def test_plan_repo_bpws_normalizes_integer_like_tokens(self):
         plan = repo._plan_repo_bpws(["4.0", "5.00", "4.10"])
 
         self.assertEqual(plan["requested_integers"], ["4", "5"])
-        self.assertEqual(plan["requested_optimizeds"], ["4.1"])
+        # Without -opt, fractionals are not "optimized"
+        self.assertEqual(plan["requested_optimizeds"], [])
 
 
 class OptimizedStageTests(unittest.TestCase):
@@ -103,7 +126,8 @@ class OptimizedStageTests(unittest.TestCase):
         self.assertIn("[GPU 1] START compare 3-4", printed)
         self.assertIn("[GPU 1] DONE compare 3-4", printed)
 
-    def test_run_repo_uses_planned_queues(self):
+    def test_run_repo_fractional_without_opt_skips_optimization(self):
+        """Fractional BPW without -opt goes through standard quant, no optimization."""
         with patch("ezexl3.repo.run_quant_stage", return_value=0) as mock_quant, patch(
             "ezexl3.repo._run_optimized_opt_stage"
         ) as mock_frac, patch("ezexl3.repo.run_measure_stage", return_value=0) as mock_measure:
@@ -116,6 +140,29 @@ class OptimizedStageTests(unittest.TestCase):
                 measure_args=[],
                 do_readme=False,
                 verify=False,
+            )
+
+        self.assertEqual(rc, 0)
+        # Without -opt, 4.07 goes straight to quant queue (no integer neighbors)
+        self.assertEqual(mock_quant.call_args.kwargs["bpws"], ["4.07"])
+        self.assertEqual(mock_measure.call_args.kwargs["bpws"], ["4.07"])
+        mock_frac.assert_not_called()
+
+    def test_run_repo_fractional_with_opt_uses_optimization(self):
+        """Fractional BPW with -opt triggers the optimization pipeline."""
+        with patch("ezexl3.repo.run_quant_stage", return_value=0) as mock_quant, patch(
+            "ezexl3.repo._run_optimized_opt_stage"
+        ) as mock_frac, patch("ezexl3.repo.run_measure_stage", return_value=0) as mock_measure:
+            rc = repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["4.07"],
+                devices=[0, 1],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_readme=False,
+                verify=False,
+                opt_bpws={"4.07"},
             )
 
         self.assertEqual(rc, 0)

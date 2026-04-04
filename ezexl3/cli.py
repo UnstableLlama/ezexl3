@@ -182,6 +182,12 @@ def build_parser() -> argparse.ArgumentParser:
                            help="Use 8-bit head quantization (exllamav3 -hb 8) instead of default 6. "
                                 "Bare flag applies to all BPWs; with args applies to listed BPWs only. "
                                 "Example: -hb8 6,8")
+        p_sub.add_argument("-opt", nargs="*", default=None,
+                           help="Use optimized quantization pipeline for fractional BPWs. "
+                                "Compares neighboring integer quants to find optimal mix. "
+                                "Only applies to fractional BPWs. "
+                                "Bare flag applies to all fractional BPWs; with args applies to listed only. "
+                                "Example: -opt 4.5,5.5")
         p_sub.add_argument("--no-cleanup", "-nc", action="store_true", help="Keep w-* working dirs and logs")
         p_sub.add_argument("--no-readme", action="store_true", help="Skip README stage")
         p_sub.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
@@ -234,6 +240,10 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("-hb8", nargs="*", default=None,
                    help="Use 8-bit head quantization (exllamav3 -hb 8) instead of default 6. "
                         "Bare flag applies to all BPWs; with args applies to listed BPWs only.")
+    q.add_argument("-opt", nargs="*", default=None,
+                   help="Use optimized quantization pipeline for fractional BPWs. "
+                        "Only applies to fractional BPWs. "
+                        "Bare flag applies to all fractional BPWs; with args applies to listed only.")
     q.add_argument("--dry", action="store_true", help="Print what would run, but do not execute.")
     q.add_argument("--continue-on-error", action="store_true", help="Keep going after failures.")
     q.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
@@ -381,9 +391,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     device_ratios_str = ",".join(device_ratios) if device_ratios else None
     layers = _parse_layers(getattr(args, "layers", 2)) if hasattr(args, "layers") else 2
 
-    # Build per-BPW flag sets from -hq and -hb8
+    # Build per-BPW flag sets from -hq, -hb8, and -opt
     hq_bpws = _parse_per_bpw_flag(getattr(args, "hq", None), args.bpws)
     hb8_bpws = _parse_per_bpw_flag(getattr(args, "hb8", None), args.bpws)
+    opt_bpws = _parse_per_bpw_flag(getattr(args, "opt", None), args.bpws)
+    # -opt only applies to fractional BPWs; silently drop any integers
+    opt_bpws = {b for b in opt_bpws if "." in b}
 
     # Collect enabled eval flags into a dict: {name: arg_value}
     _EVAL_FLAG_NAMES = ["diversity", "humaneval", "ifbench", "longctx", "mmlu", "perf"]
@@ -427,6 +440,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     skip_ppl=getattr(args, "no_ppl", False),
                     hq_bpws=hq_bpws,
                     hb8_bpws=hb8_bpws,
+                    opt_bpws=opt_bpws,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
@@ -446,7 +460,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if cmd in ("quant", "quantize"):
         from ezexl3.repo import _plan_repo_bpws, _run_optimized_opt_stage
 
-        bpw_plan = _plan_repo_bpws(args.bpws)
+        bpw_plan = _plan_repo_bpws(args.bpws, opt_bpws=opt_bpws)
         quant_bpws = bpw_plan["quant_integer_queue"]
         optimized_bpws = bpw_plan["requested_optimizeds"]
 
@@ -455,10 +469,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             print("The optimized quantization stage requires outputs at {model}/{bpw}.")
             return 1
 
-        auto_added = [b for b in quant_bpws if b not in bpw_plan["requested_integers"]]
+        all_requested = set(bpw_plan["requested_integers"] + bpw_plan.get("requested_optimizeds", []))
+        # Also exclude standard fractional BPWs (in quant queue but explicitly requested)
+        all_requested.update(b for raw in args.bpws for b in raw.split(",") if b.strip())
+        auto_added = [b for b in quant_bpws if b not in all_requested]
         if auto_added:
             print(
-                "ℹ️ Added required integer quants for optimized targets: "
+                "ℹ️ Added required integer quants for -opt targets: "
                 + ", ".join(auto_added)
             )
 
