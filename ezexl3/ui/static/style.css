@@ -502,7 +502,9 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
 }
 .bpw-paint-btn.active[data-paint-flag="opt"] {
   background: transparent;
-  border: 2px solid var(--paint-color);
+  border-color: var(--paint-color);
+  outline: 3px solid var(--paint-color);
+  outline-offset: -1px;
   color: var(--paint-color);
 }
 
