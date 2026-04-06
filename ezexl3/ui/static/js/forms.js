@@ -368,6 +368,8 @@ function applyTokenColor(token, flags, paintFlags) {
   token.style.backgroundImage = "";
   token.style.color = "";
   token.style.border = "";
+  token.style.outline = "";
+  token.style.outlineOffset = "";
   token.classList.remove("bpw-token-flagged");
 
   if (flags.size === 0) return;
@@ -378,9 +380,10 @@ function applyTokenColor(token, flags, paintFlags) {
   const hasOpt = flags.has("opt");
   const stripeFlags = [...flags].filter(f => f !== "opt");
 
-  // Apply red border for -opt (additive — stacks with stripe patterns)
+  // Apply red outline for -opt (additive — stacks with stripe patterns)
   if (hasOpt) {
-    token.style.border = "2px solid #d94a4a";
+    token.style.outline = "3px solid #d94a4a";
+    token.style.outlineOffset = "-1px";
   }
 
   if (stripeFlags.length === 0) {
