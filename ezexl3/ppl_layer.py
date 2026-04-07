@@ -6,11 +6,13 @@
 # Default 100 rows of 2048 tokens = 204.8k tokens.
 
 import sys, os
+# Must be set before importing torch — otherwise the CUDA allocator is
+# already initialized and the option is silently ignored.
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 import argparse
 import math
 import torch
-
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 def get_test_tokens(tokenizer, rows, eval_len=2048, eval_stride=512):
     from datasets import load_dataset
