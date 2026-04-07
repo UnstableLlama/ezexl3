@@ -236,6 +236,14 @@ function createFieldEl(field) {
 // ── BPW Paint Mode System ────────────────────────────────────────
 // Per-BPW flag state: { fieldName: { bpwStr: Set<flagName> } }
 const bpwFlagState = {};
+
+// BPW range: 1.0 to 8.0 inclusive. Below 1 is incoherent but allowed,
+// above 8 isn't supported by exllamav3 and will error out.
+function isValidBpw(s) {
+  if (!s) return false;
+  const n = Number(s);
+  return Number.isFinite(n) && n >= 1 && n <= 8;
+}
 // Active paint mode: { fieldName, flagName } or null
 let activePaint = null;
 
@@ -278,15 +286,21 @@ function rebuildBpwTokens(fieldName, paintFlags) {
     token.textContent = bpw;
     token.dataset.bpw = bpw;
 
-    // Apply flag colors
-    const flags = bpwFlagState[fieldName][bpw] || new Set();
-    applyTokenColor(token, flags, paintFlags);
+    const valid = isValidBpw(bpw);
+    if (!valid) {
+      token.classList.add("bpw-token-invalid");
+      token.title = "BPW must be between 1 and 8";
+    } else {
+      // Apply flag colors (only on valid tokens)
+      const flags = bpwFlagState[fieldName][bpw] || new Set();
+      applyTokenColor(token, flags, paintFlags);
 
-    token.addEventListener("mousedown", (e) => {
-      if (jobRunning) return;
-      e.preventDefault();
-      onTokenClick(fieldName, bpw, paintFlags);
-    });
+      token.addEventListener("mousedown", (e) => {
+        if (jobRunning) return;
+        e.preventDefault();
+        onTokenClick(fieldName, bpw, paintFlags);
+      });
+    }
     display.appendChild(token);
 
     // Add comma separator (not the last one)
@@ -515,7 +529,13 @@ function collectArgs() {
 
     if (field.type === "csv") {
       // Normalize: strip spaces around commas so "-d 0, 1" becomes "-d 0,1"
-      args.push(field.flag, val.replace(/\s*,\s*/g, ",").replace(/\s+/g, ","));
+      let csv = val.replace(/\s*,\s*/g, ",").replace(/\s+/g, ",");
+      // For BPW fields, drop out-of-range values (1-8 only)
+      if (field.bpwPaintFlags) {
+        csv = csv.split(",").filter(v => isValidBpw(v)).join(",");
+        if (!csv) continue;
+      }
+      args.push(field.flag, csv);
       // Emit per-BPW paint flags (e.g. -hq 4,6 -hb8 8)
       if (field.bpwPaintFlags) {
         const flagState = getBpwFlags(field.name);
