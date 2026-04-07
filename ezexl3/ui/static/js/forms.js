@@ -93,6 +93,11 @@ function createFieldEl(field) {
     row.appendChild(help);
   }
 
+  // Helper: also expose field.help as a hover tooltip on the input itself
+  function attachHelpTooltip(el) {
+    if (el && field.help) el.title = field.help;
+  }
+
   let input;
 
   if (field.type === "boolean" && field.toggleable) {
@@ -211,6 +216,9 @@ function createFieldEl(field) {
     }
     row.appendChild(input);
   }
+
+  // Expose field.help as a hover tooltip on the input element too
+  attachHelpTooltip(input);
 
   // Wire up toggleable: start disabled (or enabled if defaultOn), grey out until toggled on
   if (field.toggleable) {

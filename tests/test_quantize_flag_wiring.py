@@ -227,5 +227,48 @@ class QuantizeDecimalBpwTests(unittest.TestCase):
         mock_opt.assert_not_called()
 
 
+class BpwForwardingNormalizationTests(unittest.TestCase):
+    """_build_quant_forwarded_for_bpw must normalize both sides of the
+    hq/hb8 lookup so flag-painted BPWs match the planner-normalized
+    quant queue, regardless of trailing zeros or decimal form."""
+
+    def _has(self, args, *needles):
+        # Check that the entire needles sequence appears contiguously in args
+        for i in range(len(args) - len(needles) + 1):
+            if list(args[i:i + len(needles)]) == list(needles):
+                return True
+        return False
+
+    def test_hq_matches_when_user_typed_trailing_zero(self):
+        # User typed "4.0" in the UI; planner normalizes to "4"
+        forwarded = repo._build_quant_forwarded_for_bpw(
+            quant_args=[], devices=[0], device_ratios=None,
+            bpw="4", hq_bpws={"4.0"}, hb8_bpws=None,
+        )
+        self.assertIn("-hq", forwarded)
+
+    def test_hb8_matches_when_user_typed_trailing_zero(self):
+        forwarded = repo._build_quant_forwarded_for_bpw(
+            quant_args=[], devices=[0], device_ratios=None,
+            bpw="6", hq_bpws=None, hb8_bpws={"6.0"},
+        )
+        self.assertTrue(self._has(forwarded, "-hb", "8"))
+
+    def test_fractional_normalization(self):
+        # User typed "5.50"; planner normalizes to "5.5"
+        forwarded = repo._build_quant_forwarded_for_bpw(
+            quant_args=[], devices=[0], device_ratios=None,
+            bpw="5.5", hq_bpws={"5.50"}, hb8_bpws=None,
+        )
+        self.assertIn("-hq", forwarded)
+
+    def test_hq_not_added_when_bpw_not_painted(self):
+        forwarded = repo._build_quant_forwarded_for_bpw(
+            quant_args=[], devices=[0], device_ratios=None,
+            bpw="3", hq_bpws={"4", "5"}, hb8_bpws=None,
+        )
+        self.assertNotIn("-hq", forwarded)
+
+
 if __name__ == "__main__":
     unittest.main()
