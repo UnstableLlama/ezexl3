@@ -545,16 +545,6 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   /* Colors set inline by JS — this class just adds the visual weight */
   border-radius: 3px;
 }
-.bpw-token-invalid {
-  color: #d94a4a;
-  text-decoration: line-through;
-  text-decoration-thickness: 1.5px;
-  cursor: not-allowed;
-  opacity: 0.75;
-}
-.bpw-token-invalid:hover {
-  background: transparent;
-}
 .bpw-token-flagged:hover {
   filter: brightness(1.15);
 }

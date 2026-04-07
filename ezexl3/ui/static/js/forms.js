@@ -280,31 +280,26 @@ function rebuildBpwTokens(fieldName, paintFlags) {
 
   display.innerHTML = "";
 
-  parts.forEach((bpw, idx) => {
+  const validParts = parts.filter(isValidBpw);
+  validParts.forEach((bpw, idx) => {
     const token = document.createElement("span");
     token.className = "bpw-token";
     token.textContent = bpw;
     token.dataset.bpw = bpw;
 
-    const valid = isValidBpw(bpw);
-    if (!valid) {
-      token.classList.add("bpw-token-invalid");
-      token.title = "BPW must be between 1 and 8";
-    } else {
-      // Apply flag colors (only on valid tokens)
-      const flags = bpwFlagState[fieldName][bpw] || new Set();
-      applyTokenColor(token, flags, paintFlags);
+    // Apply flag colors
+    const flags = bpwFlagState[fieldName][bpw] || new Set();
+    applyTokenColor(token, flags, paintFlags);
 
-      token.addEventListener("mousedown", (e) => {
-        if (jobRunning) return;
-        e.preventDefault();
-        onTokenClick(fieldName, bpw, paintFlags);
-      });
-    }
+    token.addEventListener("mousedown", (e) => {
+      if (jobRunning) return;
+      e.preventDefault();
+      onTokenClick(fieldName, bpw, paintFlags);
+    });
     display.appendChild(token);
 
     // Add comma separator (not the last one)
-    if (idx < parts.length - 1) {
+    if (idx < validParts.length - 1) {
       const sep = document.createElement("span");
       sep.className = "bpw-token-sep";
       sep.textContent = ",";
@@ -313,7 +308,7 @@ function rebuildBpwTokens(fieldName, paintFlags) {
   });
 
   // Append paint buttons inline after the tokens
-  if (parts.length > 0) {
+  if (validParts.length > 0) {
     const paintWrap = document.createElement("div");
     paintWrap.className = "bpw-paint-buttons";
     for (const pf of paintFlags) {
