@@ -507,6 +507,12 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   outline-offset: -1px;
   color: var(--paint-color);
 }
+/* Global toggle button (e.g. -pm): inverts on click instead of paint mode */
+.bpw-paint-btn-global.active {
+  background: #fff;
+  color: #000;
+  border-color: #fff;
+}
 
 /* ── BPW Token Display ─────────────────────────────────────────── */
 .bpw-token-wrap {

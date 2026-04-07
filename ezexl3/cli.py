@@ -188,6 +188,9 @@ def build_parser() -> argparse.ArgumentParser:
                                 "Only applies to fractional BPWs. "
                                 "Bare flag applies to all fractional BPWs; with args applies to listed only. "
                                 "Example: -opt 4.5,5.5")
+        p_sub.add_argument("-pm", action="store_true",
+                           help="Parallel modules: speeds up quantization of MoE models. "
+                                "Forwarded to exllamav3 multiConvert as -pm.")
         p_sub.add_argument("--no-cleanup", "-nc", action="store_true", help="Keep w-* working dirs and logs")
         p_sub.add_argument("--no-readme", action="store_true", help="Skip README stage")
         p_sub.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
@@ -244,6 +247,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Use optimized quantization pipeline for fractional BPWs. "
                         "Only applies to fractional BPWs. "
                         "Bare flag applies to all fractional BPWs; with args applies to listed only.")
+    q.add_argument("-pm", action="store_true",
+                   help="Parallel modules: speeds up quantization of MoE models. "
+                        "Forwarded to exllamav3 multiConvert as -pm.")
     q.add_argument("--dry", action="store_true", help="Print what would run, but do not execute.")
     q.add_argument("--continue-on-error", action="store_true", help="Keep going after failures.")
     q.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
@@ -390,6 +396,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     device_ratios = _parse_device_ratios(getattr(args, "device_ratios", None), devices_i)
     device_ratios_str = ",".join(device_ratios) if device_ratios else None
     layers = _parse_layers(getattr(args, "layers", 2)) if hasattr(args, "layers") else 2
+
+    # -pm (parallel modules / MoE speedup) is forwarded as a real flag
+    # to multiConvert via the existing quant_args passthrough pipeline.
+    if getattr(args, "pm", False) and "-pm" not in pt.quant_args:
+        pt.quant_args = list(pt.quant_args) + ["-pm"]
 
     # Build per-BPW flag sets from -hq, -hb8, and -opt
     hq_bpws = _parse_per_bpw_flag(getattr(args, "hq", None), args.bpws)

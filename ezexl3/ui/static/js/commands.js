@@ -12,9 +12,10 @@ const COMMANDS = {
       { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "BF16/base model directory" },
       { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "Target bits per weight",
         bpwPaintFlags: [
-          { name: "hq", flag: "-hq", label: "-hq", color: "#4a90d9" },
-          { name: "hb8", flag: "-hb8", label: "-hb 8", color: "#43a047" },
-          { name: "opt", flag: "-opt", label: "-opt", color: "#d94a4a", borderOnly: true, fractionalOnly: true },
+          { name: "hq", flag: "-hq", label: "-hq", color: "#4a90d9", tooltip: "use on low bpw" },
+          { name: "hb8", flag: "-hb8", label: "-hb 8", color: "#43a047", tooltip: "use on high bpw" },
+          { name: "opt", flag: "-opt", label: "-opt", color: "#d94a4a", borderOnly: true, fractionalOnly: true, tooltip: "use on decimal bpws" },
+          { name: "pm", flag: "-pm", label: "-pm", color: "#ffffff", isGlobal: true, tooltip: "use on MoEs" },
         ]
       },
       { name: "devices", flag: "-d", type: "csv", default: "0", label: "CUDA Devices", placeholder: "0,1", help: "GPU device indices" },
@@ -50,9 +51,10 @@ const COMMANDS = {
       { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "BF16/base model directory" },
       { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "Target bits per weight",
         bpwPaintFlags: [
-          { name: "hq", flag: "-hq", label: "-hq", color: "#4a90d9" },
-          { name: "hb8", flag: "-hb8", label: "-hb 8", color: "#43a047" },
-          { name: "opt", flag: "-opt", label: "-opt", color: "#d94a4a", borderOnly: true, fractionalOnly: true },
+          { name: "hq", flag: "-hq", label: "-hq", color: "#4a90d9", tooltip: "use on low bpw" },
+          { name: "hb8", flag: "-hb8", label: "-hb 8", color: "#43a047", tooltip: "use on high bpw" },
+          { name: "opt", flag: "-opt", label: "-opt", color: "#d94a4a", borderOnly: true, fractionalOnly: true, tooltip: "use on decimal bpws" },
+          { name: "pm", flag: "-pm", label: "-pm", color: "#ffffff", isGlobal: true, tooltip: "use on MoEs" },
         ]
       },
       { name: "devices", flag: "-d", type: "csv", default: "0", label: "CUDA Devices", placeholder: "0,1" },
