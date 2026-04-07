@@ -282,8 +282,9 @@ function rebuildBpwTokens(fieldName, paintFlags) {
     const flags = bpwFlagState[fieldName][bpw] || new Set();
     applyTokenColor(token, flags, paintFlags);
 
-    token.addEventListener("click", () => {
+    token.addEventListener("mousedown", (e) => {
       if (jobRunning) return;
+      e.preventDefault();
       onTokenClick(fieldName, bpw, paintFlags);
     });
     display.appendChild(token);
@@ -314,8 +315,11 @@ function rebuildBpwTokens(fieldName, paintFlags) {
       if (activePaint && activePaint.fieldName === fieldName && activePaint.flagName === pf.name) {
         btn.classList.add("active");
       }
-      btn.addEventListener("click", () => {
+      // Use mousedown so the click isn't eaten by the BPW input's blur
+      // when the user clicks straight from typing into the entry field.
+      btn.addEventListener("mousedown", (e) => {
         if (jobRunning) return;
+        e.preventDefault();
         togglePaintMode(fieldName, pf.name, btn);
       });
       paintWrap.appendChild(btn);
