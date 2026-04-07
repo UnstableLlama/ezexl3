@@ -694,8 +694,9 @@ function toggleMetaLock(key) {
   const isLocked = field.classList.contains("locked");
 
   if (isLocked) {
-    // Prevent unlock during a run
-    if (jobRunning) return;
+    // Only prevent unlocking while the README is actively being written.
+    // During quant/measure/etc. the user can freely lock & unlock.
+    if (metadataFrozen) return;
     // Unlock
     field.classList.remove("locked");
     lockBtn.classList.remove("locked");
@@ -718,12 +719,12 @@ function toggleMetaLock(key) {
 
 
 function syncMetaLockState() {
-  // When a job starts/stops, toggle the run-locked class on lock buttons
-  // to prevent unlocking during a run — but not while waiting for metadata
-  if (metadataWaitingDir) return;
+  // Visually mark locked fields as frozen only during the README write
+  // window (between Resume click and README_DONE). Outside that window
+  // — even during the rest of the run — users can freely toggle locks.
   const locks = document.querySelectorAll(".meta-lock.locked");
   for (const btn of locks) {
-    btn.classList.toggle("run-locked", jobRunning);
+    btn.classList.toggle("run-locked", metadataFrozen);
   }
 }
 
@@ -803,6 +804,10 @@ async function confirmMetadata() {
   panel.classList.remove("metadata-waiting");
   document.getElementById("metadata-confirm").style.display = "none";
   metadataWaitingDir = null;
+  // Backend will start writing the README momentarily — freeze the locks
+  // until the README_DONE marker comes back through the stream.
+  metadataFrozen = true;
+  syncMetaLockState();
 }
 
 
@@ -851,6 +856,9 @@ function renderEvalsPanel(commandKey) {
 
 function showMetadataWait(modelDir) {
   metadataWaitingDir = modelDir;
+  // If we ever get back here (e.g. README retry), make sure the freeze
+  // window is considered closed — the pipeline is waiting for input now.
+  metadataFrozen = false;
 
   // If current command doesn't have a metadata panel, switch to readme
   if (!COMMANDS[activeCommand]?.hasMetadata) {

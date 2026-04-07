@@ -248,6 +248,9 @@ async function streamJob(jobId) {
     }
   } finally {
     jobRunning = false;
+    // Safety: no matter how the job ended, the freeze window is over.
+    metadataFrozen = false;
+    if (typeof syncMetaLockState === "function") syncMetaLockState();
     activeJobId = null;
     abortController = null;
     updateRunButton();
@@ -297,9 +300,25 @@ function updateRunButton() {
 
 function checkMetadataWait(text) {
   const match = text.match(/<<EZEXL3:WAITING_METADATA:(.+?)>>/);
-  if (!match) return;
-  if (typeof showMetadataWait === "function") {
-    showMetadataWait(match[1]);
+  if (match) {
+    if (typeof showMetadataWait === "function") {
+      showMetadataWait(match[1]);
+    }
+    return;
+  }
+  // The backend starts writing the README — freeze the metadata locks.
+  // This also covers the "all locks were already set, no pause needed"
+  // path where WAITING_METADATA is never printed.
+  if (text.includes("<<EZEXL3:README_WRITING>>")) {
+    metadataFrozen = true;
+    if (typeof syncMetaLockState === "function") syncMetaLockState();
+    return;
+  }
+  // README write finished — unfreeze the locks.
+  if (text.includes("<<EZEXL3:README_DONE>>")) {
+    metadataFrozen = false;
+    if (typeof syncMetaLockState === "function") syncMetaLockState();
+    return;
   }
 }
 

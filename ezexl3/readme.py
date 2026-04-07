@@ -330,6 +330,12 @@ def run_readme(
 
     meta = prompt_metadata(model_dir, bpws, interactive=interactive)
 
+    # Signal to dashboard: README write is starting. The frontend freezes
+    # the metadata lock buttons until README_DONE is received, so the
+    # values can't change out from under the template render.
+    print("<<EZEXL3:README_WRITING>>")
+    sys.stdout.flush()
+
     formatted_labels: Dict[str, str] = {}
     first_bpw = None
 
@@ -451,6 +457,10 @@ def run_readme(
         f.write(template)
 
     print(f"✅ Generated {readme_path}")
+    # Signal to dashboard: README write finished. The frontend unfreezes
+    # the metadata lock buttons so the user can edit them again.
+    print("<<EZEXL3:README_DONE>>")
+    sys.stdout.flush()
 
 
 def _format_bpw(bpw: str) -> str:
