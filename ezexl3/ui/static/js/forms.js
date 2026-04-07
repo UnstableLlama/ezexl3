@@ -236,6 +236,9 @@ function createFieldEl(field) {
 // ── BPW Paint Mode System ────────────────────────────────────────
 // Per-BPW flag state: { fieldName: { bpwStr: Set<flagName> } }
 const bpwFlagState = {};
+// Global (non-paint) toggles for buttons rendered alongside paint
+// buttons but applied universally instead of per-BPW: { fieldName: Set<flagName> }
+const bpwGlobalState = {};
 
 // BPW range: 1.0 to 8.0 inclusive. Below 1 is incoherent but allowed,
 // above 8 isn't supported by exllamav3 and will error out.
@@ -315,22 +318,40 @@ function rebuildBpwTokens(fieldName, paintFlags) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "bpw-paint-btn";
+      if (pf.isGlobal) btn.classList.add("bpw-paint-btn-global");
       btn.dataset.paintFlag = pf.name;
       btn.dataset.paintColor = pf.color;
       btn.textContent = pf.label;
       btn.style.setProperty("--paint-color", pf.color);
+      if (pf.tooltip) btn.title = pf.tooltip;
       if (jobRunning) btn.disabled = true;
-      // Restore active state if this paint mode is currently on
-      if (activePaint && activePaint.fieldName === fieldName && activePaint.flagName === pf.name) {
-        btn.classList.add("active");
+      if (pf.isGlobal) {
+        // Global toggle (e.g. -pm) — independent on/off, not paint mode.
+        if (bpwGlobalState[fieldName]?.has(pf.name)) {
+          btn.classList.add("active");
+        }
+        btn.addEventListener("mousedown", (e) => {
+          if (jobRunning) return;
+          e.preventDefault();
+          if (!bpwGlobalState[fieldName]) bpwGlobalState[fieldName] = new Set();
+          const set = bpwGlobalState[fieldName];
+          if (set.has(pf.name)) set.delete(pf.name);
+          else set.add(pf.name);
+          btn.classList.toggle("active");
+        });
+      } else {
+        // Restore active state if this paint mode is currently on
+        if (activePaint && activePaint.fieldName === fieldName && activePaint.flagName === pf.name) {
+          btn.classList.add("active");
+        }
+        // Use mousedown so the click isn't eaten by the BPW input's blur
+        // when the user clicks straight from typing into the entry field.
+        btn.addEventListener("mousedown", (e) => {
+          if (jobRunning) return;
+          e.preventDefault();
+          togglePaintMode(fieldName, pf.name, btn);
+        });
       }
-      // Use mousedown so the click isn't eaten by the BPW input's blur
-      // when the user clicks straight from typing into the entry field.
-      btn.addEventListener("mousedown", (e) => {
-        if (jobRunning) return;
-        e.preventDefault();
-        togglePaintMode(fieldName, pf.name, btn);
-      });
       paintWrap.appendChild(btn);
     }
     display.appendChild(paintWrap);
@@ -532,9 +553,15 @@ function collectArgs() {
       }
       args.push(field.flag, csv);
       // Emit per-BPW paint flags (e.g. -hq 4,6 -hb8 8)
+      // and collect any global toggles (e.g. -pm) to append at the end.
       if (field.bpwPaintFlags) {
         const flagState = getBpwFlags(field.name);
+        const globalSet = bpwGlobalState[field.name] || new Set();
         for (const pf of field.bpwPaintFlags) {
+          if (pf.isGlobal) {
+            if (globalSet.has(pf.name)) args.push(pf.flag);
+            continue;
+          }
           const flagged = Object.entries(flagState)
             .filter(([, flags]) => flags.has(pf.name))
             .map(([bpw]) => bpw);
