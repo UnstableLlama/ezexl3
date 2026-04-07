@@ -270,5 +270,46 @@ class BpwForwardingNormalizationTests(unittest.TestCase):
         self.assertNotIn("-hq", forwarded)
 
 
+class OptPaintPropagationTests(unittest.TestCase):
+    """A fractional BPW painted with -opt is built by quantizing its
+    integer neighbors and combining them. Any -hq / -hb8 painted on
+    that fractional should propagate to the donor integers so they
+    actually receive the flag at convert time."""
+
+    def test_hq_propagates_from_opt_fractional_to_neighbors(self):
+        argv = ["quantize", "-m", "/tmp/model", "-b", "4.5", "-d", "0",
+                "-opt", "4.5", "-hq", "4.5"]
+        with patch("ezexl3.repo.run_quant_stage", return_value=0) as mock_quant, \
+             patch("ezexl3.repo._run_optimized_opt_stage"):
+            cli.main(argv)
+        kwargs = mock_quant.call_args.kwargs
+        self.assertIn("4", kwargs["hq_bpws"])
+        self.assertIn("5", kwargs["hq_bpws"])
+
+    def test_hb8_propagates_from_opt_fractional_to_neighbors(self):
+        argv = ["quantize", "-m", "/tmp/model", "-b", "5.5", "-d", "0",
+                "-opt", "5.5", "-hb8", "5.5"]
+        with patch("ezexl3.repo.run_quant_stage", return_value=0) as mock_quant, \
+             patch("ezexl3.repo._run_optimized_opt_stage"):
+            cli.main(argv)
+        kwargs = mock_quant.call_args.kwargs
+        self.assertIn("5", kwargs["hb8_bpws"])
+        self.assertIn("6", kwargs["hb8_bpws"])
+
+    def test_no_propagation_when_fractional_not_in_opt(self):
+        # 4.5 is fractional but NOT painted with -opt → standard fractional,
+        # quantized directly. No propagation should happen.
+        argv = ["quantize", "-m", "/tmp/model", "-b", "4.5", "-d", "0",
+                "-hq", "4.5"]
+        with patch("ezexl3.repo.run_quant_stage", return_value=0) as mock_quant, \
+             patch("ezexl3.repo._run_optimized_opt_stage"):
+            cli.main(argv)
+        kwargs = mock_quant.call_args.kwargs
+        # 4.5 should be in hq_bpws but its integer neighbors should NOT
+        self.assertIn("4.5", kwargs["hq_bpws"])
+        self.assertNotIn("4", kwargs["hq_bpws"])
+        self.assertNotIn("5", kwargs["hq_bpws"])
+
+
 if __name__ == "__main__":
     unittest.main()
