@@ -10,7 +10,7 @@ const COMMANDS = {
     hasMetadata: true,
     fields: [
       { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "BF16/base model directory" },
-      { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "Target bits per weight",
+      { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "1-8, comma separated, decimals ok (e.g. 2,3,4.5,6)",
         bpwPaintFlags: [
           { name: "hq", flag: "-hq", label: "-hq", color: "#4a90d9", tooltip: "use on low bpws" },
           { name: "hb8", flag: "-hb8", label: "-hb 8", color: "#43a047", tooltip: "use on high bpws" },
@@ -18,10 +18,10 @@ const COMMANDS = {
           { name: "pm", flag: "-pm", label: "-pm", color: "#ffffff", isGlobal: true, tooltip: "use on MoEs" },
         ]
       },
-      { name: "devices", flag: "-d", type: "csv", default: "0", label: "CUDA Devices", placeholder: "0,1", help: "GPU device indices" },
-      { name: "device_ratios", flag: "-r", type: "csv", label: "Device Ratios", placeholder: "1,1", help: "VRAM ratios per device (optional)" },
+      { name: "devices", flag: "-d", type: "csv", default: "0", label: "CUDA Devices", placeholder: "0,1", help: "GPUs used, comma separated (e.g. 0,1)" },
+      { name: "device_ratios", flag: "-r", type: "csv", label: "Device Ratios", placeholder: "1,1", help: "VRAM split ratio per device when GPUs are uneven" },
       { name: "template", flag: "-t", type: "template", label: "Template", help: "README template style" },
-      { name: "layers", flag: "-l", type: "select", choices: ["1", "2", "3"], default: "2", label: "Optimization Depth", help: "Layer depth for optimization", toggleable: true },
+      { name: "layers", flag: "-l", type: "select", choices: ["1", "2", "3"], default: "2", label: "Optimization Depth", help: "1-3, 3 = longer optimization (2 default)", toggleable: true },
       // Boolean flags
       { name: "no_verify", flag: "-nv", type: "boolean", label: "No Verify", help: "Batch mode: all quants then all measures" },
       { name: "no_cleanup", flag: "-nc", type: "boolean", label: "Keep Work Dirs", help: "Keep w-* working directories and logs" },
@@ -33,7 +33,7 @@ const COMMANDS = {
       // Evals section — KL and PPL are on by default (inverted: emit flag when OFF)
       { name: "no_kl", flag: "--no-kl", type: "boolean", label: "KL Divergence", help: "KL divergence measurement", section: "evals", defaultOn: true, invertFlag: true },
       { name: "no_ppl", flag: "--no-ppl", type: "boolean", label: "Perplexity", help: "Perplexity measurement", section: "evals", defaultOn: true, invertFlag: true },
-      { name: "catbench", flag: "-cb", type: "number", label: "Catbench", placeholder: "3", help: "SVG Catbench samples per BPW", toggleable: true, section: "evals" },
+      { name: "catbench", flag: "-cb", type: "number", label: "Catbench", placeholder: "3", help: "cat attempts per BPW", toggleable: true, section: "evals" },
       { name: "diversity", flag: "-div", type: "number", label: "Diversity", placeholder: "50", help: "Output diversity eval (N samples)", toggleable: true, section: "evals" },
       { name: "humaneval", flag: "-he", type: "number", label: "HumanEval", placeholder: "200", help: "Code generation eval (N samples/task)", toggleable: true, section: "evals" },
       { name: "ifbench", flag: "-ifb", type: "number", label: "IFBench", placeholder: "16384", help: "Instruction following eval (max tokens)", toggleable: true, section: "evals" },
@@ -49,7 +49,7 @@ const COMMANDS = {
     description: "Run quantization without measurement or README",
     fields: [
       { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "BF16/base model directory" },
-      { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "Target bits per weight",
+      { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "1-8, comma separated, decimals ok (e.g. 2,3,4.5,6)",
         bpwPaintFlags: [
           { name: "hq", flag: "-hq", label: "-hq", color: "#4a90d9", tooltip: "use on low bpws" },
           { name: "hb8", flag: "-hb8", label: "-hb 8", color: "#43a047", tooltip: "use on high bpws" },
@@ -57,11 +57,11 @@ const COMMANDS = {
           { name: "pm", flag: "-pm", label: "-pm", color: "#ffffff", isGlobal: true, tooltip: "use on MoEs" },
         ]
       },
-      { name: "devices", flag: "-d", type: "csv", default: "0", label: "CUDA Devices", placeholder: "0,1" },
-      { name: "device_ratios", flag: "-r", type: "csv", label: "Device Ratios", placeholder: "1,1" },
+      { name: "devices", flag: "-d", type: "csv", default: "0", label: "CUDA Devices", placeholder: "0,1", help: "GPUs used, comma separated (e.g. 0,1)" },
+      { name: "device_ratios", flag: "-r", type: "csv", label: "Device Ratios", placeholder: "1,1", help: "VRAM split ratio per device when GPUs are uneven" },
       { name: "out_template", flag: "--out-template", type: "text", default: "{model}/{bpw}", label: "Output Template", help: "Fields: {model}, {model_name}, {bpw}" },
       { name: "w_template", flag: "--w-template", type: "text", default: "{model}/w-{bpw}", label: "Work Dir Template", help: "Fields: {model}, {model_name}, {bpw}" },
-      { name: "layers", flag: "-l", type: "select", choices: ["1", "2", "3"], default: "2", label: "Optimization Depth", help: "Layer depth for optimization", toggleable: true },
+      { name: "layers", flag: "-l", type: "select", choices: ["1", "2", "3"], default: "2", label: "Optimization Depth", help: "1-3, 3 = longer optimization (2 default)", toggleable: true },
       { name: "dry", flag: "--dry", type: "boolean", label: "Dry Run", help: "Print commands without executing" },
       { name: "continue_on_error", flag: "--continue-on-error", type: "boolean", label: "Continue on Error" },
       { name: "no_logs", flag: "--no-logs", type: "boolean", label: "No Logs" },
@@ -81,7 +81,7 @@ const COMMANDS = {
       // Evals section — KL and PPL are on by default (inverted: emit flag when OFF)
       { name: "no_kl", flag: "--no-kl", type: "boolean", label: "KL Divergence", help: "KL divergence measurement", section: "evals", defaultOn: true, invertFlag: true },
       { name: "no_ppl", flag: "--no-ppl", type: "boolean", label: "Perplexity", help: "Perplexity measurement", section: "evals", defaultOn: true, invertFlag: true },
-      { name: "catbench", flag: "-cb", type: "number", label: "Catbench", placeholder: "3", help: "SVG Catbench samples per BPW", toggleable: true, section: "evals" },
+      { name: "catbench", flag: "-cb", type: "number", label: "Catbench", placeholder: "3", help: "cat attempts per BPW", toggleable: true, section: "evals" },
       { name: "diversity", flag: "-div", type: "number", label: "Diversity", placeholder: "50", help: "Output diversity eval (N samples)", toggleable: true, section: "evals" },
       { name: "humaneval", flag: "-he", type: "number", label: "HumanEval", placeholder: "200", help: "Code generation eval (N samples/task)", toggleable: true, section: "evals" },
       { name: "ifbench", flag: "-ifb", type: "number", label: "IFBench", placeholder: "16384", help: "Instruction following eval (max tokens)", toggleable: true, section: "evals" },

@@ -227,5 +227,89 @@ class QuantizeDecimalBpwTests(unittest.TestCase):
         mock_opt.assert_not_called()
 
 
+class BpwForwardingNormalizationTests(unittest.TestCase):
+    """_build_quant_forwarded_for_bpw must normalize both sides of the
+    hq/hb8 lookup so flag-painted BPWs match the planner-normalized
+    quant queue, regardless of trailing zeros or decimal form."""
+
+    def _has(self, args, *needles):
+        # Check that the entire needles sequence appears contiguously in args
+        for i in range(len(args) - len(needles) + 1):
+            if list(args[i:i + len(needles)]) == list(needles):
+                return True
+        return False
+
+    def test_hq_matches_when_user_typed_trailing_zero(self):
+        # User typed "4.0" in the UI; planner normalizes to "4"
+        forwarded = repo._build_quant_forwarded_for_bpw(
+            quant_args=[], devices=[0], device_ratios=None,
+            bpw="4", hq_bpws={"4.0"}, hb8_bpws=None,
+        )
+        self.assertIn("-hq", forwarded)
+
+    def test_hb8_matches_when_user_typed_trailing_zero(self):
+        forwarded = repo._build_quant_forwarded_for_bpw(
+            quant_args=[], devices=[0], device_ratios=None,
+            bpw="6", hq_bpws=None, hb8_bpws={"6.0"},
+        )
+        self.assertTrue(self._has(forwarded, "-hb", "8"))
+
+    def test_fractional_normalization(self):
+        # User typed "5.50"; planner normalizes to "5.5"
+        forwarded = repo._build_quant_forwarded_for_bpw(
+            quant_args=[], devices=[0], device_ratios=None,
+            bpw="5.5", hq_bpws={"5.50"}, hb8_bpws=None,
+        )
+        self.assertIn("-hq", forwarded)
+
+    def test_hq_not_added_when_bpw_not_painted(self):
+        forwarded = repo._build_quant_forwarded_for_bpw(
+            quant_args=[], devices=[0], device_ratios=None,
+            bpw="3", hq_bpws={"4", "5"}, hb8_bpws=None,
+        )
+        self.assertNotIn("-hq", forwarded)
+
+
+class OptPaintPropagationTests(unittest.TestCase):
+    """A fractional BPW painted with -opt is built by quantizing its
+    integer neighbors and combining them. Any -hq / -hb8 painted on
+    that fractional should propagate to the donor integers so they
+    actually receive the flag at convert time."""
+
+    def test_hq_propagates_from_opt_fractional_to_neighbors(self):
+        argv = ["quantize", "-m", "/tmp/model", "-b", "4.5", "-d", "0",
+                "-opt", "4.5", "-hq", "4.5"]
+        with patch("ezexl3.repo.run_quant_stage", return_value=0) as mock_quant, \
+             patch("ezexl3.repo._run_optimized_opt_stage"):
+            cli.main(argv)
+        kwargs = mock_quant.call_args.kwargs
+        self.assertIn("4", kwargs["hq_bpws"])
+        self.assertIn("5", kwargs["hq_bpws"])
+
+    def test_hb8_propagates_from_opt_fractional_to_neighbors(self):
+        argv = ["quantize", "-m", "/tmp/model", "-b", "5.5", "-d", "0",
+                "-opt", "5.5", "-hb8", "5.5"]
+        with patch("ezexl3.repo.run_quant_stage", return_value=0) as mock_quant, \
+             patch("ezexl3.repo._run_optimized_opt_stage"):
+            cli.main(argv)
+        kwargs = mock_quant.call_args.kwargs
+        self.assertIn("5", kwargs["hb8_bpws"])
+        self.assertIn("6", kwargs["hb8_bpws"])
+
+    def test_no_propagation_when_fractional_not_in_opt(self):
+        # 4.5 is fractional but NOT painted with -opt → standard fractional,
+        # quantized directly. No propagation should happen.
+        argv = ["quantize", "-m", "/tmp/model", "-b", "4.5", "-d", "0",
+                "-hq", "4.5"]
+        with patch("ezexl3.repo.run_quant_stage", return_value=0) as mock_quant, \
+             patch("ezexl3.repo._run_optimized_opt_stage"):
+            cli.main(argv)
+        kwargs = mock_quant.call_args.kwargs
+        # 4.5 should be in hq_bpws but its integer neighbors should NOT
+        self.assertIn("4.5", kwargs["hq_bpws"])
+        self.assertNotIn("4", kwargs["hq_bpws"])
+        self.assertNotIn("5", kwargs["hq_bpws"])
+
+
 if __name__ == "__main__":
     unittest.main()

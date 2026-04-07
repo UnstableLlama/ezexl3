@@ -409,6 +409,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     # -opt only applies to fractional BPWs; silently drop any integers
     opt_bpws = {b for b in opt_bpws if "." in b}
 
+    # When a fractional BPW is painted with -opt, the actual quantization
+    # happens on its integer neighbors (e.g. 4.5 → quantize 4 and 5, then
+    # combine). Propagate any -hq / -hb8 paints from the fractional onto
+    # those donor integers so the donors are built with the requested
+    # quality flag.
+    import math as _math
+    def _neighbors(frac: str) -> List[str]:
+        try:
+            v = float(frac)
+        except ValueError:
+            return []
+        return [str(int(_math.floor(v))), str(int(_math.ceil(v)))]
+    for frac in opt_bpws:
+        nbrs = _neighbors(frac)
+        if frac in hq_bpws:
+            hq_bpws.update(nbrs)
+        if frac in hb8_bpws:
+            hb8_bpws.update(nbrs)
+
     # Collect enabled eval flags into a dict: {name: arg_value}
     _EVAL_FLAG_NAMES = ["diversity", "humaneval", "ifbench", "longctx", "mmlu", "perf"]
     enabled_evals = {}

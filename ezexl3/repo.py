@@ -1213,10 +1213,15 @@ def _build_quant_forwarded_for_bpw(
 ) -> List[str]:
     """Build per-BPW forwarded args, injecting -hq and/or -hb 8 as needed."""
     forwarded = _build_quant_forwarded(quant_args, devices, device_ratios)
-    bpw_key = bpw.strip()
-    if hq_bpws and bpw_key in hq_bpws and "-hq" not in forwarded:
+    # Normalize both sides through the same canonical form so that "4.0",
+    # "4", and "4.00" all match. Without this, hq_bpws built from raw
+    # CLI strings won't match the planner-normalized bpw being quantized.
+    bpw_key = _normalize_bpw_str(bpw)
+    norm_hq = {_normalize_bpw_str(b) for b in (hq_bpws or set())}
+    norm_hb8 = {_normalize_bpw_str(b) for b in (hb8_bpws or set())}
+    if norm_hq and bpw_key in norm_hq and "-hq" not in forwarded:
         forwarded.append("-hq")
-    if hb8_bpws and bpw_key in hb8_bpws and "-hb" not in forwarded:
+    if norm_hb8 and bpw_key in norm_hb8 and "-hb" not in forwarded:
         forwarded += ["-hb", "8"]
     return forwarded
 
