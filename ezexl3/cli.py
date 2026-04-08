@@ -319,6 +319,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Exclude large files (*.safetensors, *.bin, *.pt, *.ckpt)")
     u.add_argument("--create-only", action="store_true",
                    help="Only create repos/branches, do not upload files")
+    u.add_argument("-dr", "--dry-run", action="store_true",
+                   help="Preview the repos that would be created without contacting HuggingFace")
 
     # --- ui (dashboard) ---
     ui = sub.add_parser("ui", aliases=["dash", "dashboard"],
@@ -604,6 +606,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     private=args.private,
                     small_only=args.small_only,
                     create_only=args.create_only,
+                    dry_run=args.dry_run,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
