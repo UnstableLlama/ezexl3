@@ -491,14 +491,14 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
 .bpw-paint-btn.active[data-paint-flag="hq"] {
   background:
     repeating-linear-gradient(180deg,
-      var(--paint-color) 0px, var(--paint-color) 2px,
-      #000 2px, #000 6px);
+      var(--paint-color) 0px, var(--paint-color) 1px,
+      #000 1px, #000 6px);
 }
 .bpw-paint-btn.active[data-paint-flag="hb8"] {
   background:
     repeating-linear-gradient(90deg,
-      var(--paint-color) 0px, var(--paint-color) 2px,
-      #000 2px, #000 6px);
+      var(--paint-color) 0px, var(--paint-color) 1px,
+      #000 1px, #000 6px);
 }
 .bpw-paint-btn.active[data-paint-flag="opt"] {
   background: transparent;
@@ -512,6 +512,13 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   background: #fff;
   color: #000;
   border-color: #fff;
+}
+
+/* When -pm is on, every token gets a soft white glow to signal that the
+   global flag applies to all of them. Uses box-shadow so it stacks cleanly
+   with the existing outline (-opt) and stripe (-hq/-hb8) flag visuals. */
+.bpw-token-display.pm-active .bpw-token {
+  box-shadow: 0 0 6px 1px rgba(255, 255, 255, 0.55);
 }
 
 /* ── BPW Token Display ─────────────────────────────────────────── */

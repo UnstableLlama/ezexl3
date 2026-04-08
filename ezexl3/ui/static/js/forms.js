@@ -259,15 +259,17 @@ function isValidBpw(s) {
 let activePaint = null;
 
 function togglePaintMode(fieldName, flagName, btn) {
-  const allBtns = btn.parentElement.querySelectorAll(".bpw-paint-btn");
+  // Only clear the paint-mode buttons. Global toggles (e.g. -pm) own their
+  // own active state via bpwGlobalState and must not be wiped here.
+  const paintBtns = btn.parentElement.querySelectorAll(".bpw-paint-btn:not(.bpw-paint-btn-global)");
 
   if (activePaint && activePaint.fieldName === fieldName && activePaint.flagName === flagName) {
     // Deactivate current paint mode
     btn.classList.remove("active");
     activePaint = null;
   } else {
-    // Deactivate any other, activate this one
-    allBtns.forEach(b => b.classList.remove("active"));
+    // Deactivate any other paint button, activate this one
+    paintBtns.forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
     activePaint = { fieldName, flagName };
   }
@@ -290,6 +292,10 @@ function rebuildBpwTokens(fieldName, paintFlags) {
   }
 
   display.innerHTML = "";
+
+  // Apply global-toggle visual classes to the token display (e.g. -pm glow)
+  const globalSet = bpwGlobalState[fieldName] || new Set();
+  display.classList.toggle("pm-active", globalSet.has("pm"));
 
   const validParts = parts.filter(isValidBpw);
   validParts.forEach((bpw, idx) => {
@@ -345,7 +351,8 @@ function rebuildBpwTokens(fieldName, paintFlags) {
           const set = bpwGlobalState[fieldName];
           if (set.has(pf.name)) set.delete(pf.name);
           else set.add(pf.name);
-          btn.classList.toggle("active");
+          // Rebuild so the token glow + button active state stay in sync
+          rebuildBpwTokens(fieldName, paintFlags);
         });
       } else {
         // Restore active state if this paint mode is currently on
@@ -440,18 +447,18 @@ function applyTokenColor(token, flags, paintFlags) {
       token.style.color = "#fff";
       // Accessibility: stripe patterns for color-impaired distinction
       // -hq = horizontal stripes, -hb8 = vertical stripes
-      // 2px color, 3px black — consistent sizing, black slightly larger
+      // 1px color, 5px black — thin stripes with breathing room
       const dir = pf.name === "hq" ? "180deg" : "90deg";
       token.style.backgroundImage =
-        `repeating-linear-gradient(${dir}, ${pf.color} 0px, ${pf.color} 2px, #000 2px, #000 6px)`;
+        `repeating-linear-gradient(${dir}, ${pf.color} 0px, ${pf.color} 1px, #000 1px, #000 6px)`;
     }
   } else if (stripeFlags.length >= 2) {
     // Both hq + hb8: teal/cyan with checkerboard (intersection of horizontal + vertical)
     const c = "#00897b";
     token.style.color = "#fff";
     token.style.backgroundImage =
-      `repeating-linear-gradient(180deg, ${c} 0px, ${c} 2px, transparent 2px, transparent 6px), ` +
-      `repeating-linear-gradient(90deg, ${c} 0px, ${c} 2px, transparent 2px, transparent 6px)`;
+      `repeating-linear-gradient(180deg, ${c} 0px, ${c} 1px, transparent 1px, transparent 6px), ` +
+      `repeating-linear-gradient(90deg, ${c} 0px, ${c} 1px, transparent 1px, transparent 6px)`;
     token.style.backgroundColor = "#000";
   }
 }
