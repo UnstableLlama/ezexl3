@@ -634,6 +634,27 @@ const META_FIELDS = [
   { key: "USER", label: "Quantized By", help: "Your HuggingFace username" },
 ];
 
+// Return the metadata fields the active command should expose. Commands
+// may set `metadataFields: ["MODEL", "USER"]` to show only a subset; by
+// default all four fields are shown.
+function getVisibleMetaFields(cmd) {
+  if (cmd && Array.isArray(cmd.metadataFields) && cmd.metadataFields.length) {
+    const set = new Set(cmd.metadataFields);
+    return META_FIELDS.filter(f => set.has(f.key));
+  }
+  return META_FIELDS;
+}
+
+function allVisibleMetaFieldsReady(cmd) {
+  const visible = getVisibleMetaFields(cmd);
+  if (!visible.length) return true;
+  return visible.every(f => {
+    const field = document.querySelector(`.meta-field[data-key="${f.key}"]`);
+    const input = document.getElementById(`meta-${f.key}`);
+    return field && field.classList.contains("locked") && input && input.value.trim();
+  });
+}
+
 function renderMetadataPanel(commandKey) {
   const panel = document.getElementById("metadata-panel");
   const cmd = COMMANDS[commandKey];
@@ -653,7 +674,8 @@ function renderMetadataPanel(commandKey) {
   const container = document.getElementById("metadata-fields");
   container.innerHTML = "";
 
-  for (const f of META_FIELDS) {
+  const visibleFields = getVisibleMetaFields(cmd);
+  for (const f of visibleFields) {
     const div = document.createElement("div");
     div.className = "meta-field";
     div.dataset.key = f.key;
@@ -759,11 +781,14 @@ async function loadMetadataDefaults(force) {
   const modelDir = getModelDir();
   if (!modelDir) return;
 
+  const cmd = COMMANDS[activeCommand];
+  const visible = getVisibleMetaFields(cmd);
+
   try {
     const res = await fetch(`/api/metadata?model_dir=${encodeURIComponent(modelDir)}`);
     if (!res.ok) return;
     const data = await res.json();
-    for (const f of META_FIELDS) {
+    for (const f of visible) {
       const input = document.getElementById(`meta-${f.key}`);
       if (!input) continue;
       // Don't overwrite locked fields
@@ -771,6 +796,24 @@ async function loadMetadataDefaults(force) {
       if (field && field.classList.contains("locked")) continue;
       if (data[f.key] && (!input.value || force)) {
         input.value = data[f.key];
+      }
+    }
+    // Restore lock state the backend saved for our visible fields so the
+    // user's previous lock choices persist across reloads.
+    const savedLocks = data._locked || {};
+    for (const f of visible) {
+      if (!savedLocks[f.key]) continue;
+      const field = document.querySelector(`.meta-field[data-key="${f.key}"]`);
+      const input = document.getElementById(`meta-${f.key}`);
+      const lockBtn = document.querySelector(`.meta-lock[data-key="${f.key}"]`);
+      if (field && !field.classList.contains("locked") && input && input.value.trim()) {
+        field.classList.add("locked");
+        if (lockBtn) {
+          lockBtn.classList.add("locked");
+          lockBtn.textContent = "\u{1F512}";
+          lockBtn.title = "Unlock this field";
+        }
+        input.readOnly = true;
       }
     }
     updateMetadataConfirm();
@@ -784,9 +827,12 @@ async function saveMetadata() {
   const dir = getModelDir() || metadataWaitingDir;
   if (!dir) return;
 
+  const cmd = COMMANDS[activeCommand];
+  const visible = getVisibleMetaFields(cmd);
+
   const meta = { model_dir: dir };
   const locked = {};
-  for (const f of META_FIELDS) {
+  for (const f of visible) {
     const input = document.getElementById(`meta-${f.key}`);
     const field = document.querySelector(`.meta-field[data-key="${f.key}"]`);
     meta[f.key] = input ? input.value.trim() : "";
@@ -808,9 +854,11 @@ async function confirmMetadata() {
   // Save with _confirm flag to clear the _waiting state on disk
   const dir = getModelDir() || metadataWaitingDir;
   if (dir) {
+    const cmd = COMMANDS[activeCommand];
+    const visible = getVisibleMetaFields(cmd);
     const meta = { model_dir: dir, _confirm: true };
     const locked = {};
-    for (const f of META_FIELDS) {
+    for (const f of visible) {
       const input = document.getElementById(`meta-${f.key}`);
       const field = document.querySelector(`.meta-field[data-key="${f.key}"]`);
       meta[f.key] = input ? input.value.trim() : "";
@@ -838,14 +886,22 @@ async function confirmMetadata() {
 
 
 function updateMetadataConfirm() {
-  const allLocked = META_FIELDS.every(f => {
-    const field = document.querySelector(`.meta-field[data-key="${f.key}"]`);
-    const input = document.getElementById(`meta-${f.key}`);
-    return field && field.classList.contains("locked") && input && input.value.trim();
-  });
+  const cmd = COMMANDS[activeCommand];
+  const allLocked = allVisibleMetaFieldsReady(cmd);
 
   const btn = document.getElementById("metadata-confirm");
   if (btn) btn.disabled = !allLocked;
+
+  // Upload tab uses the two-action Create/Upload buttons — gate them on the
+  // same "all visible fields locked" condition. The user must lock MODEL +
+  // USER before either button becomes clickable.
+  if (cmd && cmd.twoActions) {
+    const createBtn = document.getElementById("create-repos-btn");
+    const uploadBtn = document.getElementById("upload-btn");
+    const disabled = !allLocked || jobRunning;
+    if (createBtn) createBtn.disabled = disabled;
+    if (uploadBtn) uploadBtn.disabled = disabled;
+  }
 
   // Pre-fill mode: auto-save when all locked and not waiting for pipeline
   if (allLocked && !metadataWaitingDir) {
@@ -886,8 +942,12 @@ function showMetadataWait(modelDir) {
   // window is considered closed — the pipeline is waiting for input now.
   metadataFrozen = false;
 
-  // If current command doesn't have a metadata panel, switch to readme
-  if (!COMMANDS[activeCommand]?.hasMetadata) {
+  // If current command doesn't have a metadata panel, or only shows a
+  // subset of fields (e.g. upload tab shows just MODEL + USER), switch to
+  // the readme tab so the user sees all four fields the README needs.
+  const activeCmd = COMMANDS[activeCommand];
+  const hasFullMetadata = activeCmd && activeCmd.hasMetadata && !activeCmd.metadataFields;
+  if (!hasFullMetadata) {
     selectCommand("readme");
   }
 

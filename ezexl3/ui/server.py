@@ -427,7 +427,12 @@ async def handle_metadata_get(request: web.Request) -> web.Response:
 
 
 async def handle_metadata_set(request: web.Request) -> web.Response:
-    """Save README metadata to the model directory, clearing any waiting flag."""
+    """Save README metadata to the model directory, clearing any waiting flag.
+
+    Merges over any existing metadata: only keys present in the request are
+    updated, so a partial editor (e.g. the upload tab, which only shows
+    MODEL and USER) won't wipe AUTHOR/REPOLINK set elsewhere.
+    """
     data = await request.json()
     model_dir = data.get("model_dir", "").strip()
     if not model_dir:
@@ -436,26 +441,26 @@ async def handle_metadata_set(request: web.Request) -> web.Response:
     # Only clear _waiting when the dashboard explicitly confirms (Resume click)
     confirm = data.get("_confirm", False)
 
-    # Read existing state to preserve _waiting unless confirming
     meta_path = os.path.join(model_dir, ".ezexl3_readme_meta.json")
-    existing_waiting = False
-    if not confirm and os.path.exists(meta_path):
+    existing: dict = {}
+    if os.path.exists(meta_path):
         try:
             existing = json.loads(Path(meta_path).read_text("utf-8"))
-            existing_waiting = existing.get("_waiting", False)
         except Exception:
-            pass
+            existing = {}
 
-    meta = {
-        "AUTHOR": data.get("AUTHOR", ""),
-        "MODEL": data.get("MODEL", ""),
-        "REPOLINK": data.get("REPOLINK", ""),
-        "USER": data.get("USER", ""),
-        "_locked": data.get("_locked", {}),
-        "_waiting": existing_waiting if not confirm else False,
-    }
+    meta = dict(existing)
+    for key in ("AUTHOR", "MODEL", "REPOLINK", "USER"):
+        if key in data:
+            meta[key] = data[key]
 
-    meta_path = os.path.join(model_dir, ".ezexl3_readme_meta.json")
+    # Merge lock state — incoming wins, existing entries for other fields kept
+    existing_locked = existing.get("_locked") or {}
+    incoming_locked = data.get("_locked") or {}
+    meta["_locked"] = {**existing_locked, **incoming_locked}
+
+    meta["_waiting"] = False if confirm else existing.get("_waiting", False)
+
     os.makedirs(model_dir, exist_ok=True)
     Path(meta_path).write_text(json.dumps(meta, indent=2), "utf-8")
 
