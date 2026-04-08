@@ -210,7 +210,7 @@ class InterleavedPipelineTests(unittest.TestCase):
     def _base_patches(self):
         """Common patches for run_repo tests."""
         return {
-            "quant_run_one": patch("ezexl3.repo.quant_run_one", return_value=True),
+            "quant_run_one": patch("ezexl3.repo._run_quant_one_isolated", return_value=True),
             "run_measure_single_bpw": patch("ezexl3.repo.run_measure_single_bpw", return_value=0),
             "run_measure_stage": patch("ezexl3.repo.run_measure_stage", return_value=0),
             "_run_optimized_opt_stage": patch("ezexl3.repo._run_optimized_opt_stage"),
