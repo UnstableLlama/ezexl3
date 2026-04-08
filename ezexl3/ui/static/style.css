@@ -513,13 +513,9 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   color: #000;
   border-color: #fff;
 }
-
-/* When -pm is on, every token gets a soft white glow to signal that the
-   global flag applies to all of them. Uses box-shadow so it stacks cleanly
-   with the existing outline (-opt) and stripe (-hq/-hb8) flag visuals. */
-.bpw-token-display.pm-active .bpw-token {
-  box-shadow: 0 0 6px 1px rgba(255, 255, 255, 0.55);
-}
+/* Token glow for active -pm is set inline by applyTokenColor in forms.js,
+   so it always survives rebuilds and stacks cleanly with -opt outlines
+   and -hq/-hb8 stripes. */
 
 /* ── BPW Token Display ─────────────────────────────────────────── */
 .bpw-token-wrap {
