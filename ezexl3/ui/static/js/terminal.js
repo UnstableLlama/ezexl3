@@ -74,7 +74,18 @@ function _finalizeAllProgress(el) {
 async function runUploadAction(action) {
   if (jobRunning) return;
 
-  // Check HF auth first
+  // Metadata gate: require MODEL + USER to be locked and non-empty before
+  // we do anything — these drive the repo namespace and naming.
+  const cmd = COMMANDS.upload;
+  if (typeof allVisibleMetaFieldsReady === "function" && !allVisibleMetaFieldsReady(cmd)) {
+    clearTerminal();
+    appendTerminal("Lock the Model Name and Quantized By fields in the metadata panel before uploading.\n", "term-stderr");
+    terminalStatus().textContent = "Metadata not locked";
+    terminalStatus().className = "terminal-status error";
+    return;
+  }
+
+  // Check HF auth
   try {
     const authRes = await fetch("/api/hf-auth");
     const authData = await authRes.json();
@@ -295,6 +306,9 @@ function updateRunButton() {
   if (typeof updateChatButton === "function") updateChatButton();
   if (typeof syncMetaLockState === "function") syncMetaLockState();
   if (typeof syncFormLockState === "function") syncFormLockState();
+  // Re-apply the metadata gate — on upload tab this keeps the Create/Upload
+  // buttons disabled unless MODEL and USER are locked.
+  if (typeof updateMetadataConfirm === "function") updateMetadataConfirm();
 }
 
 

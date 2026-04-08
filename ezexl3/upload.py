@@ -350,17 +350,25 @@ def run_upload(
     create_only: bool = False,
 ) -> int:
     """Top-level upload orchestrator. Agnostic to folder contents."""
-    from ezexl3.readme import _compute_defaults
+    from ezexl3.readme import _compute_defaults, _read_saved_metadata
 
     model_dir = os.path.abspath(model_dir)
     model_name = os.path.basename(model_dir)
 
-    # Auth check
-    hf_user = check_hf_auth()
+    # Auth check (ensures the user is logged in to HF; the namespace used for
+    # the upload can still be overridden via saved metadata — e.g. pushing to
+    # an org the authenticated user belongs to).
+    authed_user = check_hf_auth()
 
-    # Compute model name from directory
+    # Prefer saved README metadata (MODEL + USER) over computed defaults so
+    # the dashboard's upload metadata panel drives the repo naming. This is
+    # the same .ezexl3_readme_meta.json that the README tab writes.
+    saved = _read_saved_metadata(model_dir) or {}
     defaults = _compute_defaults(model_dir)
-    model = defaults.get("MODEL", model_name)
+    model = (saved.get("MODEL") or "").strip() or defaults.get("MODEL", model_name)
+    hf_user = (saved.get("USER") or "").strip() or authed_user
+    if hf_user != authed_user:
+        print(f"ℹ️  Uploading under namespace '{hf_user}' (authenticated as '{authed_user}')")
 
     # Normalize BPWs
     bpw_labels = [_format_bpw(b) for b in bpws]

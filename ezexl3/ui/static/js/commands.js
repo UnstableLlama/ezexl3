@@ -112,6 +112,8 @@ const COMMANDS = {
     subtitle: "HuggingFace",
     description: "Create repos and upload to HuggingFace",
     twoActions: true,
+    hasMetadata: true,
+    metadataFields: ["MODEL", "USER"],
     fields: [
       { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "Directory with quantized models" },
       { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "BPWs to upload" },
