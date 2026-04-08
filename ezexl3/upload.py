@@ -348,6 +348,7 @@ def run_upload(
     private: bool = False,
     small_only: bool = False,
     create_only: bool = False,
+    dry_run: bool = False,
 ) -> int:
     """Top-level upload orchestrator. Agnostic to folder contents."""
     from ezexl3.readme import _compute_defaults, _read_saved_metadata
@@ -357,8 +358,9 @@ def run_upload(
 
     # Auth check (ensures the user is logged in to HF; the namespace used for
     # the upload can still be overridden via saved metadata — e.g. pushing to
-    # an org the authenticated user belongs to).
-    authed_user = check_hf_auth()
+    # an org the authenticated user belongs to). Skipped in dry-run so users
+    # can preview repo layouts without logging in.
+    authed_user = "" if dry_run else check_hf_auth()
 
     # Prefer saved README metadata (MODEL + USER) over computed defaults so
     # the dashboard's upload metadata panel drives the repo naming. This is
@@ -366,14 +368,16 @@ def run_upload(
     saved = _read_saved_metadata(model_dir) or {}
     defaults = _compute_defaults(model_dir)
     model = (saved.get("MODEL") or "").strip() or defaults.get("MODEL", model_name)
-    hf_user = (saved.get("USER") or "").strip() or authed_user
-    if hf_user != authed_user:
+    hf_user = (saved.get("USER") or "").strip() or authed_user or "<USER>"
+    if authed_user and hf_user != authed_user:
         print(f"ℹ️  Uploading under namespace '{hf_user}' (authenticated as '{authed_user}')")
 
     # Normalize BPWs
     bpw_labels = [_format_bpw(b) for b in bpws]
 
     print(f"\n{'='*60}")
+    if dry_run:
+        print(f"🧪 DRY RUN — no repos will be created, no files will be uploaded")
     print(f"Upload: {model_name}")
     print(f"Mode: {'BRANCHED (single repo, branches per BPW)' if mode == 'branched' else 'SINGLE (separate repo per BPW)'}")
     print(f"BPWs: {', '.join(bpw_labels)}")
@@ -385,13 +389,17 @@ def run_upload(
     # Show exactly what repos will be created
     if mode == "branched":
         repo_id = f"{hf_user}/{model}-exl3"
-        print(f"\nRepo: {repo_id}")
+        print(f"\nRepo: https://huggingface.co/{repo_id}")
         print(f"Branches: {', '.join(bpw_labels)}")
     else:
         print(f"\nRepos:")
         for label in bpw_labels:
-            print(f"  {hf_user}/{model}-exl3-{label}")
+            print(f"  https://huggingface.co/{hf_user}/{model}-exl3-{label}")
     print(f"{'='*60}\n")
+
+    if dry_run:
+        print("🧪 Dry run complete. Re-run without --dry-run to create and upload.")
+        return 0
 
     if mode == "branched":
         repo_id = f"{hf_user}/{model}-exl3"

@@ -85,21 +85,6 @@ async function runUploadAction(action) {
     return;
   }
 
-  // Check HF auth
-  try {
-    const authRes = await fetch("/api/hf-auth");
-    const authData = await authRes.json();
-    if (!authData.authenticated) {
-      clearTerminal();
-      appendTerminal("Not logged in to HuggingFace. Run `hf login` in your terminal first.\n", "term-stderr");
-      terminalStatus().textContent = "HF auth required";
-      terminalStatus().className = "terminal-status error";
-      return;
-    }
-  } catch (e) {
-    // Continue anyway — the CLI will check auth too
-  }
-
   const args = collectArgs();
   if (args.error) {
     terminalStatus().textContent = args.error;
@@ -107,7 +92,27 @@ async function runUploadAction(action) {
     return;
   }
 
-  // Append --create-only for "create" action
+  const isDryRun = args.includes("-dr") || args.includes("--dry-run");
+
+  // Check HF auth — skipped in dry-run mode (preview doesn't touch HF)
+  if (!isDryRun) {
+    try {
+      const authRes = await fetch("/api/hf-auth");
+      const authData = await authRes.json();
+      if (!authData.authenticated) {
+        clearTerminal();
+        appendTerminal("Not logged in to HuggingFace. Run `hf login` in your terminal first.\n", "term-stderr");
+        terminalStatus().textContent = "HF auth required";
+        terminalStatus().className = "terminal-status error";
+        return;
+      }
+    } catch (e) {
+      // Continue anyway — the CLI will check auth too
+    }
+  }
+
+  // Append --create-only for "create" action (ignored by the CLI in dry-run
+  // mode, but harmless to include)
   if (action === "create") {
     args.push("--create-only");
   }
@@ -120,7 +125,10 @@ async function runUploadAction(action) {
 
   jobRunning = true;
   updateRunButton();
-  terminalStatus().textContent = action === "create" ? "Creating repos..." : "Uploading...";
+  const runningLabel = isDryRun
+    ? "Dry run..."
+    : action === "create" ? "Creating repos..." : "Uploading...";
+  terminalStatus().textContent = runningLabel;
   terminalStatus().className = "terminal-status running";
 
   try {
