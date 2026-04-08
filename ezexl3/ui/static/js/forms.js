@@ -293,9 +293,11 @@ function rebuildBpwTokens(fieldName, paintFlags) {
 
   display.innerHTML = "";
 
-  // Apply global-toggle visual classes to the token display (e.g. -pm glow)
+  // Global toggles (e.g. -pm) apply universally to every token. We pass
+  // the resolved set into applyTokenColor so the visual flag (white glow)
+  // is set as an inline style and survives any CSS specificity quirks.
   const globalSet = bpwGlobalState[fieldName] || new Set();
-  display.classList.toggle("pm-active", globalSet.has("pm"));
+  const pmActive = globalSet.has("pm");
 
   const validParts = parts.filter(isValidBpw);
   validParts.forEach((bpw, idx) => {
@@ -306,7 +308,7 @@ function rebuildBpwTokens(fieldName, paintFlags) {
 
     // Apply flag colors
     const flags = bpwFlagState[fieldName][bpw] || new Set();
-    applyTokenColor(token, flags, paintFlags);
+    applyTokenColor(token, flags, paintFlags, pmActive);
 
     token.addEventListener("mousedown", (e) => {
       if (jobRunning) return;
@@ -411,15 +413,23 @@ function lighten(hex, amount) {
   return `#${nr.toString(16).padStart(2,"0")}${ng.toString(16).padStart(2,"0")}${nb.toString(16).padStart(2,"0")}`;
 }
 
-function applyTokenColor(token, flags, paintFlags) {
-  // Reset
+function applyTokenColor(token, flags, paintFlags, pmActive = false) {
+  // Reset every style this function might set, so consecutive rebuilds
+  // never leave stale visual state on a token.
   token.style.backgroundColor = "";
   token.style.backgroundImage = "";
   token.style.color = "";
   token.style.border = "";
   token.style.outline = "";
   token.style.outlineOffset = "";
+  token.style.boxShadow = "";
   token.classList.remove("bpw-token-flagged");
+
+  // -pm is a global toggle, not per-token, but we render its visual signal
+  // (a soft white glow) on every token whenever the flag is on.
+  if (pmActive) {
+    token.style.boxShadow = "0 0 6px 1px rgba(255, 255, 255, 0.55)";
+  }
 
   if (flags.size === 0) return;
 
