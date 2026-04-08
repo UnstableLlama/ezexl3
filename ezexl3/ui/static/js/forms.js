@@ -629,6 +629,7 @@ function saveModelDir(dir) {
 
 const META_FIELDS = [
   { key: "AUTHOR", label: "Author", help: "Model author / organization" },
+  { key: "MODEL_DIR", label: "Model Directory", help: "Filesystem path that holds the quantized BPW subfolders. Mirrors the Model Directory form field above — lock to confirm it's the right path.", mirror: "models", transient: true },
   { key: "MODEL", label: "Model Name", help: "Base model name" },
   { key: "REPOLINK", label: "Repo Link", help: "Link to original model" },
   { key: "USER", label: "Quantized By", help: "Your HuggingFace username" },
@@ -636,13 +637,14 @@ const META_FIELDS = [
 
 // Return the metadata fields the active command should expose. Commands
 // may set `metadataFields: ["MODEL", "USER"]` to show only a subset; by
-// default all four fields are shown.
+// default all non-transient fields are shown. Transient fields (e.g.
+// MODEL_DIR, which is a UI-only mirror) are opt-in via metadataFields.
 function getVisibleMetaFields(cmd) {
   if (cmd && Array.isArray(cmd.metadataFields) && cmd.metadataFields.length) {
     const set = new Set(cmd.metadataFields);
     return META_FIELDS.filter(f => set.has(f.key));
   }
-  return META_FIELDS;
+  return META_FIELDS.filter(f => !f.transient);
 }
 
 function allVisibleMetaFieldsReady(cmd) {
@@ -704,6 +706,12 @@ function renderMetadataPanel(commandKey) {
     input.type = "text";
     input.className = "meta-input";
     input.id = `meta-${f.key}`;
+    // Mirror fields (e.g. MODEL_DIR mirrors the -m form field) are read-only
+    // — the user edits the source and this just reflects the value.
+    if (f.mirror) {
+      input.readOnly = true;
+      input.placeholder = "Set via Model Directory above";
+    }
     input.addEventListener("input", updateMetadataConfirm);
     inputRow.appendChild(input);
 
@@ -720,16 +728,57 @@ function renderMetadataPanel(commandKey) {
     container.appendChild(div);
   }
 
-  // Wire model dir changes to reload defaults
+  // Wire model dir changes to reload defaults + sync any mirror fields
   const modelInput = document.getElementById("field-models");
   if (modelInput) {
-    modelInput.addEventListener("change", () => loadMetadataDefaults(true));
+    modelInput.addEventListener("change", () => {
+      loadMetadataDefaults(true);
+      syncModelDirMirror(true);
+    });
+    // Live sync while the user is typing, so the mirror never falls behind.
+    modelInput.addEventListener("input", () => syncModelDirMirror(true));
   }
 
   // Apply run-locked state if a job is already running
   syncMetaLockState();
+  syncModelDirMirror(false);
   updateMetadataConfirm();
   loadMetadataDefaults(false);
+}
+
+
+// Copy the -m form field's value into any metadata fields marked with
+// `mirror: "models"` (currently just MODEL_DIR). If the value actually
+// changed, clear that field's lock — the user has to re-confirm after
+// editing the path. Called from the form input handler AND from the
+// browser modal after a path is picked.
+function syncModelDirMirror(clearLockOnChange) {
+  const src = document.getElementById("field-models");
+  if (!src) return;
+  const newValue = (src.value || "").trim();
+
+  for (const f of META_FIELDS) {
+    if (f.mirror !== "models") continue;
+    const input = document.getElementById(`meta-${f.key}`);
+    if (!input) continue;
+    const prev = input.value;
+    if (prev === newValue) continue;
+    input.value = newValue;
+
+    if (clearLockOnChange) {
+      const field = document.querySelector(`.meta-field[data-key="${f.key}"]`);
+      const lockBtn = document.querySelector(`.meta-lock[data-key="${f.key}"]`);
+      if (field && field.classList.contains("locked")) {
+        field.classList.remove("locked");
+        if (lockBtn) {
+          lockBtn.classList.remove("locked");
+          lockBtn.textContent = "\u{1F513}";
+          lockBtn.title = "Lock this field";
+        }
+      }
+    }
+  }
+  updateMetadataConfirm();
 }
 
 
@@ -789,6 +838,9 @@ async function loadMetadataDefaults(force) {
     if (!res.ok) return;
     const data = await res.json();
     for (const f of visible) {
+      // Transient fields (e.g. MODEL_DIR) aren't stored on the server —
+      // skip them here so we don't overwrite the mirror.
+      if (f.transient) continue;
       const input = document.getElementById(`meta-${f.key}`);
       if (!input) continue;
       // Don't overwrite locked fields
@@ -802,6 +854,7 @@ async function loadMetadataDefaults(force) {
     // user's previous lock choices persist across reloads.
     const savedLocks = data._locked || {};
     for (const f of visible) {
+      if (f.transient) continue;
       if (!savedLocks[f.key]) continue;
       const field = document.querySelector(`.meta-field[data-key="${f.key}"]`);
       const input = document.getElementById(`meta-${f.key}`);
@@ -833,6 +886,8 @@ async function saveMetadata() {
   const meta = { model_dir: dir };
   const locked = {};
   for (const f of visible) {
+    // Skip transient fields (MODEL_DIR) — they live in the UI only.
+    if (f.transient) continue;
     const input = document.getElementById(`meta-${f.key}`);
     const field = document.querySelector(`.meta-field[data-key="${f.key}"]`);
     meta[f.key] = input ? input.value.trim() : "";
@@ -859,6 +914,7 @@ async function confirmMetadata() {
     const meta = { model_dir: dir, _confirm: true };
     const locked = {};
     for (const f of visible) {
+      if (f.transient) continue;
       const input = document.getElementById(`meta-${f.key}`);
       const field = document.querySelector(`.meta-field[data-key="${f.key}"]`);
       meta[f.key] = input ? input.value.trim() : "";

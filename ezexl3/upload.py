@@ -401,6 +401,23 @@ def run_upload(
         print("🧪 Dry run complete. Re-run without --dry-run to create and upload.")
         return 0
 
+    # Pre-flight: make sure the model directory and every BPW subdir the
+    # user asked for actually exist before we touch HuggingFace. Prevents
+    # the footgun where repos get created on HF and then every BPW is
+    # skipped because the model_dir was stale or wrong.
+    if not create_only:
+        if not os.path.isdir(model_dir):
+            print(f"🔴 Model directory does not exist: {model_dir}")
+            return 1
+        missing = [b for b in bpws if not os.path.isdir(os.path.join(model_dir, b))]
+        if missing:
+            print(f"🔴 Missing BPW subdirectories in {model_dir}:")
+            for b in missing:
+                print(f"     {os.path.join(model_dir, b)}")
+            print(f"   Aborting BEFORE creating any HuggingFace repos.")
+            print(f"   Check the Model Directory — it should contain a subfolder per BPW.")
+            return 1
+
     if mode == "branched":
         repo_id = f"{hf_user}/{model}-exl3"
         create_repos_branched(repo_id, bpws, private=private)
