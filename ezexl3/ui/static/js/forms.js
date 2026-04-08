@@ -305,6 +305,7 @@ function rebuildBpwTokens(fieldName, paintFlags) {
     token.className = "bpw-token";
     token.textContent = bpw;
     token.dataset.bpw = bpw;
+    token.title = "click a color then click me";
 
     // Apply flag colors
     const flags = bpwFlagState[fieldName][bpw] || new Set();
