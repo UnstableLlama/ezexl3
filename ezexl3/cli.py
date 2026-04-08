@@ -301,8 +301,8 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("readme", help="README only (CSV -> README)")
     r.add_argument("-m", "--models", nargs="+", required=True, help="One or more model directories")
     r.add_argument("-b", "--bpws", nargs="+", default=None, help="BPWs (required for single mode, auto-detected otherwise)")
-    r.add_argument("--mode", choices=["branched", "single"], default="branched",
-                   help="branched: single README. single: per-BPW READMEs with cross-linked repos")
+    r.add_argument("--mode", choices=["branched", "single"], default="single",
+                   help="single: per-BPW READMEs with cross-linked repos. branched: single README")
     r.add_argument("--no-prompt", "-np", action="store_true", help="Use defaults for README instead of prompting")
     r.add_argument("--no-graph", "-ng", action="store_true", help="Do not generate or embed the README SVG graph")
     r.add_argument("--no-measurement", "-nm", action="store_true", help="Remove KL/PPL columns from README and skip graph embedding")
