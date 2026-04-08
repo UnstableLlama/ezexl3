@@ -99,7 +99,7 @@ const COMMANDS = {
     fields: [
       { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "Directory with measurement CSV" },
       { name: "bpws", flag: "-b", type: "csv", label: "BPWs", placeholder: "2,3,4,5,6", help: "BPWs (required for single mode, auto-detected otherwise)" },
-      { name: "mode", flag: "--mode", type: "select", choices: ["branched", "single"], default: "branched", label: "Mode", help: "Branched: single README. Single: per-BPW READMEs with cross-linked repos" },
+      { name: "mode", flag: "--mode", type: "select", choices: ["single", "branched"], default: "single", label: "Mode", help: "Single: per-BPW READMEs with cross-linked repos. Branched: single README" },
       { name: "template", flag: "-t", type: "template", label: "Template", help: "README template style" },
       { name: "no_prompt", flag: "-np", type: "boolean", label: "Headless", help: "Use defaults for metadata" },
       { name: "no_graph", flag: "-ng", type: "boolean", label: "No Graph" },
