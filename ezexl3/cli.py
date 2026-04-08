@@ -312,8 +312,8 @@ def build_parser() -> argparse.ArgumentParser:
     u = sub.add_parser("upload", help="Upload quantized models to HuggingFace")
     u.add_argument("-m", "--models", nargs="+", required=True, help="One or more model directories")
     u.add_argument("-b", "--bpws", nargs="+", required=True, help="BPWs to upload (space or comma separated)")
-    u.add_argument("--mode", choices=["branched", "single"], default="branched",
-                   help="branched: single repo with branches per BPW. single: separate repo per BPW")
+    u.add_argument("--mode", choices=["branched", "single"], default="single",
+                   help="single: separate repo per BPW. branched: single repo with branches per BPW")
     u.add_argument("--private", action="store_true", help="Create private HuggingFace repos")
     u.add_argument("--small-only", action="store_true",
                    help="Exclude large files (*.safetensors, *.bin, *.pt, *.ckpt)")
