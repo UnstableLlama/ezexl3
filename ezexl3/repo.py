@@ -1935,7 +1935,13 @@ def run_repo(
     if verify and do_quant and do_measure:
         # --- INTERLEAVED MODE (default) ---
         # Quantize each integer BPW, then immediately verify KL+PPL
-        # before moving to the next. Halts on any failure.
+        # before moving to the next. The first verification step halts on
+        # failure (it's the canary that proves the pipeline is sound);
+        # subsequent verification failures are logged but do not halt the
+        # run, since the user has already seen the pipeline work once and a
+        # later failure is usually transient (VRAM, a flaky measure, etc.).
+        # Quantization failures always halt — a broken quant would poison
+        # every downstream step for that BPW.
         model_dir = os.path.abspath(model_dir)
         ppl_rows, measure_devices = _parse_measure_args(measure_args or [], devices)
         db_path, _out_csv = _init_measure_db(model_dir, measure_devices)
@@ -1945,6 +1951,13 @@ def run_repo(
         print(f"   {len(quant_bpws)} BPW(s) to quantize, {len(optimized_bpws)} -opt BPW(s)")
         print(f"   {len(devices)} GPU(s) for quantization and measurement")
         print("============================================================")
+
+        # Tracks whether any verification step has succeeded yet. Checkpoint
+        # skips (which return rc == 0) count as success, so a run that opens
+        # on already-measured BPWs will correctly treat any later failure as
+        # non-fatal.
+        first_verify_passed = False
+        verify_failures: List[str] = []
 
         # Stage 1: quantize + verify each integer BPW
         for i, bpw in enumerate(quant_bpws):
@@ -1976,9 +1989,17 @@ def run_repo(
                 write_logs=write_logs,
                 include_base_ppl=(i == 0),
             )
-            if rc != 0:
-                print(f"🔴 Verification failed for BPW {bpw}")
-                return 1
+            if rc == 0:
+                first_verify_passed = True
+            else:
+                if not first_verify_passed:
+                    print(f"🔴 Verification failed for first BPW {bpw} — halting")
+                    return 1
+                print(
+                    f"⚠️  Verification failed for BPW {bpw} — continuing "
+                    f"(first verify already passed)"
+                )
+                verify_failures.append(str(bpw))
 
         # Stage 2: optimized optimize (needs all integer quants done)
         if optimized_bpws:
@@ -1999,9 +2020,26 @@ def run_repo(
                     ppl_rows=ppl_rows,
                     write_logs=write_logs,
                 )
-                if rc != 0:
-                    print(f"🔴 Verification failed for optimized BPW {opt_bpw}")
-                    return 1
+                if rc == 0:
+                    first_verify_passed = True
+                else:
+                    if not first_verify_passed:
+                        print(
+                            f"🔴 Verification failed for first (optimized) "
+                            f"BPW {opt_bpw} — halting"
+                        )
+                        return 1
+                    print(
+                        f"⚠️  Verification failed for optimized BPW {opt_bpw} "
+                        f"— continuing (first verify already passed)"
+                    )
+                    verify_failures.append(str(opt_bpw))
+
+        if verify_failures:
+            print(
+                f"\n⚠️  Pipeline completed with {len(verify_failures)} "
+                f"verify failure(s): {', '.join(verify_failures)}"
+            )
 
         # Export DB to CSV for downstream (readme, graph)
         export_csv(db_path, _out_csv)
