@@ -561,12 +561,12 @@ def run_readme_single(
 
         # 2. Rewrite data table links:
         #    FROM: href=".../USER/MODEL-exl3/tree/X.XXbpw"
-        #    TO:   href=".../USER/MODEL-X.XXbpw-exl3"
+        #    TO:   href=".../USER/MODEL-exl3-X.XXbpw"
         #    Current BPW row: remove <a> wrapper, show bold plain text
         for other_bpw in bpws:
             other_label = _format_bpw(other_bpw)
             old_href = f"https://huggingface.co/{quant_repo_base}/tree/{other_label}"
-            new_href = f"https://huggingface.co/{user}/{model}-{other_label}-exl3"
+            new_href = f"https://huggingface.co/{user}/{model}-exl3-{other_label}"
 
             if other_bpw == bpw:
                 content = re.sub(
@@ -579,10 +579,10 @@ def run_readme_single(
 
         # 3. Rewrite download command
         #    FROM: hf download USER/MODEL-exl3 --revision "X.XXbpw" --local-dir ./MODEL-exl3-X.XXbpw
-        #    TO:   hf download USER/MODEL-X.XXbpw-exl3 --local-dir ./MODEL-X.XXbpw-exl3
+        #    TO:   hf download USER/MODEL-exl3-X.XXbpw --local-dir ./MODEL-exl3-X.XXbpw
         content = re.sub(
             rf'hf download {re.escape(quant_repo_base)} --revision "[^"]*" --local-dir \S+',
-            f"hf download {user}/{model}-{label}-exl3 --local-dir ./{model}-{label}-exl3",
+            f"hf download {user}/{model}-exl3-{label} --local-dir ./{model}-exl3-{label}",
             content,
         )
 

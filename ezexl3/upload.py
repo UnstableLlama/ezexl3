@@ -182,7 +182,7 @@ def create_repos_single(
     created = 0
     for bpw in bpws:
         label = _format_bpw(bpw)
-        repo_id = f"{user}/{model}-{label}-exl3"
+        repo_id = f"{user}/{model}-exl3-{label}"
         print(f"📦 Creating repo: {repo_id} (private={private})")
         try:
             api.create_repo(repo_id, private=private, exist_ok=True)
@@ -294,7 +294,7 @@ def upload_single(
 
     for bpw in bpws:
         label = _format_bpw(bpw)
-        repo_id = f"{user}/{model}-{label}-exl3"
+        repo_id = f"{user}/{model}-exl3-{label}"
         bpw_dir = os.path.join(model_dir, bpw)
         if not os.path.isdir(bpw_dir):
             print(f"⚠️  Skipping {label}: directory {bpw_dir} not found")
@@ -382,7 +382,7 @@ def run_upload(
     else:
         print(f"\nRepos:")
         for label in bpw_labels:
-            print(f"  {hf_user}/{model}-{label}-exl3")
+            print(f"  {hf_user}/{model}-exl3-{label}")
     print(f"{'='*60}\n")
 
     if mode == "branched":

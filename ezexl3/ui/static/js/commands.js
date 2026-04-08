@@ -115,7 +115,7 @@ const COMMANDS = {
     fields: [
       { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "Directory with quantized models" },
       { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "BPWs to upload" },
-      { name: "mode", flag: "--mode", type: "select", choices: ["branched", "single"], default: "branched", label: "Mode", help: "Branched: one repo with branches. Single: separate repo per BPW" },
+      { name: "mode", flag: "--mode", type: "select", choices: ["single", "branched"], default: "single", label: "Mode", help: "Single: separate repo per BPW. Branched: one repo with branches" },
       // Boolean flags
       { name: "private", flag: "--private", type: "boolean", label: "Private Repos", help: "Create private HuggingFace repos" },
       { name: "small_only", flag: "--small-only", type: "boolean", label: "Small Files Only", help: "Exclude *.safetensors, *.bin, *.pt, *.ckpt" },
