@@ -20,6 +20,7 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?\x07")
 from pathlib import Path
 
 from aiohttp import web
+from aiohttp.client_exceptions import ClientConnectionError
 
 STATIC_DIR = Path(__file__).parent / "static"
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -258,16 +259,18 @@ async def handle_run_stream(request: web.Request) -> web.Response:
     )
     await response.prepare(request)
 
-    # Replay buffered output
-    cursor = 0
-    for event in list(job.output):
-        sse_data = f"data: {json.dumps(event)}\n\n"
-        await response.write(sse_data.encode("utf-8"))
-        cursor += 1
-
-    # Follow new output
+    # Follow new output. The whole body is wrapped so that a client
+    # disconnect at any point (initial replay, mid-stream, or final
+    # DONE/EOF) is swallowed quietly instead of logging a traceback.
     waiter = job.new_waiter()
     try:
+        # Replay buffered output
+        cursor = 0
+        for event in list(job.output):
+            sse_data = f"data: {json.dumps(event)}\n\n"
+            await response.write(sse_data.encode("utf-8"))
+            cursor += 1
+
         while True:
             waiter.clear()
             # Send any new events since last cursor
@@ -289,13 +292,15 @@ async def handle_run_stream(request: web.Request) -> web.Response:
             except asyncio.TimeoutError:
                 # Send keepalive
                 await response.write(b": keepalive\n\n")
-    except (ConnectionResetError, ConnectionAbortedError):
+
+        await response.write(b"data: [DONE]\n\n")
+        await response.write_eof()
+    except (ConnectionResetError, ConnectionAbortedError, ClientConnectionError, asyncio.CancelledError):
+        # Client went away — nothing to do.
         pass
     finally:
         job.remove_waiter(waiter)
 
-    await response.write(b"data: [DONE]\n\n")
-    await response.write_eof()
     return response
 
 
