@@ -296,6 +296,13 @@ async def handle_run_stream(request: web.Request) -> web.Response:
         return snapshot[start:]
 
     try:
+        # Replay buffered output
+        cursor = 0
+        for event in list(job.output):
+            sse_data = f"data: {json.dumps(event)}\n\n"
+            await response.write(sse_data.encode("utf-8"))
+            cursor += 1
+
         while True:
             waiter.clear()
 
