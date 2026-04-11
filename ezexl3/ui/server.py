@@ -12,6 +12,7 @@ import shutil
 import signal
 import sys
 import tempfile
+import traceback
 import uuid
 import webbrowser
 
@@ -31,16 +32,26 @@ TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 # ---------------------------------------------------------------------------
 
 class Job:
-    __slots__ = ("id", "cmd", "process", "output", "status", "returncode", "_waiters")
+    __slots__ = (
+        "id", "cmd", "process", "output", "status", "returncode",
+        "_waiters", "total_appended",
+    )
 
     def __init__(self, job_id: str, cmd: list[str]):
         self.id = job_id
         self.cmd = cmd
         self.process: asyncio.subprocess.Process | None = None
         self.output: collections.deque[dict] = collections.deque(maxlen=50_000)
+        # Monotonic count of every event ever appended, so stream subscribers
+        # can track progress even when the deque rolls over.
+        self.total_appended: int = 0
         self.status: str = "starting"  # starting | running | stopped | done
         self.returncode: int | None = None
         self._waiters: list[asyncio.Event] = []
+
+    def append_event(self, event: dict) -> None:
+        self.output.append(event)
+        self.total_appended += 1
 
     def notify(self):
         for ev in self._waiters:
@@ -119,8 +130,7 @@ class JobManager:
         code = await proc.wait()
         job.returncode = code
         job.status = "done"
-        event = {"type": "exit", "code": code}
-        job.output.append(event)
+        job.append_event({"type": "exit", "code": code})
         job.notify()
 
     async def stop(self, job_id: str):
@@ -252,7 +262,7 @@ async def handle_run_stream(request: web.Request) -> web.Response:
         reason="OK",
         headers={
             "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-store",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
@@ -273,24 +283,22 @@ async def handle_run_stream(request: web.Request) -> web.Response:
 
         while True:
             waiter.clear()
-            # Send any new events since last cursor
-            current_len = len(job.output)
-            if cursor < current_len:
-                items = list(job.output)
-                for event in items[cursor:]:
+
+            pending = _pending_events()
+            if pending:
+                for event in pending:
                     sse_data = f"data: {json.dumps(event)}\n\n"
                     await response.write(sse_data.encode("utf-8"))
-                cursor = current_len
+                cursor = job.total_appended
 
-            # If job is done and we've sent everything, close
-            if job.status in ("done", "stopped") and cursor >= len(job.output):
+            # If the job is done and we've drained everything, close.
+            if job.status in ("done", "stopped") and cursor >= job.total_appended:
                 break
 
-            # Wait for new data
             try:
                 await asyncio.wait_for(waiter.wait(), timeout=30)
             except asyncio.TimeoutError:
-                # Send keepalive
+                # Send keepalive so intermediaries don't idle us out.
                 await response.write(b": keepalive\n\n")
 
         await response.write(b"data: [DONE]\n\n")
@@ -550,6 +558,11 @@ async def handle_config_set(request: web.Request) -> web.Response:
 @web.middleware
 async def _no_cache_static(request: web.Request, handler):
     resp = await handler(request)
+    # Do NOT touch headers on a response whose body has already started
+    # streaming (our SSE handler calls prepare() itself). Modifying headers
+    # after prepare() is undefined behavior in aiohttp.
+    if getattr(resp, "prepared", False):
+        return resp
     if "Cache-Control" not in resp.headers:
         resp.headers["Cache-Control"] = "no-store"
     return resp
