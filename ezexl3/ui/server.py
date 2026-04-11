@@ -104,35 +104,27 @@ class JobManager:
         return job
 
     async def _read_stream(self, job: Job, stream, stream_type: str):
-        try:
-            while True:
-                chunk = await stream.read(8192)
-                if not chunk:
-                    break
-                text = chunk.decode("utf-8", errors="replace")
-                # Strip ANSI escape sequences (cursor movement, colors, line
-                # clears) that our simple terminal can't handle
-                text = _ANSI_RE.sub("", text)
-                # Split on \n, preserve \r within lines for progress bar
-                # handling
-                lines = text.split("\n")
-                for i, line in enumerate(lines):
-                    if not line and i == len(lines) - 1:
-                        break  # trailing empty after final \n
-                    suffix = "\n" if i < len(lines) - 1 else ""
-                    segment = line + suffix
-                    # Skip lines that are only whitespace/newlines (tqdm padding)
-                    if not segment.strip():
-                        continue
-                    job.append_event({"type": stream_type, "text": segment})
-                job.notify()
-        except Exception:
-            # Never let a reader task die silently — it would stall the UI.
-            print(
-                f"[ezexl3 ui] _read_stream({stream_type}) crashed:",
-                file=sys.stderr,
-            )
-            traceback.print_exc()
+        while True:
+            chunk = await stream.read(8192)
+            if not chunk:
+                break
+            text = chunk.decode("utf-8", errors="replace")
+            # Strip ANSI escape sequences (cursor movement, colors, line clears)
+            # that our simple terminal can't handle
+            text = _ANSI_RE.sub("", text)
+            # Split on \n, preserve \r within lines for progress bar handling
+            lines = text.split("\n")
+            for i, line in enumerate(lines):
+                if not line and i == len(lines) - 1:
+                    break  # trailing empty after final \n
+                suffix = "\n" if i < len(lines) - 1 else ""
+                segment = line + suffix
+                # Skip lines that are only whitespace/newlines (tqdm padding)
+                if not segment.strip():
+                    continue
+                event = {"type": stream_type, "text": segment}
+                job.output.append(event)
+            job.notify()
 
     async def _wait_exit(self, job: Job, proc: asyncio.subprocess.Process):
         code = await proc.wait()
@@ -277,24 +269,10 @@ async def handle_run_stream(request: web.Request) -> web.Response:
     )
     await response.prepare(request)
 
-    # `cursor` is the number of events already sent to *this* client, counted
-    # against job.total_appended (which is monotonic). Using a monotonic
-    # counter instead of len(job.output) means the stream keeps working even
-    # after the bounded output deque rolls over on a long quantize.
+    # Follow new output. The whole body is wrapped so that a client
+    # disconnect at any point (initial replay, mid-stream, or final
+    # DONE/EOF) is swallowed quietly instead of logging a traceback.
     waiter = job.new_waiter()
-    cursor = 0
-
-    def _pending_events() -> list[dict]:
-        """Return any events the client hasn't seen yet, in order."""
-        snapshot = list(job.output)
-        buffered_start = job.total_appended - len(snapshot)
-        if cursor >= job.total_appended:
-            return []
-        # If the deque rolled over, some events are gone forever — start
-        # from whatever is still in the buffer.
-        start = max(0, cursor - buffered_start)
-        return snapshot[start:]
-
     try:
         # Replay buffered output
         cursor = 0
@@ -325,31 +303,9 @@ async def handle_run_stream(request: web.Request) -> web.Response:
 
         await response.write(b"data: [DONE]\n\n")
         await response.write_eof()
-    except (
-        ConnectionResetError,
-        ConnectionAbortedError,
-        ClientConnectionError,
-        asyncio.CancelledError,
-    ) as e:
-        # Client went away mid-stream. Log a single line so we can tell
-        # disconnect-during-quantize apart from other failure modes without
-        # dumping a scary traceback on every reload.
-        print(
-            f"[ezexl3 ui] stream client disconnected "
-            f"(cursor={cursor}/{job.total_appended}, "
-            f"job={job.status}): {type(e).__name__}: {e}",
-            file=sys.stderr,
-        )
-    except Exception:
-        # Something unexpected — log the full traceback so the user can
-        # actually diagnose it instead of just seeing the client-side
-        # "Error in input stream" message.
-        print(
-            f"[ezexl3 ui] handle_run_stream crashed "
-            f"(cursor={cursor}/{job.total_appended}, job={job.status}):",
-            file=sys.stderr,
-        )
-        traceback.print_exc()
+    except (ConnectionResetError, ConnectionAbortedError, ClientConnectionError, asyncio.CancelledError):
+        # Client went away — nothing to do.
+        pass
     finally:
         job.remove_waiter(waiter)
 
