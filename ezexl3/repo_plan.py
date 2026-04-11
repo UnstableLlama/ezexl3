@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 def _normalize_bpw_str(raw: str) -> str:
@@ -51,10 +51,19 @@ def _dedupe_preserve_order(items: List[str]) -> List[str]:
     return out
 
 
-def _plan_repo_bpws(bpws: List[str]) -> Dict[str, List[str]]:
+def _plan_repo_bpws(
+    bpws: List[str], opt_bpws: Optional[set] = None,
+) -> Dict[str, List[str]]:
     ints, fracs = _split_integer_optimized_bpws(bpws)
+    opt_bpws = opt_bpws or set()
+
+    # Only fractionals painted with -opt need the optimization pipeline;
+    # the rest are quantized directly like integer BPWs.
+    optimized_fracs = [f for f in fracs if f in opt_bpws]
+    standard_fracs = [f for f in fracs if f not in opt_bpws]
+
     required_neighbors: List[str] = []
-    for frac in fracs:
+    for frac in optimized_fracs:
         frac_val = float(frac)
         low = math.floor(frac_val)
         high = math.ceil(frac_val)
@@ -62,12 +71,13 @@ def _plan_repo_bpws(bpws: List[str]) -> Dict[str, List[str]]:
 
     requested_ints = _dedupe_preserve_order(ints)
     requested_fracs = _dedupe_preserve_order(fracs)
-    quant_ints = _dedupe_preserve_order(requested_ints + required_neighbors)
-    measure_targets = _dedupe_preserve_order(quant_ints + requested_fracs)
+    # Standard fractionals go into the quant queue alongside integers
+    quant_queue = _dedupe_preserve_order(requested_ints + standard_fracs + required_neighbors)
+    measure_targets = _dedupe_preserve_order(quant_queue + optimized_fracs)
 
     return {
         "requested_integers": requested_ints,
-        "requested_optimizeds": requested_fracs,
-        "quant_integer_queue": quant_ints,
+        "requested_optimizeds": optimized_fracs,
+        "quant_integer_queue": quant_queue,
         "measure_queue": measure_targets,
     }

@@ -11,7 +11,7 @@ import sys
 import threading
 import time
 from multiprocessing import Process, Queue
-from typing import Dict, IO, List, Optional, Tuple
+from typing import Any, Dict, IO, List, Optional, Tuple
 
 from ezexl3.repo_plan import (
     _dedupe_preserve_order,
@@ -37,6 +37,7 @@ from ezexl3.repo_subprocess import (
     _run_cmd,
     _run_cmd_with_progress,
     _run_measure_subprocess,
+    _run_quant_one_isolated,
 )
 from ezexl3.quantize import run as quant_run, run_one as quant_run_one
 from ezexl3.measure import (
@@ -323,6 +324,29 @@ def _build_quant_forwarded(
     return forwarded
 
 
+def _build_quant_forwarded_for_bpw(
+    quant_args: List[str],
+    devices: List[int],
+    device_ratios: Optional[str],
+    bpw: str,
+    hq_bpws: Optional[set] = None,
+    hb8_bpws: Optional[set] = None,
+) -> List[str]:
+    """Build per-BPW forwarded args, injecting -hq and/or -hb 8 as needed."""
+    forwarded = _build_quant_forwarded(quant_args, devices, device_ratios)
+    # Normalize both sides through the same canonical form so that "4.0",
+    # "4", and "4.00" all match. Without this, hq_bpws built from raw
+    # CLI strings won't match the planner-normalized bpw being quantized.
+    bpw_key = _normalize_bpw_str(bpw)
+    norm_hq = {_normalize_bpw_str(b) for b in (hq_bpws or set())}
+    norm_hb8 = {_normalize_bpw_str(b) for b in (hb8_bpws or set())}
+    if norm_hq and bpw_key in norm_hq and "-hq" not in forwarded:
+        forwarded.append("-hq")
+    if norm_hb8 and bpw_key in norm_hb8 and "-hb" not in forwarded:
+        forwarded += ["-hb", "8"]
+    return forwarded
+
+
 def run_quant_stage(
     model_dir: str,
     bpws: List[str],
@@ -334,6 +358,8 @@ def run_quant_stage(
     dry_run: bool = False,
     continue_on_error: bool = False,
     optimized_measure_layers: int = 2,
+    hq_bpws: Optional[set] = None,
+    hb8_bpws: Optional[set] = None,
 ) -> int:
     if optimized_measure_layers not in (1, 2, 3):
         raise ValueError("optimized_measure_layers must be one of: 1, 2, 3")
@@ -342,18 +368,32 @@ def run_quant_stage(
     bpws = [str(b) for b in bpws]
     devices = list(devices)
 
-    forwarded = _build_quant_forwarded(quant_args, devices, device_ratios)
-
-    rc = quant_run(
-        models=[model_dir],
-        bpws=bpws,
-        forwarded=forwarded,
-        out_template=out_template,
-        w_template=w_template,
-        dry_run=dry_run,
-        continue_on_error=continue_on_error,
-    )
-    return rc
+    has_per_bpw_flags = bool(hq_bpws or hb8_bpws)
+    if has_per_bpw_flags:
+        # Per-BPW flags require individual invocations
+        for bpw in bpws:
+            forwarded = _build_quant_forwarded_for_bpw(
+                quant_args, devices, device_ratios, bpw, hq_bpws, hb8_bpws,
+            )
+            ok = quant_run_one(
+                model_dir, bpw, forwarded,
+                out_tmpl=out_template, w_tmpl=w_template, dry_run=dry_run,
+            )
+            if not ok and not continue_on_error:
+                return 1
+        return 0
+    else:
+        forwarded = _build_quant_forwarded(quant_args, devices, device_ratios)
+        rc = quant_run(
+            models=[model_dir],
+            bpws=bpws,
+            forwarded=forwarded,
+            out_template=out_template,
+            w_template=w_template,
+            dry_run=dry_run,
+            continue_on_error=continue_on_error,
+        )
+        return rc
 
 
 def run_measure_single_bpw(
@@ -396,6 +436,9 @@ def run_measure_stage(
     write_logs: bool = True,
     measure_args: Optional[List[str]] = None,
     catbench_n: int = 0,
+    evals: Optional[Dict[str, Any]] = None,
+    skip_kl: bool = False,
+    skip_ppl: bool = False,
 ) -> int:
     return repo_measure.run_measure_stage(
         model_dir=model_dir,
@@ -404,6 +447,9 @@ def run_measure_stage(
         write_logs=write_logs,
         measure_args=measure_args,
         catbench_n=catbench_n,
+        evals=evals,
+        skip_kl=skip_kl,
+        skip_ppl=skip_ppl,
         parse_measure_args_fn=_parse_measure_args,
         init_measure_db_fn=_init_measure_db,
         read_db_rows_fn=_read_db_rows,
@@ -450,43 +496,69 @@ def run_repo(
     optimized_measure_layers: int = 2,
     catbench_n: int = 0,
     verify: bool = True,
+    evals: Optional[Dict[str, Any]] = None,
+    skip_kl: bool = False,
+    skip_ppl: bool = False,
+    hq_bpws: Optional[set] = None,
+    hb8_bpws: Optional[set] = None,
+    opt_bpws: Optional[set] = None,
 ) -> int:
-    bpw_plan = _plan_repo_bpws(bpws)
+    bpw_plan = _plan_repo_bpws(bpws, opt_bpws=opt_bpws)
     quant_bpws = bpw_plan["quant_integer_queue"]
     optimized_bpws = bpw_plan["requested_optimizeds"]
     measure_bpws = bpw_plan["measure_queue"]
 
-    auto_added = [b for b in quant_bpws if b not in bpw_plan["requested_integers"]]
+    all_requested = set(bpw_plan["requested_integers"] + bpw_plan["requested_optimizeds"])
+    all_requested.update(_normalize_bpw_str(b) for raw in bpws for b in raw.split(",") if b.strip())
+    auto_added = [b for b in quant_bpws if b not in all_requested]
     if auto_added:
         print(
-            "ℹ️ Added required integer quants for optimized targets: "
+            "ℹ️ Added required integer quants for -opt targets: "
             + ", ".join(auto_added)
         )
 
     if verify and do_quant and do_measure:
         # --- INTERLEAVED MODE (default) ---
         # Quantize each integer BPW, then immediately verify KL+PPL
-        # before moving to the next. Halts on any failure.
+        # before moving to the next. The first verification step halts on
+        # failure (it's the canary that proves the pipeline is sound);
+        # subsequent verification failures are logged but do not halt the
+        # run, since the user has already seen the pipeline work once and a
+        # later failure is usually transient (VRAM, a flaky measure, etc.).
+        # Quantization failures always halt — a broken quant would poison
+        # every downstream step for that BPW.
         model_dir = os.path.abspath(model_dir)
-        forwarded = _build_quant_forwarded(quant_args, devices, device_ratios)
         ppl_rows, measure_devices = _parse_measure_args(measure_args or [], devices)
         db_path, _out_csv = _init_measure_db(model_dir, measure_devices)
 
         print("\n============================================================")
         print("🔁 Interleaved Quantize → Verify Pipeline")
-        print(f"   {len(quant_bpws)} integer BPW(s), {len(optimized_bpws)} optimized BPW(s)")
+        print(f"   {len(quant_bpws)} BPW(s) to quantize, {len(optimized_bpws)} -opt BPW(s)")
         print(f"   {len(devices)} GPU(s) for quantization and measurement")
         print("============================================================")
+
+        # Tracks whether any verification step has succeeded yet. Checkpoint
+        # skips (which return rc == 0) count as success, so a run that opens
+        # on already-measured BPWs will correctly treat any later failure as
+        # non-fatal.
+        first_verify_passed = False
+        verify_failures: List[str] = []
 
         # Stage 1: quantize + verify each integer BPW
         for i, bpw in enumerate(quant_bpws):
             print(f"\n--- [{i+1}/{len(quant_bpws)}] BPW {bpw} ---")
 
-            ok = quant_run_one(
+            forwarded = _build_quant_forwarded_for_bpw(
+                quant_args, devices, device_ratios, str(bpw), hq_bpws, hb8_bpws,
+            )
+            # Run quantize in a spawned subprocess so its CUDA context and
+            # exllamav3 caches are fully released before KL/PPL verify launches.
+            # Otherwise the parent retains ~5 GiB on GPU 0 and the KL subprocess
+            # (which loads both models side-by-side) OOMs.
+            ok = _run_quant_one_isolated(
                 model_dir, str(bpw), forwarded,
                 out_tmpl="{model}/{bpw}",
                 w_tmpl="{model}/w-{bpw}",
-                dry_run=False,
             )
             if not ok:
                 print(f"🔴 Quantization failed for BPW {bpw}")
@@ -502,9 +574,17 @@ def run_repo(
                 write_logs=write_logs,
                 include_base_ppl=(i == 0),
             )
-            if rc != 0:
-                print(f"🔴 Verification failed for BPW {bpw}")
-                return 1
+            if rc == 0:
+                first_verify_passed = True
+            else:
+                if not first_verify_passed:
+                    print(f"🔴 Verification failed for first BPW {bpw} — halting")
+                    return 1
+                print(
+                    f"⚠️  Verification failed for BPW {bpw} — continuing "
+                    f"(first verify already passed)"
+                )
+                verify_failures.append(str(bpw))
 
         # Stage 2: optimized optimize (needs all integer quants done)
         if optimized_bpws:
@@ -525,15 +605,32 @@ def run_repo(
                     ppl_rows=ppl_rows,
                     write_logs=write_logs,
                 )
-                if rc != 0:
-                    print(f"🔴 Verification failed for optimized BPW {opt_bpw}")
-                    return 1
+                if rc == 0:
+                    first_verify_passed = True
+                else:
+                    if not first_verify_passed:
+                        print(
+                            f"🔴 Verification failed for first (optimized) "
+                            f"BPW {opt_bpw} — halting"
+                        )
+                        return 1
+                    print(
+                        f"⚠️  Verification failed for optimized BPW {opt_bpw} "
+                        f"— continuing (first verify already passed)"
+                    )
+                    verify_failures.append(str(opt_bpw))
+
+        if verify_failures:
+            print(
+                f"\n⚠️  Pipeline completed with {len(verify_failures)} "
+                f"verify failure(s): {', '.join(verify_failures)}"
+            )
 
         # Export DB to CSV for downstream (readme, graph)
         export_csv(db_path, _out_csv)
 
-        # Catbench runs after all verification is done
-        if catbench_n > 0:
+        # Catbench + evals run after all verification is done
+        if catbench_n > 0 or evals:
             rc = run_measure_stage(
                 model_dir=model_dir,
                 bpws=measure_bpws,
@@ -541,6 +638,9 @@ def run_repo(
                 write_logs=write_logs,
                 measure_args=measure_args,
                 catbench_n=catbench_n,
+                evals=evals,
+                skip_kl=skip_kl,
+                skip_ppl=skip_ppl,
             )
             if rc != 0:
                 return rc
@@ -556,6 +656,8 @@ def run_repo(
                 devices=devices,
                 device_ratios=device_ratios,
                 quant_args=quant_args,
+                hq_bpws=hq_bpws,
+                hb8_bpws=hb8_bpws,
             )
             if rc != 0:
                 return rc
@@ -571,7 +673,7 @@ def run_repo(
             )
 
         # Stage 3: measure all
-        if do_measure or catbench_n > 0:
+        if do_measure or catbench_n > 0 or evals:
             rc = run_measure_stage(
                 model_dir=model_dir,
                 bpws=measure_bpws,
@@ -579,6 +681,9 @@ def run_repo(
                 write_logs=write_logs,
                 measure_args=measure_args,
                 catbench_n=catbench_n,
+                evals=evals,
+                skip_kl=skip_kl,
+                skip_ppl=skip_ppl,
             )
             if rc != 0:
                 return rc

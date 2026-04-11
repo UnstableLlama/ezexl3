@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import multiprocessing as _mp
 import os
 import pty
 import re
@@ -10,6 +11,76 @@ import time
 from typing import IO, List, Optional
 
 from ezexl3.repo_progress import _build_synthetic_bar, _strip_ansi
+
+
+# ---------------------------------------------------------------------------
+# Isolated quantize helper (interleaved pipeline)
+# ---------------------------------------------------------------------------
+# Quantization calls convert_main() in-process, which initialises a CUDA
+# context and leaves exllamav3 tensors/allocator caches pinned in the parent
+# for the rest of its life. In the interleaved pipeline the very next stage is
+# a KL verification subprocess that loads two models side-by-side on the same
+# GPU — with ~5 GiB of leftover parent state it OOMs. Running quantize in a
+# spawned subprocess lets the OS reclaim 100% of that memory on exit.
+def _quant_worker_entry(model_dir, bpw, forwarded, out_tmpl, w_tmpl, result_q):
+    try:
+        # Import inside the child so the parent never has to fork-after-CUDA.
+        from ezexl3.quantize import run_one
+        ok = run_one(
+            model_dir, bpw, forwarded,
+            out_tmpl=out_tmpl, w_tmpl=w_tmpl, dry_run=False,
+        )
+        result_q.put(("ok", bool(ok)))
+    except BaseException as e:  # noqa: BLE001
+        import traceback
+        result_q.put(("error", f"{type(e).__name__}: {e}\n{traceback.format_exc()}"))
+
+
+def _run_quant_one_isolated(
+    model_dir: str,
+    bpw: str,
+    forwarded: List[str],
+    out_tmpl: str,
+    w_tmpl: str,
+) -> bool:
+    """Run quant_run_one in a spawned subprocess so GPU memory is fully
+    released before the next verification stage runs.
+
+    Returns True on success, False on failure.
+    """
+    ctx = _mp.get_context("spawn")
+    result_q = ctx.Queue()
+    p = ctx.Process(
+        target=_quant_worker_entry,
+        args=(model_dir, bpw, forwarded, out_tmpl, w_tmpl, result_q),
+    )
+    p.start()
+    p.join()
+
+    # Drain any result the child may have placed on the queue before inspecting
+    # the exit code so we can surface crash tracebacks even on hard failures.
+    payload = None
+    status = None
+    try:
+        if not result_q.empty():
+            status, payload = result_q.get_nowait()
+    except Exception:
+        pass
+
+    if p.exitcode != 0:
+        if status == "error" and payload:
+            print(f"🔴 Quantize worker crashed (exit={p.exitcode}):\n{payload}")
+        else:
+            print(f"🔴 Quantize worker crashed with exit code {p.exitcode}")
+        return False
+
+    if status is None:
+        print("🔴 Quantize worker exited cleanly but sent no result")
+        return False
+    if status == "error":
+        print(f"🔴 Quantize worker error:\n{payload}")
+        return False
+    return bool(payload)
 
 
 def _run_cmd(cmd: List[str]) -> None:

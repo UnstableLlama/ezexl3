@@ -7,15 +7,20 @@ import collections
 import ipaddress
 import json
 import os
+import re
 import shutil
 import signal
 import sys
 import tempfile
 import uuid
 import webbrowser
+
+# Strip ANSI escape sequences (cursor movement, colors, line clears)
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?\x07")
 from pathlib import Path
 
 from aiohttp import web
+from aiohttp.client_exceptions import ClientConnectionError
 
 STATIC_DIR = Path(__file__).parent / "static"
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -89,12 +94,25 @@ class JobManager:
 
     async def _read_stream(self, job: Job, stream, stream_type: str):
         while True:
-            line = await stream.readline()
-            if not line:
+            chunk = await stream.read(8192)
+            if not chunk:
                 break
-            text = line.decode("utf-8", errors="replace")
-            event = {"type": stream_type, "text": text}
-            job.output.append(event)
+            text = chunk.decode("utf-8", errors="replace")
+            # Strip ANSI escape sequences (cursor movement, colors, line clears)
+            # that our simple terminal can't handle
+            text = _ANSI_RE.sub("", text)
+            # Split on \n, preserve \r within lines for progress bar handling
+            lines = text.split("\n")
+            for i, line in enumerate(lines):
+                if not line and i == len(lines) - 1:
+                    break  # trailing empty after final \n
+                suffix = "\n" if i < len(lines) - 1 else ""
+                segment = line + suffix
+                # Skip lines that are only whitespace/newlines (tqdm padding)
+                if not segment.strip():
+                    continue
+                event = {"type": stream_type, "text": segment}
+                job.output.append(event)
             job.notify()
 
     async def _wait_exit(self, job: Job, proc: asyncio.subprocess.Process):
@@ -203,7 +221,7 @@ async def handle_run(request: web.Request) -> web.Response:
     if not subcommand:
         return web.json_response({"error": "No command specified"}, status=400)
 
-    valid_commands = {"repo", "quantize", "quant", "measure", "readme"}
+    valid_commands = {"repo", "quantize", "quant", "measure", "readme", "upload"}
     if subcommand not in valid_commands:
         return web.json_response({"error": f"Invalid command: {subcommand}"}, status=400)
 
@@ -241,16 +259,18 @@ async def handle_run_stream(request: web.Request) -> web.Response:
     )
     await response.prepare(request)
 
-    # Replay buffered output
-    cursor = 0
-    for event in list(job.output):
-        sse_data = f"data: {json.dumps(event)}\n\n"
-        await response.write(sse_data.encode("utf-8"))
-        cursor += 1
-
-    # Follow new output
+    # Follow new output. The whole body is wrapped so that a client
+    # disconnect at any point (initial replay, mid-stream, or final
+    # DONE/EOF) is swallowed quietly instead of logging a traceback.
     waiter = job.new_waiter()
     try:
+        # Replay buffered output
+        cursor = 0
+        for event in list(job.output):
+            sse_data = f"data: {json.dumps(event)}\n\n"
+            await response.write(sse_data.encode("utf-8"))
+            cursor += 1
+
         while True:
             waiter.clear()
             # Send any new events since last cursor
@@ -272,13 +292,15 @@ async def handle_run_stream(request: web.Request) -> web.Response:
             except asyncio.TimeoutError:
                 # Send keepalive
                 await response.write(b": keepalive\n\n")
-    except (ConnectionResetError, ConnectionAbortedError):
+
+        await response.write(b"data: [DONE]\n\n")
+        await response.write_eof()
+    except (ConnectionResetError, ConnectionAbortedError, ClientConnectionError, asyncio.CancelledError):
+        # Client went away — nothing to do.
         pass
     finally:
         job.remove_waiter(waiter)
 
-    await response.write(b"data: [DONE]\n\n")
-    await response.write_eof()
     return response
 
 
@@ -410,7 +432,12 @@ async def handle_metadata_get(request: web.Request) -> web.Response:
 
 
 async def handle_metadata_set(request: web.Request) -> web.Response:
-    """Save README metadata to the model directory, clearing any waiting flag."""
+    """Save README metadata to the model directory, clearing any waiting flag.
+
+    Merges over any existing metadata: only keys present in the request are
+    updated, so a partial editor (e.g. the upload tab, which only shows
+    MODEL and USER) won't wipe AUTHOR/REPOLINK set elsewhere.
+    """
     data = await request.json()
     model_dir = data.get("model_dir", "").strip()
     if not model_dir:
@@ -419,26 +446,26 @@ async def handle_metadata_set(request: web.Request) -> web.Response:
     # Only clear _waiting when the dashboard explicitly confirms (Resume click)
     confirm = data.get("_confirm", False)
 
-    # Read existing state to preserve _waiting unless confirming
     meta_path = os.path.join(model_dir, ".ezexl3_readme_meta.json")
-    existing_waiting = False
-    if not confirm and os.path.exists(meta_path):
+    existing: dict = {}
+    if os.path.exists(meta_path):
         try:
             existing = json.loads(Path(meta_path).read_text("utf-8"))
-            existing_waiting = existing.get("_waiting", False)
         except Exception:
-            pass
+            existing = {}
 
-    meta = {
-        "AUTHOR": data.get("AUTHOR", ""),
-        "MODEL": data.get("MODEL", ""),
-        "REPOLINK": data.get("REPOLINK", ""),
-        "USER": data.get("USER", ""),
-        "_locked": data.get("_locked", {}),
-        "_waiting": existing_waiting if not confirm else False,
-    }
+    meta = dict(existing)
+    for key in ("AUTHOR", "MODEL", "REPOLINK", "USER"):
+        if key in data:
+            meta[key] = data[key]
 
-    meta_path = os.path.join(model_dir, ".ezexl3_readme_meta.json")
+    # Merge lock state — incoming wins, existing entries for other fields kept
+    existing_locked = existing.get("_locked") or {}
+    incoming_locked = data.get("_locked") or {}
+    meta["_locked"] = {**existing_locked, **incoming_locked}
+
+    meta["_waiting"] = False if confirm else existing.get("_waiting", False)
+
     os.makedirs(model_dir, exist_ok=True)
     Path(meta_path).write_text(json.dumps(meta, indent=2), "utf-8")
 
@@ -529,6 +556,20 @@ async def _no_cache_static(request: web.Request, handler):
 
 
 # ---------------------------------------------------------------------------
+# HuggingFace auth check
+# ---------------------------------------------------------------------------
+
+async def handle_hf_auth(request: web.Request) -> web.Response:
+    """Check if user is authenticated with HuggingFace."""
+    try:
+        from huggingface_hub import HfApi
+        info = await asyncio.to_thread(HfApi().whoami)
+        return web.json_response({"authenticated": True, "username": info.get("name", "")})
+    except Exception:
+        return web.json_response({"authenticated": False, "username": ""})
+
+
+# ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
 
@@ -547,6 +588,7 @@ def create_app() -> web.Application:
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/browse", handle_browse)
     app.router.add_get("/api/gpus", handle_gpus)
+    app.router.add_get("/api/hf-auth", handle_hf_auth)
     app.router.add_get("/api/templates", handle_templates)
     app.router.add_post("/api/run", handle_run)
     app.router.add_get("/api/run/{job_id}/stream", handle_run_stream)

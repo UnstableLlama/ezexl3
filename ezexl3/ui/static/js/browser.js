@@ -25,9 +25,12 @@ function selectBrowserPath() {
     if (input) {
       input.value = pathEl.textContent;
       input.classList.remove("input-error");
-      // Persist model directory selection
+      // Persist model directory selection + sync any mirror fields in the
+      // metadata panel (e.g. MODEL_DIR) so their lock clears and the user
+      // has to re-confirm the new path before uploading.
       if (browserTargetField === "models") {
         saveModelDir(pathEl.textContent);
+        if (typeof syncModelDirMirror === "function") syncModelDirMirror(true);
       }
     }
   }

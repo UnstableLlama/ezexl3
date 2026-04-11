@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 from multiprocessing import Process, Queue
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ezexl3.measure import default_csv_path, file_size_gib
 from ezexl3.measure_db import default_db_path, export_csv, migrate_csv_to_db, read_all_rows as _read_db_rows, upsert_row
@@ -219,6 +219,34 @@ def _worker_measure(
                 run_catbench_subprocess_fn(catbench_cmd, device, results, f"{label} CAT", log_f)
                 results.put({"event": "done", "device": device, "label": label, "phase": phase, "row": {}})
 
+            else:
+                # --- Eval scripts (diversity, humaneval, ifbench, ...) ---
+                from ezexl3.evals import (
+                    EVAL_REGISTRY,
+                    RESULT_EXTRACTORS,
+                    build_eval_cmd,
+                    run_eval_subprocess,
+                )
+                if phase in EVAL_REGISTRY:
+                    eval_def = EVAL_REGISTRY[phase]
+                    eval_arg = job.get("eval_arg", 0)
+                    eval_cmd = build_eval_cmd(
+                        phase, model_dir, device, base_dir, label, eval_arg,
+                    )
+                    eval_out = run_eval_subprocess(
+                        eval_cmd, device, results,
+                        f"{label} {eval_def.phase_label}",
+                        phase, log_f,
+                        cuda_visible_devices=str(device),
+                    )
+                    extractor = RESULT_EXTRACTORS[phase]
+                    result_dict = extractor(eval_out)
+                    upsert_row_fn(db_path, weights=label, **result_dict)
+                    results.put({
+                        "event": "done", "device": device, "label": label,
+                        "phase": phase, "row": result_dict,
+                    })
+
         except Exception as e:
             import traceback
             if log_f:
@@ -372,6 +400,9 @@ def run_measure_stage(
     write_logs: bool = True,
     measure_args: Optional[List[str]] = None,
     catbench_n: int = 0,
+    evals: Optional[Dict[str, Any]] = None,
+    skip_kl: bool = False,
+    skip_ppl: bool = False,
     parse_measure_args_fn: Callable = _parse_measure_args,
     init_measure_db_fn: Callable = _init_measure_db,
     read_db_rows_fn: Callable = _read_db_rows,
@@ -438,17 +469,17 @@ def run_measure_stage(
         row = existing_rows.get(label, {})
         has_kl = bool((row.get("KL Div") or "").strip())
         has_ppl = bool((row.get("PPL r-100") or "").strip())
-        if bpw != "base" and not has_kl:
+        if bpw != "base" and not has_kl and not skip_kl:
             kl_tasks.append({"label": bpw, "phase": "kl"})
         elif bpw != "base":
             skipped_kl.append(label)
-        if not has_ppl:
+        if not has_ppl and not skip_ppl:
             ppl_tasks.append({"label": bpw, "phase": "ppl"})
         else:
             skipped_ppl.append(label)
 
     base_row = existing_rows.get("bf16", {})
-    if not bool((base_row.get("PPL r-100") or "").strip()):
+    if not bool((base_row.get("PPL r-100") or "").strip()) and not skip_ppl:
         if not any(t["label"] == "base" for t in ppl_tasks):
             ppl_tasks.append({"label": "base", "phase": "ppl"})
     else:
@@ -500,7 +531,36 @@ def run_measure_stage(
                         print(f"  ⚠️  Skipping catbench for {task_disp}: {model_gib:.1f} GiB model won't fit ({total_avail:.1f} GiB available across {len(devices)} GPUs)")
             catbench_tasks = single_gpu
 
-    total_jobs = len(kl_tasks) + len(ppl_tasks) + len(catbench_tasks) + len(multi_gpu_catbench_tasks)
+    # --- Eval tasks ---
+    eval_tasks: List[dict] = []
+    skipped_eval: List[str] = []
+    enabled_evals = evals or {}
+
+    if enabled_evals:
+        from ezexl3.evals import EVAL_QUEUE_ORDER, EVAL_REGISTRY, eval_has_result
+
+        for eval_name in EVAL_QUEUE_ORDER:
+            if eval_name not in enabled_evals:
+                continue
+            eval_arg = enabled_evals[eval_name]
+            all_targets = list(bpws)
+            # Include base/bf16 for all evals
+            if "base" not in all_targets:
+                all_targets.append("base")
+            for bpw in all_targets:
+                label = task_to_csv_label_fn(bpw)
+                if eval_has_result(db_path, label, eval_name):
+                    skipped_eval.append(f"{label}/{eval_name}")
+                else:
+                    eval_tasks.append({
+                        "label": bpw, "phase": eval_name, "eval_arg": eval_arg,
+                    })
+
+        if skipped_eval:
+            print(f"🟦 skipping evals: {', '.join(skipped_eval)} (already measured)")
+
+    total_jobs = (len(kl_tasks) + len(ppl_tasks) + len(catbench_tasks)
+                  + len(multi_gpu_catbench_tasks) + len(eval_tasks))
     if total_jobs == 0:
         if catbench_n > 0:
             catbench_out_dir = os.path.join(model_dir, "catbench")
@@ -514,6 +574,7 @@ def run_measure_stage(
     n_kl = len(kl_tasks)
     n_ppl = len(ppl_tasks)
     n_cat = len(catbench_tasks) + len(multi_gpu_catbench_tasks)
+    n_eval = len(eval_tasks)
 
     if multi_gpu_catbench_tasks:
         from queue import Queue as TQueue
@@ -586,7 +647,7 @@ def run_measure_stage(
             sys.stdout.write(f"\033[{mgpu_num_lines}A")
             sys.stdout.flush()
 
-    remaining_jobs = len(kl_tasks) + len(ppl_tasks) + len(catbench_tasks)
+    remaining_jobs = len(kl_tasks) + len(ppl_tasks) + len(catbench_tasks) + len(eval_tasks)
     if remaining_jobs == 0:
         if multi_gpu_catbench_tasks:
             catbench_out_dir = os.path.join(model_dir, "catbench")
@@ -616,6 +677,8 @@ def run_measure_stage(
             tasks.put(t)
     for t in catbench_tasks:
         tasks.put(t)
+    for t in eval_tasks:
+        tasks.put(t)
     for _ in devices:
         tasks.put(None)
 
@@ -628,7 +691,8 @@ def run_measure_stage(
         sleep_fn(2.0)
 
     cat_msg = f" + {n_cat} CAT" if n_cat else ""
-    print(f"\n🚀 Measuring {n_kl} KL + {n_ppl} PPL{cat_msg} jobs on {len(devices)} GPUs...")
+    eval_msg = f" + {n_eval} EVAL" if n_eval else ""
+    print(f"\n🚀 Measuring {n_kl} KL + {n_ppl} PPL{cat_msg}{eval_msg} jobs on {len(devices)} GPUs...")
 
     use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     gpu_status: Dict[int, str] = {d: "idle" for d in devices}

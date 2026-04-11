@@ -212,7 +212,7 @@ tags:
     <div class="panel-title">// CLI Download</div>
     <div class="panel-body">
       <div class="terminal-box">
-        huggingface-cli download {{USER}}/{{MODEL}}-{{QUANT_METHOD}} --revision "{{DEFAULT_REVISION}}" --local-dir ./
+        hf download {{USER}}/{{MODEL}}-{{QUANT_METHOD}} --revision "{{DEFAULT_REVISION}}" --local-dir ./{{MODEL}}-{{QUANT_METHOD}}-{{DEFAULT_REVISION}}
       </div>
     </div>
   </div>

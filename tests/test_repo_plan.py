@@ -12,13 +12,23 @@ class RepoPlanModuleTests(unittest.TestCase):
     def test_dedupe_preserve_order_keeps_first_occurrence(self):
         self.assertEqual(repo_plan._dedupe_preserve_order(["4", "5", "4", "6", "5"]), ["4", "5", "6"])
 
-    def test_plan_repo_bpws_adds_integer_neighbors(self):
-        plan = repo_plan._plan_repo_bpws(["4", "4.07", "6.25"])
+    def test_plan_repo_bpws_opt_adds_integer_neighbors(self):
+        plan = repo_plan._plan_repo_bpws(
+            ["4", "4.07", "6.25"], opt_bpws={"4.07", "6.25"}
+        )
 
         self.assertEqual(plan["requested_integers"], ["4"])
         self.assertEqual(plan["requested_optimizeds"], ["4.07", "6.25"])
         self.assertEqual(plan["quant_integer_queue"], ["4", "5", "6", "7"])
         self.assertEqual(plan["measure_queue"], ["4", "5", "6", "7", "4.07", "6.25"])
+
+    def test_plan_repo_bpws_without_opt_fractionals_go_direct(self):
+        plan = repo_plan._plan_repo_bpws(["4", "4.07", "6.25"])
+
+        self.assertEqual(plan["requested_integers"], ["4"])
+        self.assertEqual(plan["requested_optimizeds"], [])
+        self.assertEqual(plan["quant_integer_queue"], ["4", "4.07", "6.25"])
+        self.assertEqual(plan["measure_queue"], ["4", "4.07", "6.25"])
 
     def test_repo_reexports_plan_helpers(self):
         self.assertIs(repo._normalize_bpw_str, repo_plan._normalize_bpw_str)
