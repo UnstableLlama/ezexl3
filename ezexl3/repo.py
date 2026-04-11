@@ -6,7 +6,6 @@ import os
 import pty
 import re
 import select
-import shutil
 import subprocess
 import sys
 import threading
@@ -14,6 +13,31 @@ import time
 from multiprocessing import Process, Queue
 from typing import Dict, IO, List, Optional, Tuple
 
+from ezexl3.repo_plan import (
+    _dedupe_preserve_order,
+    _normalize_bpw_str,
+    _plan_repo_bpws,
+    _split_integer_optimized_bpws,
+)
+from ezexl3.repo_progress import (
+    _build_synthetic_bar,
+    _cleanup_gpu_progress,
+    _clear_and_redraw_progress,
+    _gpu_status_line,
+    _init_gpu_progress,
+    _print_above_progress,
+    _print_msg_with_progress,
+    _redraw_gpu_progress,
+    _strip_ansi,
+)
+import ezexl3.repo_measure as repo_measure
+import ezexl3.repo_optimized as repo_optimized
+from ezexl3.repo_subprocess import (
+    _run_catbench_subprocess,
+    _run_cmd,
+    _run_cmd_with_progress,
+    _run_measure_subprocess,
+)
 from ezexl3.quantize import run as quant_run, run_one as quant_run_one
 from ezexl3.measure import (
     _MODEL_DIFF_SCRIPT,
@@ -27,75 +51,6 @@ from ezexl3.measure_db import (
     read_all_rows as _read_db_rows,
     upsert_row,
 )
-
-
-def _normalize_bpw_str(raw: str) -> str:
-    token = str(raw).strip()
-    if not token:
-        raise ValueError("Empty BPW value provided")
-    try:
-        numeric = float(token)
-    except ValueError as e:
-        raise ValueError(f"Invalid BPW value '{raw}'") from e
-    if numeric <= 0:
-        raise ValueError(f"BPW values must be > 0, got '{raw}'")
-
-    if "." not in token:
-        return str(int(numeric)) if numeric.is_integer() else token
-
-    trimmed = token.rstrip("0").rstrip(".")
-    if not trimmed:
-        return str(int(numeric)) if numeric.is_integer() else token
-    if "." not in trimmed and numeric.is_integer():
-        return str(int(numeric))
-    return trimmed
-
-
-def _split_integer_optimized_bpws(bpws: List[str]) -> Tuple[List[str], List[str]]:
-    integer_bpws: List[str] = []
-    optimized_bpws: List[str] = []
-
-    for raw in bpws:
-        normalized = _normalize_bpw_str(raw)
-        value = float(normalized)
-        if math.isclose(value, round(value), abs_tol=1e-9):
-            integer_bpws.append(str(int(round(value))))
-        else:
-            optimized_bpws.append(normalized)
-    return integer_bpws, optimized_bpws
-
-
-def _dedupe_preserve_order(items: List[str]) -> List[str]:
-    out: List[str] = []
-    seen = set()
-    for it in items:
-        if it in seen:
-            continue
-        seen.add(it)
-        out.append(it)
-    return out
-
-
-def _plan_repo_bpws(bpws: List[str]) -> Dict[str, List[str]]:
-    ints, fracs = _split_integer_optimized_bpws(bpws)
-    required_neighbors: List[str] = []
-    for frac in fracs:
-        frac_val = float(frac)
-        low = math.floor(frac_val)
-        high = math.ceil(frac_val)
-        required_neighbors.extend([str(low), str(high)])
-
-    requested_ints = _dedupe_preserve_order(ints)
-    requested_fracs = _dedupe_preserve_order(fracs)
-    quant_ints = _dedupe_preserve_order(requested_ints + required_neighbors)
-    measure_targets = _dedupe_preserve_order(quant_ints + requested_fracs)
-
-    return {
-        "requested_integers": requested_ints,
-        "requested_optimizeds": requested_fracs,
-        "quant_integer_queue": quant_ints,
-        "measure_queue": measure_targets,
-    }
 
 
 _CATBENCH_CACHE_TOKENS = 4096 + 512  # prompt + generation headroom
@@ -205,306 +160,13 @@ _MEASURE_SCRIPT = os.path.join(_VENDOR_DIR, "measure.py")
 _OPTIMIZE_SCRIPT = os.path.join(_VENDOR_DIR, "optimize.py")
 
 
-def _run_cmd(cmd: List[str]) -> None:
-    print(f"$ {' '.join(cmd)}")
-    proc = subprocess.run(cmd, check=False)
-    if proc.returncode != 0:
-        raise RuntimeError(f"Command failed with exit code {proc.returncode}: {' '.join(cmd)}")
-
-
-# ---------------------------------------------------------------------------
-# Progress capture helpers
-# ---------------------------------------------------------------------------
-
-_ANSI_STRIP_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
-
-
-def _strip_ansi(text: str) -> str:
-    """Remove ANSI escape sequences from *text*."""
-    return _ANSI_STRIP_RE.sub("", text)
-
-
-def _run_cmd_with_progress(
-    cmd: List[str],
-    device: int,
-    results: "Queue[Optional[dict]]",
-    log_f: Optional[IO] = None,
-) -> str:
-    """Run *cmd* in a PTY, stream output to *log_f*, and send throttled
-    ``{"event": "progress", "device": …, "text": …}`` dicts through *results*.
-
-    Falls back to a plain pipe if the PTY cannot be created.
-
-    Returns the full captured output as a string.
-    """
-    if log_f:
-        log_f.write(f"$ {' '.join(cmd)}\n")
-        log_f.flush()
-
-    # --- try PTY first so the child thinks it has a real terminal ----------
-    master_fd: Optional[int] = None
-    try:
-        master_fd, slave_fd = pty.openpty()
-        proc = subprocess.Popen(
-            cmd, stdout=slave_fd, stderr=slave_fd, close_fds=True,
-        )
-        os.close(slave_fd)
-    except Exception:
-        # PTY unavailable – fall back to a pipe
-        if master_fd is not None:
-            os.close(master_fd)
-            master_fd = None
-        proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        )
-
-    last_send: float = 0.0
-    buf = ""
-
-    def _drain_fd(fd: int) -> bool:
-        """Read available data from *fd*.  Returns False on EOF / error."""
-        nonlocal buf, last_send
-        try:
-            data = os.read(fd, 4096)
-        except OSError:
-            return False
-        if not data:
-            return False
-        text = data.decode("utf-8", errors="replace")
-        if log_f:
-            log_f.write(text)
-            log_f.flush()
-        buf += text
-        _maybe_send_progress()
-        return True
-
-    def _drain_pipe() -> bool:
-        """Read a line from the pipe stdout. Returns False on EOF."""
-        nonlocal buf, last_send
-        assert proc.stdout is not None
-        line = proc.stdout.readline()
-        if not line:
-            return False
-        text = line.decode("utf-8", errors="replace") if isinstance(line, bytes) else line
-        if log_f:
-            log_f.write(text)
-            log_f.flush()
-        buf += text
-        _maybe_send_progress()
-        return True
-
-    def _maybe_send_progress() -> None:
-        nonlocal buf, last_send
-        now = time.monotonic()
-        if now - last_send < 0.5:
-            return
-        # Extract the latest progress-bar segment: the last \r-separated
-        # piece that has not been terminated by \n.
-        lines = buf.split("\n")
-        tail = lines[-1]  # incomplete line (no trailing \n)
-        if "\r" in tail:
-            segments = tail.split("\r")
-            candidate = segments[-1].strip()
-        else:
-            candidate = tail.strip()
-        if candidate:
-            results.put({"event": "progress", "device": device, "text": _strip_ansi(candidate)})
-            last_send = now
-
-    # --- read loop ---------------------------------------------------------
-    if master_fd is not None:
-        while True:
-            ready, _, _ = select.select([master_fd], [], [], 0.5)
-            if ready:
-                if not _drain_fd(master_fd):
-                    break
-            elif proc.poll() is not None:
-                # Process exited – drain anything left
-                while _drain_fd(master_fd):
-                    pass
-                break
-        os.close(master_fd)
-    else:
-        # Pipe fallback
-        assert proc.stdout is not None
-        while _drain_pipe():
-            pass
-
-    proc.wait()
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"Command failed with exit code {proc.returncode}: {' '.join(cmd)}"
-        )
-    return buf
-
-
 # ---------------------------------------------------------------------------
 # ANSI progress-area rendering
 # ---------------------------------------------------------------------------
 
-_BOX_DRAWING_RE = re.compile(r"[\u2500-\u257f]{10,}")
-
-
-def _gpu_status_line(gpu_id: int, text: str, cols: int) -> str:
-    """Build a single GPU status line, fitted to *cols* to prevent wrapping.
-
-    If the text contains a progress bar (long run of box-drawing characters),
-    the bar is shrunk proportionally so the label and time info at the ends
-    are preserved.  Falls back to right-truncation otherwise.
-    """
-    prefix = f"  GPU {gpu_id} | "
-    max_text = cols - len(prefix) - 1  # -1 for safety margin
-    if max_text <= 0 or len(text) <= max_text:
-        return f"\033[2K{prefix}{text}"
-
-    # Try to shrink a progress bar rather than chopping the tail
-    m = _BOX_DRAWING_RE.search(text)
-    if m:
-        bar = m.group()
-        excess = len(text) - max_text
-        new_len = max(4, len(bar) - excess)
-        step = len(bar) / new_len
-        shrunken = "".join(bar[int(i * step)] for i in range(new_len))
-        text = text[: m.start()] + shrunken + text[m.end() :]
-
-    # Final safety clamp
-    if len(text) > max_text:
-        text = text[: max_text - 1] + "…"
-    return f"\033[2K{prefix}{text}"
-
-
-def _clear_and_redraw_progress(gpu_status: Dict[int, str], num_lines: int) -> None:
-    """Overwrite the last *num_lines* in-place with the current *gpu_status*."""
-    cols = shutil.get_terminal_size((80, 24)).columns
-    sys.stdout.write(f"\033[{num_lines}A")
-    for gpu_id in sorted(gpu_status):
-        sys.stdout.write(_gpu_status_line(gpu_id, gpu_status[gpu_id], cols) + "\n")
-    sys.stdout.flush()
-
-
-def _print_above_progress(
-    message: str,
-    gpu_status: Dict[int, str],
-    num_lines: int,
-) -> None:
-    """Print *message* above the fixed progress area, then redraw it."""
-    cols = shutil.get_terminal_size((80, 24)).columns
-    # Move up into the progress area and clear it
-    sys.stdout.write(f"\033[{num_lines}A")
-    for _ in range(num_lines):
-        sys.stdout.write("\033[2K\n")
-    # Move back up
-    sys.stdout.write(f"\033[{num_lines}A")
-    # Print the message (scrolls the terminal)
-    sys.stdout.write(f"{message}\n")
-    # Redraw the progress area
-    for gpu_id in sorted(gpu_status):
-        sys.stdout.write(_gpu_status_line(gpu_id, gpu_status[gpu_id], cols) + "\n")
-    sys.stdout.flush()
-
-
-def _build_synthetic_bar(pct: int, width: int = 30) -> str:
-    """Build a Unicode progress bar string from a percentage (0-100).
-
-    Uses box-drawing characters so the existing ``_gpu_status_line`` shrink
-    logic can resize the bar proportionally when the terminal is narrow.
-    """
-    pct = max(0, min(100, pct))
-    filled = int(width * pct / 100)
-    empty = width - filled
-    return "\u2501" * filled + "\u2500" * empty + f" {pct:3d}%"
-
-
-def _init_gpu_progress(use_ansi: bool, gpu_status: Dict[int, str]) -> None:
-    """Print the initial GPU status area (one line per GPU)."""
-    if use_ansi:
-        for d in sorted(gpu_status):
-            sys.stdout.write(f"\033[2K  GPU {d} | idle\n")
-        sys.stdout.flush()
-
-
-def _redraw_gpu_progress(
-    use_ansi: bool, gpu_status: Dict[int, str], num_lines: int,
-) -> None:
-    """Update the GPU progress area in-place."""
-    if use_ansi:
-        _clear_and_redraw_progress(gpu_status, num_lines)
-    else:
-        # Non-ANSI fallback: one \r-prefixed line per GPU so the dashboard
-        # terminal overwrites each GPU's progress span independently.
-        for gpu_id in sorted(gpu_status):
-            text = gpu_status[gpu_id]
-            if text != "idle":
-                sys.stdout.write(f"\rgpu{gpu_id}:  GPU {gpu_id} | {text}\n")
-        sys.stdout.flush()
-
-
-def _print_msg_with_progress(
-    msg: str, use_ansi: bool, gpu_status: Dict[int, str], num_lines: int,
-) -> None:
-    """Print a message, preserving the GPU progress area if ANSI is available."""
-    if use_ansi:
-        _print_above_progress(msg, gpu_status, num_lines)
-    else:
-        # Print on a new line (no \r so the dashboard finalizes the progress bar)
-        print(msg)
-
-
-def _cleanup_gpu_progress(use_ansi: bool, num_lines: int) -> None:
-    """Clear the GPU progress area after all tasks are done."""
-    if use_ansi:
-        sys.stdout.write(f"\033[{num_lines}A")
-        for _ in range(num_lines):
-            sys.stdout.write("\033[2K\n")
-        sys.stdout.write(f"\033[{num_lines}A")
-        sys.stdout.flush()
-
 
 def _build_optimized_jobs(model_dir: str, optimized_bpws: List[str]) -> Tuple[List[dict], List[dict]]:
-    measurements_dir = os.path.join(model_dir, "measurements")
-    os.makedirs(measurements_dir, exist_ok=True)
-
-    compare_jobs_by_pair: Dict[Tuple[str, str], dict] = {}
-    optimize_jobs: List[dict] = []
-
-    for frac in optimized_bpws:
-        frac_value = float(frac)
-        low = str(math.floor(frac_value))
-        high = str(math.ceil(frac_value))
-        low_dir = os.path.join(model_dir, low)
-        high_dir = os.path.join(model_dir, high)
-        out_dir = os.path.join(model_dir, frac)
-        measure_json = os.path.join(measurements_dir, f"{low}-{high}_measurement.json")
-
-        if not os.path.isdir(low_dir):
-            raise FileNotFoundError(f"Required lower integer quant not found for {frac}: {low_dir}")
-        if not os.path.isdir(high_dir):
-            raise FileNotFoundError(f"Required upper integer quant not found for {frac}: {high_dir}")
-
-        compare_jobs_by_pair.setdefault(
-            (low, high),
-            {
-                "low": low,
-                "high": high,
-                "low_dir": low_dir,
-                "high_dir": high_dir,
-                "measure_json": measure_json,
-                "targets": [],
-            },
-        )
-        compare_jobs_by_pair[(low, high)]["targets"].append(frac)
-
-        optimize_jobs.append(
-            {
-                "optimized": frac,
-                "out_dir": out_dir,
-                "measure_json": measure_json,
-                "low": low,
-                "high": high,
-            }
-        )
-
-    return list(compare_jobs_by_pair.values()), optimize_jobs
+    return repo_optimized._build_optimized_jobs(model_dir, optimized_bpws)
 
 
 def _worker_optimized_compare(
@@ -515,47 +177,17 @@ def _worker_optimized_compare(
     results: "Queue[Optional[dict]]",
     log_path: Optional[str],
 ) -> None:
-    import traceback
-
-    log_f: Optional[IO] = None
-    if log_path:
-        os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
-        log_f = open(log_path, "w")
-
-    while True:
-        job = tasks.get()
-        if job is None:
-            results.put(None)
-            break
-
-        label = f"{job['low']}-{job['high']}"
-        results.put({"event": "start", "device": device, "job": job})
-        try:
-            cmd = [
-                sys.executable,
-                _MEASURE_SCRIPT,
-                "-i",
-                job["low_dir"],
-                job["high_dir"],
-                "-r",
-                model_dir,
-                "-o",
-                job["measure_json"],
-                "-d",
-                str(device),
-                "-l",
-                str(layers),
-            ]
-            _run_cmd_with_progress(cmd, device, results, log_f)
-            results.put({"event": "done", "device": device, "job": job, "label": label})
-        except Exception as e:
-            if log_f:
-                traceback.print_exc(file=log_f)
-            results.put({"event": "error", "device": device, "job": job, "label": label, "error": str(e)})
-
-    if log_f:
-        log_f.flush()
-        log_f.close()
+    return repo_optimized._worker_optimized_compare(
+        model_dir=model_dir,
+        device=device,
+        layers=layers,
+        tasks=tasks,
+        results=results,
+        log_path=log_path,
+        run_cmd_with_progress_fn=_run_cmd_with_progress,
+        measure_script=_MEASURE_SCRIPT,
+        executable=sys.executable,
+    )
 
 
 def _run_optimized_compare_queue(
@@ -565,77 +197,20 @@ def _run_optimized_compare_queue(
     layers: int,
     write_logs: bool = True,
 ) -> None:
-    if not compare_jobs:
-        return
-    if not devices:
-        raise ValueError("No CUDA devices available for optimized comparative measure stage")
-
-    tasks: Queue = Queue()
-    results: Queue = Queue()
-
-    for job in compare_jobs:
-        tasks.put(job)
-    for _ in devices:
-        tasks.put(None)
-
-    procs: List[Process] = []
-    for device in devices:
-        log_path = os.path.join(model_dir, "logs", f"optimized_compare_gpu{device}.log") if write_logs else None
-        p = Process(
-            target=_worker_optimized_compare,
-            args=(model_dir, device, layers, tasks, results, log_path),
-        )
-        p.daemon = False
-        p.start()
-        procs.append(p)
-
-    print(f"\n🚀 Optimized comparative measure: {len(compare_jobs)} jobs on {len(devices)} GPUs...")
-
-    use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
-    gpu_status: Dict[int, str] = {d: "idle" for d in devices}
-    num_lines = len(devices)
-    _init_gpu_progress(use_ansi, gpu_status)
-
-    active_workers = len(devices)
-    failures = 0
-    while active_workers > 0:
-        res = results.get()
-        if res is None:
-            active_workers -= 1
-            continue
-        gpu = res["device"]
-        event = res["event"]
-
-        if event == "progress":
-            gpu_status[gpu] = res["text"]
-            _redraw_gpu_progress(use_ansi, gpu_status, num_lines)
-            continue
-
-        job = res["job"]
-        label = f"{job['low']}-{job['high']}"
-        targets = ",".join(job["targets"])
-
-        if event == "start":
-            msg = f"🧪 [GPU {gpu}] START compare {label} for target(s): {targets}"
-            gpu_status[gpu] = f"{label} | starting..."
-        elif event == "done":
-            msg = f"✅ [GPU {gpu}] DONE compare {label} for target(s): {targets} -> {job['measure_json']}"
-            gpu_status[gpu] = "idle"
-        elif event == "error":
-            failures += 1
-            msg = f"🔴 [GPU {gpu}] FAIL compare {label} for target(s): {targets} - {res['error']}"
-            gpu_status[gpu] = "idle"
-        else:
-            continue
-
-        _print_msg_with_progress(msg, use_ansi, gpu_status, num_lines)
-
-    _cleanup_gpu_progress(use_ansi, num_lines)
-
-    for p in procs:
-        p.join()
-    if failures:
-        raise RuntimeError(f"Optimized comparative measure stage failed for {failures} job(s)")
+    return repo_optimized._run_optimized_compare_queue(
+        model_dir=model_dir,
+        compare_jobs=compare_jobs,
+        devices=devices,
+        layers=layers,
+        write_logs=write_logs,
+        process_cls=Process,
+        queue_cls=Queue,
+        worker_fn=_worker_optimized_compare,
+        init_gpu_progress_fn=_init_gpu_progress,
+        redraw_gpu_progress_fn=_redraw_gpu_progress,
+        print_msg_with_progress_fn=_print_msg_with_progress,
+        cleanup_gpu_progress_fn=_cleanup_gpu_progress,
+    )
 
 
 def _run_optimized_opt_stage(
@@ -645,165 +220,33 @@ def _run_optimized_opt_stage(
     layers: int = 2,
     write_logs: bool = True,
 ) -> None:
-    if not optimized_bpws:
-        return
-
-    compare_jobs, optimize_jobs = _build_optimized_jobs(model_dir, optimized_bpws)
-
-    queued_jobs: List[dict] = []
-    for job in compare_jobs:
-        label = f"{job['low']}-{job['high']}"
-        if os.path.exists(job["measure_json"]):
-            print(
-                f"🟦 skipping comparative measure {label}: {os.path.basename(job['measure_json'])} already exists"
-            )
-            continue
-        queued_jobs.append(job)
-
-    _run_optimized_compare_queue(
+    return repo_optimized._run_optimized_opt_stage(
         model_dir=model_dir,
-        compare_jobs=queued_jobs,
+        optimized_bpws=optimized_bpws,
         devices=devices,
         layers=layers,
         write_logs=write_logs,
+        build_jobs_fn=_build_optimized_jobs,
+        run_compare_queue_fn=_run_optimized_compare_queue,
+        run_cmd_fn=_run_cmd,
+        optimize_script=_OPTIMIZE_SCRIPT,
+        executable=sys.executable,
     )
-
-    for job in optimize_jobs:
-        frac = job["optimized"]
-        out_dir = job["out_dir"]
-        if os.path.isdir(out_dir) and os.path.isfile(os.path.join(out_dir, "config.json")):
-            print(f"🟦 skipping optimized optimize {frac}: output already exists")
-            continue
-        optimize_cmd = [
-            sys.executable,
-            _OPTIMIZE_SCRIPT,
-            "-m",
-            job["measure_json"],
-            "-o",
-            out_dir,
-            "-b",
-            frac,
-        ]
-        print(f"\n⚙️ Optimizing optimized quant {frac}")
-        _run_cmd(optimize_cmd)
-
-
 def _bpw_sort_key(w: str):
-    if w == "bf16":
-        return (-1.0, w)
-    try:
-        return (float(w), w)
-    except Exception:
-        return (1e9, w)
+    return repo_measure._bpw_sort_key(w)
 
 
 def _task_to_csv_label(task: str) -> str:
-    """Map an internal measurement task label to its CSV weights label."""
-    return "bf16" if task == "base" else task
+    return repo_measure._task_to_csv_label(task)
 
 
 def _filter_measure_tasks_for_checkpoint(requested_tasks: List[str], existing_labels: set[str]) -> List[str]:
-    """Filter measurement tasks based on existing canonical CSV labels."""
-    return [task for task in requested_tasks if _task_to_csv_label(task) not in existing_labels]
-
+    return repo_measure._filter_measure_tasks_for_checkpoint(requested_tasks, existing_labels)
 
 
 # ---------------------------------------------------------------------------
 # Synthetic progress for measure subprocesses (ppl_layer / model_diff)
 # ---------------------------------------------------------------------------
-
-_TOTAL_LAYERS_RE = re.compile(r"Processing\s+(\d+)\s+layers", re.IGNORECASE)
-_LAYER_LINE_RE = re.compile(r"^\s*--\s+.*\s{2,}(?:time:|rfn_err:)")
-_RESULT_LINE_RE = re.compile(r"Perplexity:|KL divergence", re.IGNORECASE)
-
-
-def _run_measure_subprocess(
-    cmd: List[str],
-    device: int,
-    results: "Queue[Optional[dict]]",
-    phase_label: str,
-    log_f: Optional[IO] = None,
-) -> str:
-    """Run a measure subprocess, parse layer output, and send synthetic
-    progress bar events through *results*.
-
-    Returns the full captured output as a string.
-    """
-    if log_f:
-        log_f.write(f"$ {' '.join(cmd)}\n")
-        log_f.flush()
-
-    env = os.environ.copy()
-    env["PYTHONUNBUFFERED"] = "1"
-    proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1, env=env,
-    )
-    assert proc.stdout is not None
-
-    buf_lines: List[str] = []
-    total_layers: Optional[int] = None
-    completed = 0
-    last_send: float = 0.0
-
-    while True:
-        line = proc.stdout.readline()
-        if not line:
-            break
-        buf_lines.append(line)
-        if log_f:
-            log_f.write(line)
-            log_f.flush()
-
-        # Detect total layer count
-        if total_layers is None:
-            m = _TOTAL_LAYERS_RE.search(line)
-            if m:
-                total_layers = int(m.group(1))
-
-        # Detect layer completion (lines like " -- model.layers.0.attn  ...")
-        if total_layers and _LAYER_LINE_RE.match(line):
-            completed += 1
-            if completed == 1:
-                # First layer (embed) → 10%
-                pct = 10
-            elif completed < total_layers:
-                # Regular layers → 10-90%
-                mid_total = max(total_layers - 2, 1)
-                mid_done = completed - 1
-                pct = 10 + int((mid_done / mid_total) * 80)
-            else:
-                # Head/logits layer finished
-                pct = 100
-
-            now = time.monotonic()
-            if now - last_send >= 0.5 or pct >= 100:
-                bar = _build_synthetic_bar(pct)
-                results.put({
-                    "event": "progress",
-                    "device": device,
-                    "text": f"{phase_label} {bar} ({completed}/{total_layers})",
-                })
-                last_send = now
-
-        # Detect final result lines → jump to 100%
-        if total_layers and _RESULT_LINE_RE.search(line) and completed < total_layers:
-            bar = _build_synthetic_bar(100)
-            results.put({
-                "event": "progress",
-                "device": device,
-                "text": f"{phase_label} {bar} ({total_layers}/{total_layers})",
-            })
-            last_send = time.monotonic()
-
-    proc.wait()
-    if proc.returncode != 0:
-        full_out = "".join(buf_lines)
-        raise RuntimeError(
-            f"Command failed with exit code {proc.returncode}: {' '.join(cmd)}\n\n"
-            f"Output:\n{full_out}"
-        )
-    return "".join(buf_lines)
 
 
 _KL_RE = re.compile(
@@ -820,135 +263,6 @@ _PPL_RE = re.compile(
 # Catbench progress parsing
 # ---------------------------------------------------------------------------
 
-_CATBENCH_LOADED_RE = re.compile(r"CATBENCH_MODEL_LOADED")
-_CATBENCH_SAMPLE_RE = re.compile(r"CATBENCH_SAMPLE_DONE\s+(\d+)/(\d+)")
-_CATBENCH_SAMPLE_START_RE = re.compile(r"CATBENCH_SAMPLE_START\s+(\d+)/(\d+)")
-_CATBENCH_TOKENS_RE = re.compile(r"CATBENCH_TOKENS\s+(\d+)\s+([\d.]+)")
-
-
-def _run_catbench_subprocess(
-    cmd: List[str],
-    device: int,
-    results: "Queue[Optional[dict]]",
-    phase_label: str,
-    log_f: Optional[IO] = None,
-    cuda_visible_devices: Optional[str] = None,
-) -> str:
-    """Run a catbench subprocess and send progress events.
-
-    Progress model:
-      - 0-100% bar during model loading
-      - Token count display during inference
-      - Sample completion markers
-    """
-    if log_f:
-        log_f.write(f"$ {' '.join(cmd)}\n")
-        log_f.flush()
-
-    env = os.environ.copy()
-    env["PYTHONUNBUFFERED"] = "1"
-    env["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices or str(device)
-    proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1, env=env,
-    )
-    assert proc.stdout is not None
-
-    buf_lines: List[str] = []
-    last_send: float = 0.0
-    current_sample = ""
-    model_loaded = False
-    load_start: float = time.monotonic()
-    load_done = threading.Event()
-
-    # Background thread sends smooth time-based progress during model loading.
-    def _loading_progress_ticker():
-        while not load_done.wait(timeout=0.5):
-            elapsed = time.monotonic() - load_start
-            # Asymptotic curve: ~50% at 30s, ~75% at 60s, ~90% at 120s
-            pct = int(95 * (1 - 2 ** (-elapsed / 30)))
-            pct = max(pct, 1)
-            bar = _build_synthetic_bar(pct)
-            results.put({
-                "event": "progress",
-                "device": device,
-                "text": f"{phase_label} {bar} (loading)",
-            })
-
-    ticker = threading.Thread(target=_loading_progress_ticker, daemon=True)
-    ticker.start()
-
-    for line in proc.stdout:
-        buf_lines.append(line)
-        if log_f:
-            log_f.write(line)
-            log_f.flush()
-
-        # Model loaded → stop ticker, show 100%
-        if _CATBENCH_LOADED_RE.search(line):
-            model_loaded = True
-            load_done.set()
-            bar = _build_synthetic_bar(100)
-            results.put({
-                "event": "progress",
-                "device": device,
-                "text": f"{phase_label} {bar} (loaded)",
-            })
-            last_send = time.monotonic()
-            continue
-
-        # During loading phase, ticker handles progress — just skip
-        if not model_loaded:
-            continue
-
-        # Sample start → update current sample label
-        m = _CATBENCH_SAMPLE_START_RE.search(line)
-        if m:
-            current_sample = f"{m.group(1)}/{m.group(2)}"
-            results.put({
-                "event": "progress",
-                "device": device,
-                "text": f"{phase_label} | sample {current_sample} | 0 tokens",
-            })
-            last_send = time.monotonic()
-            continue
-
-        # Token progress → show count and TPS
-        m = _CATBENCH_TOKENS_RE.search(line)
-        if m:
-            tokens = m.group(1)
-            tps = m.group(2)
-            now = time.monotonic()
-            if now - last_send >= 0.3:
-                results.put({
-                    "event": "progress",
-                    "device": device,
-                    "text": f"{phase_label} | sample {current_sample} | {tokens} tokens ({tps} t/s)",
-                })
-                last_send = now
-            continue
-
-        # Sample done
-        m = _CATBENCH_SAMPLE_RE.search(line)
-        if m:
-            i_done = int(m.group(1))
-            n_total = int(m.group(2))
-            results.put({
-                "event": "progress",
-                "device": device,
-                "text": f"{phase_label} | sample {i_done}/{n_total} done",
-            })
-            last_send = time.monotonic()
-
-    proc.wait()
-    if proc.returncode != 0:
-        full_out = "".join(buf_lines)
-        raise RuntimeError(
-            f"Catbench failed with exit code {proc.returncode}: {' '.join(cmd)}\n\n"
-            f"Output:\n{full_out}"
-        )
-    return "".join(buf_lines)
-
 
 def _worker_measure(
     base_dir: str,
@@ -959,198 +273,40 @@ def _worker_measure(
     log_path: Optional[str],
     ppl_rows: int = 100,
 ) -> None:
-    """Phase-agnostic worker.  Each task is a dict with keys ``label`` and
-    ``phase`` (``"kl"`` or ``"ppl"``).  ``None`` is the termination sentinel.
-    """
-    log_f = None
-    if log_path:
-        os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
-        log_f = open(log_path, "w")
-
-    while True:
-        job = tasks.get()
-        if job is None:
-            results.put(None)  # Sentinel
-            break
-
-        task_label = job["label"]
-        phase = job["phase"]
-        label = "bf16" if task_label == "base" else str(task_label)
-        model_dir = base_dir if task_label == "base" else os.path.join(base_dir, str(task_label))
-        phase_tag = phase.upper()
-        results.put({"event": "start", "device": device, "label": label, "phase": phase})
-
-        try:
-            if phase == "kl":
-                # --- KL divergence ---
-                kl_cmd = [
-                    sys.executable,
-                    _MODEL_DIFF_SCRIPT,
-                    "-ma", base_dir,
-                    "-mb", model_dir,
-                    "-r", "10",
-                    "-d", str(device),
-                ]
-                kl_out = _run_measure_subprocess(kl_cmd, device, results, f"{label} KL", log_f)
-                kl_match = _KL_RE.search(kl_out)
-                if not kl_match:
-                    raise ValueError(
-                        "Could not parse model_diff output (KL Divergence pattern did not match)."
-                    )
-                kl_div = float(kl_match.group(1))
-
-                gib = file_size_gib(model_dir)
-                upsert_row(db_path, weights=label, kl_div=str(kl_div), gib=str(gib))
-                row = {"weights": label, "KL Div": kl_div, "PPL r-100": "", "GiB": gib}
-                results.put({
-                    "event": "done", "device": device, "label": label,
-                    "phase": phase, "row": row,
-                })
-
-            elif phase == "ppl":
-                # --- PPL ---
-                ppl_cmd = [
-                    sys.executable,
-                    "-m", "ezexl3.ppl_layer",
-                    "-m", model_dir,
-                    "-r", str(ppl_rows),
-                    "-d", str(device),
-                ]
-                ppl_out = _run_measure_subprocess(ppl_cmd, device, results, f"{label} PPL", log_f)
-                ppl_match = _PPL_RE.search(ppl_out)
-                if not ppl_match:
-                    raise ValueError(
-                        "Could not parse ppl_layer output (Perplexity pattern didn't match)."
-                    )
-                ppl_val = float(ppl_match.group(1))
-
-                # For base, hardcode KL=0.0; for others leave blank (upsert merges it)
-                kl_field = "0.0" if task_label == "base" else ""
-                gib = file_size_gib(model_dir)
-                upsert_row(db_path, weights=label, kl_div=kl_field, ppl=str(ppl_val), gib=str(gib))
-                row = {"weights": label, "KL Div": kl_field, "PPL r-100": ppl_val, "GiB": gib}
-                results.put({
-                    "event": "done", "device": device, "label": label,
-                    "phase": phase, "row": row,
-                })
-
-            elif phase == "catbench":
-                # --- Catbench ---
-                n_samples = job.get("n_samples", 3)
-                catbench_out_dir = os.path.join(base_dir, "catbench")
-                catbench_cmd = [
-                    sys.executable,
-                    "-m", "ezexl3.catbench",
-                    "-m", model_dir,
-                    "-cs", str(_CATBENCH_CACHE_TOKENS),
-                    "-n", str(n_samples),
-                    "-o", catbench_out_dir,
-                    "-l", label,
-                ]
-                _run_catbench_subprocess(catbench_cmd, device, results, f"{label} CAT", log_f)
-                results.put({
-                    "event": "done", "device": device, "label": label,
-                    "phase": phase, "row": {},
-                })
-
-        except Exception as e:
-            import traceback
-            if log_f:
-                traceback.print_exc(file=log_f)
-                log_f.flush()
-            results.put({
-                "event": "error", "device": device, "label": label,
-                "phase": phase, "error": str(e),
-            })
-
-    if log_f:
-        log_f.close()
-
-
+    return repo_measure._worker_measure(
+        base_dir=base_dir,
+        device=device,
+        db_path=db_path,
+        tasks=tasks,
+        results=results,
+        log_path=log_path,
+        ppl_rows=ppl_rows,
+        run_measure_subprocess_fn=_run_measure_subprocess,
+        run_catbench_subprocess_fn=_run_catbench_subprocess,
+        model_diff_script=_MODEL_DIFF_SCRIPT,
+        file_size_gib_fn=file_size_gib,
+        upsert_row_fn=upsert_row,
+        executable=sys.executable,
+        catbench_cache_tokens=_CATBENCH_CACHE_TOKENS,
+    )
 
 
 def _parse_measure_args(measure_args: List[str], default_devices: List[int]) -> tuple[int, List[int]]:
-    """Parse passthrough measure args supported by ezexl3.
-
-    Supported:
-      -r/--rows <int>         # PPL rows
-      -d/--device/--devices   # CUDA device list (comma-separated)
-    """
-    ppl_rows = 100
-    devices = list(default_devices)
-
-    i = 0
-    while i < len(measure_args):
-        tok = measure_args[i]
-
-        if tok in ("-r", "--rows"):
-            if i + 1 >= len(measure_args):
-                raise ValueError("Missing value for --measure-args -r/--rows")
-            try:
-                ppl_rows = int(measure_args[i + 1])
-                if ppl_rows <= 0:
-                    raise ValueError("--measure-args rows must be > 0")
-            except ValueError as e:
-                raise ValueError(f"Invalid rows value for --measure-args: {measure_args[i + 1]}") from e
-            i += 2
-            continue
-
-        if tok in ("-d", "--device", "--devices"):
-            if i + 1 >= len(measure_args):
-                raise ValueError("Missing value for --measure-args -d/--device")
-            val = measure_args[i + 1]
-            parsed = [x.strip() for x in str(val).split(",") if x.strip()]
-            if not parsed:
-                raise ValueError("Empty device list in --measure-args -d/--device")
-            try:
-                devices = [int(x) for x in parsed]
-            except ValueError as e:
-                raise ValueError(f"Invalid device list for --measure-args: {val}") from e
-            i += 2
-            continue
-
-        raise ValueError(
-            f"Unsupported --measure-args token: {tok}. Supported flags: -r/--rows, -d/--device/--devices"
-        )
-
-    return ppl_rows, devices
+    return repo_measure._parse_measure_args(measure_args, default_devices)
 
 
 def _maybe_update_graph(model_dir: str, csv_path: str) -> None:
-    """Regenerate the SVG graph from the current CSV if there are >= 2 complete data points.
-
-    Rows with missing KL/PPL/GiB (NaN from partial measurement) are filtered
-    out so that make_plot never sees NaN values in axis-limit calculations.
-    """
-    import numpy as np
-    from ezexl3.graph_svg import load_series, make_plot
-
-    try:
-        bpw, kld, ppl, gib, _ = load_series(csv_path, drop_bf16=True)
-    except Exception:
-        return
-
-    valid = ~(np.isnan(kld) | np.isnan(ppl) | np.isnan(gib))
-    bpw, kld, ppl, gib = bpw[valid], kld[valid], ppl[valid], gib[valid]
-
-    if len(bpw) < 2:
-        return
-    basename = os.path.basename(os.path.abspath(model_dir)).lower()
-    svg_path = os.path.join(model_dir, f"{basename}.svg")
-    make_plot(bpw, kld, ppl, gib, title=basename, outfile=svg_path, add_checks=False)
+    return repo_measure._maybe_update_graph(model_dir, csv_path)
 
 
 def _init_measure_db(model_dir: str, devices: List[int]) -> Tuple[str, str]:
-    """Set up SQLite DB, migrate legacy CSVs. Returns (db_path, out_csv)."""
-    out_csv = default_csv_path(model_dir)
-    db_path = default_db_path(model_dir)
-    if os.path.exists(out_csv):
-        migrate_csv_to_db(out_csv, db_path)
-    for d in devices:
-        legacy_shard = os.path.join(model_dir, f"{os.path.basename(model_dir)}Measured.gpu{d}.csv")
-        if os.path.exists(legacy_shard):
-            migrate_csv_to_db(legacy_shard, db_path)
-    return db_path, out_csv
+    return repo_measure._init_measure_db(
+        model_dir=model_dir,
+        devices=devices,
+        default_csv_path_fn=default_csv_path,
+        default_db_path_fn=default_db_path,
+        migrate_csv_to_db_fn=migrate_csv_to_db,
+    )
 
 
 def _build_quant_forwarded(
@@ -1209,137 +365,28 @@ def run_measure_single_bpw(
     write_logs: bool = True,
     include_base_ppl: bool = False,
 ) -> int:
-    """Measure KL + PPL for a single BPW with halt-on-error.
-
-    Uses the same multi-GPU worker queue as run_measure_stage: spawns up to
-    min(len(devices), num_tasks) workers so KL and PPL run in parallel when
-    there are 2+ GPUs available.
-
-    Returns 0 on success, 1 on any failure.
-    """
-    label = _task_to_csv_label(bpw)
-    existing_rows = _read_db_rows(db_path)
-
-    # Build task list (at most 3: base PPL, KL, PPL)
-    all_tasks: List[dict] = []
-
-    if include_base_ppl:
-        base_row = existing_rows.get("bf16", {})
-        if not (base_row.get("PPL r-100") or "").strip():
-            all_tasks.append({"label": "base", "phase": "ppl"})
-
-    row = existing_rows.get(label, {})
-    has_kl = bool((row.get("KL Div") or "").strip())
-    has_ppl = bool((row.get("PPL r-100") or "").strip())
-
-    if bpw != "base" and not has_kl:
-        all_tasks.append({"label": bpw, "phase": "kl"})
-    if not has_ppl:
-        all_tasks.append({"label": bpw, "phase": "ppl"})
-
-    if not all_tasks:
-        print(f"  🟦 {label}: already measured, skipping")
-        return 0
-
-    # Use as many GPUs as we have tasks (no point in idle workers)
-    n_workers = min(len(devices), len(all_tasks))
-    worker_devices = devices[:n_workers]
-
-    tasks_q: Queue = Queue()
-    results_q: Queue = Queue()
-
-    for t in all_tasks:
-        tasks_q.put(t)
-    for _ in worker_devices:
-        tasks_q.put(None)  # sentinels
-
-    log_paths = []
-    for d in worker_devices:
-        if write_logs:
-            log_paths.append(os.path.join(model_dir, "logs", f"measure_gpu{d}_bpw{label}.log"))
-        else:
-            log_paths.append(None)
-
-    procs: List[Process] = []
-    for d, logp in zip(worker_devices, log_paths):
-        p = Process(target=_worker_measure, args=(model_dir, d, db_path, tasks_q, results_q, logp, ppl_rows))
-        p.daemon = False
-        p.start()
-        procs.append(p)
-        if len(worker_devices) > 1:
-            time.sleep(2.0)
-
-    task_descs = [f"{_task_to_csv_label(t['label'])} {t['phase'].upper()}" for t in all_tasks]
-    print(f"  📊 Measuring {label}: {', '.join(task_descs)} on {n_workers} GPU(s)...")
-
-    use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
-    gpu_status: Dict[int, str] = {d: "idle" for d in worker_devices}
-    num_lines = n_workers
-
-    _init_gpu_progress(use_ansi, gpu_status)
-
-    # Result listener
-    active_workers = n_workers
-    failures = 0
-
-    while active_workers > 0:
-        res = results_q.get()
-        if res is None:
-            active_workers -= 1
-            continue
-
-        event = res["event"]
-
-        if event == "progress":
-            gpu = res["device"]
-            gpu_status[gpu] = res["text"]
-            _redraw_gpu_progress(use_ansi, gpu_status, num_lines)
-            continue
-
-        res_label = res.get("label", "")
-        phase = res.get("phase", "")
-        gpu = res.get("device", "?")
-        phase_tag = phase.upper()
-
-        if event == "start":
-            msg = f"🧪 [GPU {gpu}] START {res_label} {phase_tag}"
-            gpu_status[gpu] = f"{res_label} {phase_tag} | starting..."
-        elif event == "done":
-            row = res["row"]
-            if phase == "kl":
-                kl_val = row.get("KL Div", "N/A")
-                msg = f"✅ [GPU {gpu}] DONE {res_label} KL: KL={kl_val}"
-            else:
-                ppl_val = row.get("PPL r-100", "N/A")
-                msg = f"✅ [GPU {gpu}] DONE {res_label} PPL: PPL={ppl_val}"
-            gpu_status[gpu] = "idle"
-
-            # Live graph update after each measurement result
-            try:
-                out_csv = default_csv_path(model_dir)
-                export_csv(db_path, out_csv)
-                _maybe_update_graph(model_dir, out_csv)
-            except Exception:
-                pass  # non-critical
-        elif event == "error":
-            failures += 1
-            msg = f"🔴 [GPU {gpu}] FAIL {res_label} {phase_tag}: {res['error']}"
-            gpu_status[gpu] = "idle"
-        else:
-            continue
-
-        _print_msg_with_progress(msg, use_ansi, gpu_status, num_lines)
-
-    _cleanup_gpu_progress(use_ansi, num_lines)
-
-    for p in procs:
-        p.join()
-
-    if failures:
-        print(f"  ❌ Measurement failed for {label} with {failures} error(s)")
-        return 1
-
-    return 0
+    return repo_measure.run_measure_single_bpw(
+        model_dir=model_dir,
+        bpw=bpw,
+        devices=devices,
+        db_path=db_path,
+        ppl_rows=ppl_rows,
+        write_logs=write_logs,
+        include_base_ppl=include_base_ppl,
+        read_db_rows_fn=_read_db_rows,
+        task_to_csv_label_fn=_task_to_csv_label,
+        process_cls=Process,
+        queue_cls=Queue,
+        worker_measure_fn=_worker_measure,
+        init_gpu_progress_fn=_init_gpu_progress,
+        redraw_gpu_progress_fn=_redraw_gpu_progress,
+        print_msg_with_progress_fn=_print_msg_with_progress,
+        cleanup_gpu_progress_fn=_cleanup_gpu_progress,
+        export_csv_fn=export_csv,
+        maybe_update_graph_fn=_maybe_update_graph,
+        default_csv_path_fn=default_csv_path,
+        sleep_fn=time.sleep,
+    )
 
 
 def run_measure_stage(
@@ -1350,363 +397,38 @@ def run_measure_stage(
     measure_args: Optional[List[str]] = None,
     catbench_n: int = 0,
 ) -> int:
-    model_dir = os.path.abspath(model_dir)
-    bpws = [str(b) for b in bpws]
-    devices = list(devices)
-    ppl_rows, devices = _parse_measure_args(measure_args or [], devices)
-    if not devices:
-        raise ValueError("No CUDA devices available for measure stage. Provide -d/--devices.")
-
-    db_path, out_csv = _init_measure_db(model_dir, devices)
-
-    log_paths = []
-    for d in devices:
-        log_paths.append(os.path.join(model_dir, "logs", f"measure_gpu{d}.log") if write_logs else None)
-
-    # Per-field checkpointing: read DB and decide which phases to skip.
-    existing_rows = _read_db_rows(db_path)
-
-    # Fill GiB gaps inline (filesystem only, no GPU needed).
-    gib_filled = []
-    all_labels_to_check = [_task_to_csv_label(b) for b in bpws]
-    if "bf16" not in all_labels_to_check:
-        all_labels_to_check.append("bf16")
-    for lbl in all_labels_to_check:
-        row = existing_rows.get(lbl, {})
-        if not bool((row.get("GiB") or "").strip()):
-            quant_dir = model_dir if lbl == "bf16" else os.path.join(model_dir, lbl)
-            gib = file_size_gib(quant_dir)
-            if gib > 0:
-                upsert_row(db_path, weights=lbl, gib=str(round(gib, 2)))
-                gib_filled.append(lbl)
-
-    print("\n============================================================")
-    print("📊 Measurement Phase")
-    print("============================================================")
-
-    if gib_filled:
-        print(f"📏 Filled GiB for: {', '.join(gib_filled)}")
-
-    kl_tasks: List[dict] = []
-    ppl_tasks: List[dict] = []
-    skipped_kl: List[str] = []
-    skipped_ppl: List[str] = []
-
-    for bpw in bpws:
-        label = _task_to_csv_label(bpw)
-        row = existing_rows.get(label, {})
-        has_kl = bool((row.get("KL Div") or "").strip())
-        has_ppl = bool((row.get("PPL r-100") or "").strip())
-
-        # base never needs KL (hardcoded to 0.0)
-        if bpw != "base" and not has_kl:
-            kl_tasks.append({"label": bpw, "phase": "kl"})
-        elif bpw != "base":
-            skipped_kl.append(label)
-        if not has_ppl:
-            ppl_tasks.append({"label": bpw, "phase": "ppl"})
-        else:
-            skipped_ppl.append(label)
-
-    # Always include base PPL if not yet measured
-    base_label = "bf16"
-    base_row = existing_rows.get(base_label, {})
-    if not bool((base_row.get("PPL r-100") or "").strip()):
-        if not any(t["label"] == "base" for t in ppl_tasks):
-            ppl_tasks.append({"label": "base", "phase": "ppl"})
-    else:
-        if base_label not in skipped_ppl:
-            skipped_ppl.append(base_label)
-
-    if skipped_kl:
-        print(f"🟦 skipping KL divergence: {', '.join(skipped_kl)} (already measured)")
-    if skipped_ppl:
-        print(f"🟦 skipping perplexity: {', '.join(skipped_ppl)} (already measured)")
-
-    # --- Catbench tasks ---
-    catbench_tasks: List[dict] = []
-    multi_gpu_catbench_tasks: List[dict] = []
-    skipped_catbench: List[str] = []
-
-    if catbench_n > 0:
-        catbench_out_dir = os.path.join(model_dir, "catbench")
-
-        # Build catbench tasks for all bpws
-        for bpw in bpws:
-            label = _task_to_csv_label(bpw)
-            file_prefix = _catbench_file_prefix(label)
-            if not _catbench_has_output(catbench_out_dir, file_prefix, catbench_n):
-                catbench_tasks.append({
-                    "label": bpw, "phase": "catbench", "n_samples": catbench_n,
-                })
-            else:
-                skipped_catbench.append(label)
-
-        # Include bf16 baseline
-        if not _catbench_has_output(catbench_out_dir, "bf16", catbench_n):
-            catbench_tasks.append({
-                "label": "base", "phase": "catbench", "n_samples": catbench_n,
-            })
-        else:
-            skipped_catbench.append("bf16")
-
-        if skipped_catbench:
-            print(f"🟦 skipping catbench: {', '.join(skipped_catbench)} (txt samples exist)")
-
-        # VRAM pre-flight: sort into multi-GPU vs single-GPU
-        if len(devices) > 1 and catbench_tasks:
-            from ezexl3.catbench import check_vram_fit, check_multi_gpu_fit
-            single_gpu = []
-            for task in catbench_tasks:
-                task_label = task["label"]
-                task_model_dir = model_dir if task_label == "base" else os.path.join(model_dir, str(task_label))
-                fits, model_gib, avail_gib = check_vram_fit(task_model_dir, devices[0])
-                if fits:
-                    single_gpu.append(task)
-                else:
-                    # Check if it fits across all GPUs combined
-                    multi_fits, model_gib, total_avail = check_multi_gpu_fit(task_model_dir, devices)
-                    if multi_fits:
-                        device_str = ",".join(str(d) for d in devices)
-                        task["device_str"] = device_str
-                        multi_gpu_catbench_tasks.append(task)
-                    else:
-                        task_disp = "bf16" if task_label == "base" else str(task_label)
-                        print(f"  ⚠️  Skipping catbench for {task_disp}: "
-                              f"{model_gib:.1f} GiB model won't fit "
-                              f"({total_avail:.1f} GiB available across {len(devices)} GPUs)")
-            catbench_tasks = single_gpu
-
-    total_jobs = len(kl_tasks) + len(ppl_tasks) + len(catbench_tasks) + len(multi_gpu_catbench_tasks)
-
-    if total_jobs == 0:
-        # Even with no inference jobs, regenerate SVGs from existing TXT files
-        if catbench_n > 0:
-            catbench_out_dir = os.path.join(model_dir, "catbench")
-            print("🎨 Generating SVGs from catbench results...")
-            n_svgs = _catbench_generate_svgs(catbench_out_dir)
-            print(f"✅ {n_svgs} SVGs generated.")
-        else:
-            print("✅ All requested measurement phases already exist. Nothing to do.")
-        return 0
-
-    n_kl = len(kl_tasks)
-    n_ppl = len(ppl_tasks)
-    n_cat = len(catbench_tasks) + len(multi_gpu_catbench_tasks)
-
-    # --- Run multi-GPU catbench jobs first (sequentially, all GPUs) ---
-    if multi_gpu_catbench_tasks:
-        from queue import Queue as TQueue
-
-        mgpu_use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
-
-        print(f"\n🐱 Running {len(multi_gpu_catbench_tasks)} multi-GPU catbench job(s)...")
-
-        mgpu_status: Dict[int, str] = {d: "idle" for d in devices}
-        mgpu_num_lines = len(devices)
-
-        # Print initial progress area
-        if mgpu_use_ansi:
-            for d in sorted(mgpu_status):
-                sys.stdout.write(f"\033[2K  GPU {d} | idle\n")
-            sys.stdout.flush()
-
-        for task in multi_gpu_catbench_tasks:
-            task_label = task["label"]
-            label = "bf16" if task_label == "base" else str(task_label)
-            task_model_dir = model_dir if task_label == "base" else os.path.join(model_dir, str(task_label))
-            device_str = task["device_str"]
-            catbench_cmd = [
-                sys.executable, "-m", "ezexl3.catbench",
-                "-m", task_model_dir,
-                "-gs", ",".join("99" for _ in device_str.split(",")),
-                "-cs", str(_CATBENCH_CACHE_TOKENS),
-                "-n", str(task.get("n_samples", 3)),
-                "-o", os.path.join(model_dir, "catbench"),
-                "-l", label,
-            ]
-            phase_label = f"{label} CAT"
-            mgpu_results: TQueue = TQueue()
-            mgpu_error: List[Optional[Exception]] = [None]
-
-            def _run_mgpu_catbench(
-                _cmd: List[str] = catbench_cmd,
-                _dev: int = devices[0],
-                _q: TQueue = mgpu_results,
-                _pl: str = phase_label,
-                _cvd: str = device_str,
-            ) -> None:
-                try:
-                    _run_catbench_subprocess(_cmd, _dev, _q, _pl,
-                                            cuda_visible_devices=_cvd)
-                except Exception as exc:
-                    mgpu_error[0] = exc
-                _q.put(None)
-
-            t = threading.Thread(target=_run_mgpu_catbench)
-            t.start()
-
-            # Consume progress events and render to GPU status lines
-            while True:
-                ev = mgpu_results.get()
-                if ev is None:
-                    break
-                if ev["event"] == "progress":
-                    for d in devices:
-                        mgpu_status[d] = ev["text"]
-                    if mgpu_use_ansi:
-                        _clear_and_redraw_progress(mgpu_status, mgpu_num_lines)
-
-            t.join()
-
-            if mgpu_error[0] is not None:
-                msg = f"🔴 Multi-GPU catbench failed for {label}: {mgpu_error[0]}"
-            else:
-                msg = f"🐱 DONE {label} CATBENCH (multi-GPU [{device_str}])"
-
-            for d in devices:
-                mgpu_status[d] = "idle"
-            if mgpu_use_ansi:
-                _print_above_progress(msg, mgpu_status, mgpu_num_lines)
-            else:
-                print(msg)
-
-        # Clear progress area
-        if mgpu_use_ansi:
-            sys.stdout.write(f"\033[{mgpu_num_lines}A")
-            for _ in range(mgpu_num_lines):
-                sys.stdout.write("\033[2K\n")
-            sys.stdout.write(f"\033[{mgpu_num_lines}A")
-            sys.stdout.flush()
-
-    # Remaining jobs (KL + PPL + single-GPU catbench) into shared queue
-    remaining_jobs = len(kl_tasks) + len(ppl_tasks) + len(catbench_tasks)
-    if remaining_jobs == 0:
-        if multi_gpu_catbench_tasks:
-            catbench_out_dir = os.path.join(model_dir, "catbench")
-            print("\n🎨 Generating SVGs from catbench results...")
-            n_svgs = _catbench_generate_svgs(catbench_out_dir)
-            print(f"✅ All catbench jobs complete: {n_svgs} SVGs generated.")
-        return 0
-
-    # Queue: interleave by BPW (lowest first), PPL then KL per BPW,
-    # so the live graph fills in from left to right.
-    tasks: Queue = Queue()
-    results: Queue = Queue()
-
-    # Build a combined per-BPW task list sorted by numeric BPW (ascending)
-    _bpw_tasks: Dict[str, List[dict]] = {}
-    for t in ppl_tasks:
-        _bpw_tasks.setdefault(t["label"], []).append(t)
-    for t in kl_tasks:
-        _bpw_tasks.setdefault(t["label"], []).append(t)
-
-    def _bpw_sort_key(label: str) -> float:
-        if label == "base":
-            return -1.0
-        try:
-            return float(label)
-        except ValueError:
-            return 999.0
-
-    for label in sorted(_bpw_tasks, key=_bpw_sort_key):
-        for t in _bpw_tasks[label]:
-            tasks.put(t)
-    for t in catbench_tasks:
-        tasks.put(t)
-    for _ in devices:
-        tasks.put(None)
-
-    procs: List[Process] = []
-    for d, logp in zip(devices, log_paths):
-        p = Process(target=_worker_measure, args=(model_dir, d, db_path, tasks, results, logp, ppl_rows))
-        p.daemon = False
-        p.start()
-        procs.append(p)
-        time.sleep(2.0)
-
-    cat_msg = f" + {n_cat} CAT" if n_cat else ""
-    print(f"\n🚀 Measuring {n_kl} KL + {n_ppl} PPL{cat_msg} jobs on {len(devices)} GPUs...")
-
-    use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
-    gpu_status: Dict[int, str] = {d: "idle" for d in devices}
-    num_lines = len(devices)
-    _init_gpu_progress(use_ansi, gpu_status)
-
-    # Result listener loop
-    active_workers = len(devices)
-    failures = 0
-
-    while active_workers > 0:
-        res = results.get()
-        if res is None:
-            active_workers -= 1
-            continue
-
-        gpu = res["device"]
-        event = res["event"]
-
-        if event == "progress":
-            gpu_status[gpu] = res["text"]
-            _redraw_gpu_progress(use_ansi, gpu_status, num_lines)
-            continue
-
-        label = res["label"]
-        phase = res.get("phase", "")
-        phase_tag = phase.upper()
-
-        if event == "start":
-            msg = f"🧪 [GPU {gpu}] START {label} {phase_tag}"
-            gpu_status[gpu] = f"{label} {phase_tag} | starting..."
-        elif event == "done":
-            row = res["row"]
-            if phase == "kl":
-                kl_val = row.get("KL Div", "N/A")
-                msg = f"✅ [GPU {gpu}] DONE {label} KL: KL={kl_val}"
-            elif phase == "catbench":
-                msg = f"🐱 [GPU {gpu}] DONE {label} CATBENCH"
-            else:
-                ppl_val = row.get("PPL r-100", "N/A")
-                msg = f"✅ [GPU {gpu}] DONE {label} PPL: PPL={ppl_val}"
-            gpu_status[gpu] = "idle"
-
-            # Live graph update: export CSV and regenerate SVG after each
-            # KL/PPL result so the graph renders progressively.
-            if phase in ("kl", "ppl"):
-                try:
-                    export_csv(db_path, out_csv)
-                    _maybe_update_graph(model_dir, out_csv)
-                except Exception:
-                    pass  # non-critical, final export happens below
-        elif event == "error":
-            failures += 1
-            msg = f"🔴 [GPU {gpu}] FAIL {label} {phase_tag}: {res['error']}"
-            gpu_status[gpu] = "idle"
-        else:
-            continue
-
-        _print_msg_with_progress(msg, use_ansi, gpu_status, num_lines)
-
-    _cleanup_gpu_progress(use_ansi, num_lines)
-
-    for p in procs:
-        p.join()
-
-    # Final export of database to CSV for downstream consumers (readme, graph_svg)
-    export_csv(db_path, out_csv)
-
-    # Batch SVG generation after all catbench jobs
-    if catbench_n > 0:
-        catbench_out_dir = os.path.join(model_dir, "catbench")
-        print("\n🎨 Generating SVGs from catbench results...")
-        n_svgs = _catbench_generate_svgs(catbench_out_dir)
-        print(f"✅ Catbench: {n_svgs} SVGs generated.")
-
-    if failures:
-        print(f"⚠️ Measurement stage completed with {failures} failure(s). Merged CSV: {out_csv}")
-    else:
-        print(f"✅ All measurements complete. Merged CSV: {out_csv}")
-    return 0
+    return repo_measure.run_measure_stage(
+        model_dir=model_dir,
+        bpws=bpws,
+        devices=devices,
+        write_logs=write_logs,
+        measure_args=measure_args,
+        catbench_n=catbench_n,
+        parse_measure_args_fn=_parse_measure_args,
+        init_measure_db_fn=_init_measure_db,
+        read_db_rows_fn=_read_db_rows,
+        task_to_csv_label_fn=_task_to_csv_label,
+        catbench_file_prefix_fn=_catbench_file_prefix,
+        catbench_has_output_fn=_catbench_has_output,
+        catbench_generate_svgs_fn=_catbench_generate_svgs,
+        file_size_gib_fn=file_size_gib,
+        upsert_row_fn=upsert_row,
+        process_cls=Process,
+        queue_cls=Queue,
+        worker_measure_fn=_worker_measure,
+        init_gpu_progress_fn=_init_gpu_progress,
+        redraw_gpu_progress_fn=_redraw_gpu_progress,
+        print_msg_with_progress_fn=_print_msg_with_progress,
+        cleanup_gpu_progress_fn=_cleanup_gpu_progress,
+        clear_and_redraw_progress_fn=_clear_and_redraw_progress,
+        print_above_progress_fn=_print_above_progress,
+        export_csv_fn=export_csv,
+        maybe_update_graph_fn=_maybe_update_graph,
+        run_catbench_subprocess_fn=_run_catbench_subprocess,
+        catbench_cache_tokens=_CATBENCH_CACHE_TOKENS,
+        executable=sys.executable,
+        sleep_fn=time.sleep,
+    )
 
 
 def run_repo(
