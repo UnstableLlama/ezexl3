@@ -123,7 +123,7 @@ class JobManager:
                 if not segment.strip():
                     continue
                 event = {"type": stream_type, "text": segment}
-                job.output.append(event)
+                job.append_event(event)
             job.notify()
 
     async def _wait_exit(self, job: Job, proc: asyncio.subprocess.Process):
@@ -274,12 +274,20 @@ async def handle_run_stream(request: web.Request) -> web.Response:
     # DONE/EOF) is swallowed quietly instead of logging a traceback.
     waiter = job.new_waiter()
     try:
-        # Replay buffered output
+        # Track progress with a cursor that indexes into job.total_appended
+        # (the monotonic counter) so we stay correct even after the bounded
+        # deque rolls over. The first loop iteration replays everything
+        # currently buffered; subsequent iterations send only new events.
         cursor = 0
-        for event in list(job.output):
-            sse_data = f"data: {json.dumps(event)}\n\n"
-            await response.write(sse_data.encode("utf-8"))
-            cursor += 1
+
+        def _pending_events() -> list[dict]:
+            """Return any events the client hasn't seen yet, in order."""
+            snapshot = list(job.output)
+            buffered_start = job.total_appended - len(snapshot)
+            if cursor >= job.total_appended:
+                return []
+            start = max(0, cursor - buffered_start)
+            return snapshot[start:]
 
         while True:
             waiter.clear()
