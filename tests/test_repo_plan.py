@@ -20,7 +20,8 @@ class RepoPlanModuleTests(unittest.TestCase):
         self.assertEqual(plan["requested_integers"], ["4"])
         self.assertEqual(plan["requested_optimizeds"], ["4.07", "6.25"])
         self.assertEqual(plan["quant_integer_queue"], ["4", "5", "6", "7"])
-        self.assertEqual(plan["measure_queue"], ["4", "5", "6", "7", "4.07", "6.25"])
+        # Optimized fracs are interleaved numerically in the measure queue.
+        self.assertEqual(plan["measure_queue"], ["4", "4.07", "5", "6", "6.25", "7"])
 
     def test_plan_repo_bpws_without_opt_fractionals_go_direct(self):
         plan = repo_plan._plan_repo_bpws(["4", "4.07", "6.25"])
@@ -29,6 +30,29 @@ class RepoPlanModuleTests(unittest.TestCase):
         self.assertEqual(plan["requested_optimizeds"], [])
         self.assertEqual(plan["quant_integer_queue"], ["4", "4.07", "6.25"])
         self.assertEqual(plan["measure_queue"], ["4", "4.07", "6.25"])
+
+    def test_plan_repo_bpws_sorts_fractionals_into_numeric_order(self):
+        # User submits "-b 2,3,4,4.5,5,6,7" — 4.5 should run between 4 and 5,
+        # not tacked onto the end after 7.
+        plan = repo_plan._plan_repo_bpws(["2", "3", "4", "4.5", "5", "6", "7"])
+
+        self.assertEqual(
+            plan["quant_integer_queue"],
+            ["2", "3", "4", "4.5", "5", "6", "7"],
+        )
+        self.assertEqual(
+            plan["measure_queue"],
+            ["2", "3", "4", "4.5", "5", "6", "7"],
+        )
+
+    def test_plan_repo_bpws_sorts_unsorted_input(self):
+        # Input order shouldn't matter — the queue progresses monotonically.
+        plan = repo_plan._plan_repo_bpws(["7", "4.5", "2", "5", "3"])
+
+        self.assertEqual(
+            plan["quant_integer_queue"],
+            ["2", "3", "4.5", "5", "7"],
+        )
 
     def test_repo_reexports_plan_helpers(self):
         self.assertIs(repo._normalize_bpw_str, repo_plan._normalize_bpw_str)

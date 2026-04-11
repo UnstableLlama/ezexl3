@@ -27,7 +27,8 @@ class OptimizedBpwPlanningTests(unittest.TestCase):
         self.assertEqual(plan["requested_integers"], ["4"])
         self.assertEqual(plan["requested_optimizeds"], ["4.07", "6.25"])
         self.assertEqual(plan["quant_integer_queue"], ["4", "5", "6", "7"])
-        self.assertEqual(plan["measure_queue"], ["4", "5", "6", "7", "4.07", "6.25"])
+        # Optimized fracs are interleaved numerically in the measure queue.
+        self.assertEqual(plan["measure_queue"], ["4", "4.07", "5", "6", "6.25", "7"])
 
     def test_plan_repo_bpws_mixed_opt_and_standard_fractional(self):
         """Only -opt fractionals trigger optimization; others quant directly."""
@@ -167,7 +168,7 @@ class OptimizedStageTests(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         self.assertEqual(mock_quant.call_args.kwargs["bpws"], ["4", "5"])
-        self.assertEqual(mock_measure.call_args.kwargs["bpws"], ["4", "5", "4.07"])
+        self.assertEqual(mock_measure.call_args.kwargs["bpws"], ["4", "4.07", "5"])
         mock_frac.assert_called_once_with(
             model_dir="/tmp/model", optimized_bpws=["4.07"], devices=[0, 1], layers=2, write_logs=True
         )
