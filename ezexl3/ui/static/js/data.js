@@ -255,11 +255,9 @@ async function fetchEvalsData(modelDir, bpw) {
 
 
 async function fetchEvalsChart(modelDir, bpw) {
-  const chartWrap = document.getElementById("evals-chart-wrap");
   const chartEl = document.getElementById("evals-chart");
 
   if (!bpw) {
-    chartWrap.style.display = "none";
     chartEl.innerHTML = "";
     return;
   }
@@ -268,15 +266,11 @@ async function fetchEvalsChart(modelDir, bpw) {
     const url = `/api/perf-graph?model_dir=${encodeURIComponent(modelDir)}&bpw=${encodeURIComponent(bpw)}`;
     const res = await fetch(url);
     if (!res.ok) {
-      chartWrap.style.display = "none";
       chartEl.innerHTML = "";
       return;
     }
-    const svg = await res.text();
-    chartWrap.style.display = "";
-    chartEl.innerHTML = svg;
+    chartEl.innerHTML = await res.text();
   } catch (e) {
-    chartWrap.style.display = "none";
     chartEl.innerHTML = "";
   }
 }
@@ -295,7 +289,7 @@ function renderEvalsData(bpwData) {
   }
 
   empty.style.display = "none";
-  tables.style.display = "";
+  document.getElementById("evals-body").style.display = "";
 
   const prefillBody = document.getElementById("evals-prefill-body");
   prefillBody.innerHTML = prefill.map(r =>
@@ -310,8 +304,7 @@ function renderEvalsData(bpwData) {
 
 
 function showEvalsEmpty(msg) {
-  document.getElementById("evals-tables").style.display = "none";
-  document.getElementById("evals-chart-wrap").style.display = "none";
+  document.getElementById("evals-body").style.display = "none";
   document.getElementById("evals-chart").innerHTML = "";
   const empty = document.getElementById("evals-empty");
   empty.textContent = msg;

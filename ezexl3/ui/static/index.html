@@ -68,7 +68,7 @@
           <button class="tab-btn active" data-tab="command">
             <span id="tab-command-label">Repo</span>
           </button>
-          <button class="tab-btn" data-tab="data">Data</button>
+          <button class="tab-btn" data-tab="data">KL / PPL</button>
           <button class="tab-btn" data-tab="evals">Evals</button>
         </div>
         <p id="command-desc" class="tab-bar-desc">Quantize &rarr; Measure KL+PPL &rarr; README</p>
@@ -149,27 +149,29 @@
             </select>
           </div>
           <div id="evals-empty" class="evals-empty">No performance data yet. Run a perf eval (<code>-perf</code>) to begin.</div>
-          <div id="evals-chart-wrap" style="display:none">
-            <div id="evals-chart"></div>
-          </div>
-          <div id="evals-tables" style="display:none">
-            <div class="evals-section">
-              <h3 class="evals-section-title">Prefill</h3>
-              <table class="evals-table">
-                <thead>
-                  <tr><th>Length</th><th>Tokens/s</th></tr>
-                </thead>
-                <tbody id="evals-prefill-body"></tbody>
-              </table>
+          <div id="evals-body" style="display:none">
+            <div id="evals-tables">
+              <div class="evals-section">
+                <h3 class="evals-section-title">Prefill</h3>
+                <table class="evals-table">
+                  <thead>
+                    <tr><th>Length</th><th>Tokens/s</th></tr>
+                  </thead>
+                  <tbody id="evals-prefill-body"></tbody>
+                </table>
+              </div>
+              <div class="evals-section">
+                <h3 class="evals-section-title">Generation</h3>
+                <table class="evals-table">
+                  <thead>
+                    <tr><th>Context</th><th>Tokens/s</th></tr>
+                  </thead>
+                  <tbody id="evals-gen-body"></tbody>
+                </table>
+              </div>
             </div>
-            <div class="evals-section">
-              <h3 class="evals-section-title">Generation</h3>
-              <table class="evals-table">
-                <thead>
-                  <tr><th>Context</th><th>Tokens/s</th></tr>
-                </thead>
-                <tbody id="evals-gen-body"></tbody>
-              </table>
+            <div id="evals-chart-wrap">
+              <div id="evals-chart"></div>
             </div>
           </div>
         </div>
