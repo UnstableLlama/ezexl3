@@ -2,7 +2,7 @@
 
 let dataPollingInterval = null;
 let lastRowCount = 0;
-let activeTab = "command";  // "command" | "data"
+let activeTab = "command";  // "command" | "data" | "evals"
 
 function switchTab(tab) {
   activeTab = tab;
@@ -20,6 +20,10 @@ function switchTab(tab) {
     document.getElementById("data-panel").classList.add("active");
     document.getElementById("command-desc").style.display = "none";
     refreshData();
+  } else if (tab === "evals") {
+    document.getElementById("evals-tab-panel").classList.add("active");
+    document.getElementById("command-desc").style.display = "none";
+    refreshEvals();
   }
 }
 
@@ -119,6 +123,8 @@ function startDataPolling() {
   dataPollingInterval = setInterval(() => {
     if (activeTab === "data") {
       refreshData();
+    } else if (activeTab === "evals") {
+      refreshEvals();
     }
   }, 4000);
 }
@@ -174,4 +180,119 @@ function esc(s) {
   const d = document.createElement("div");
   d.textContent = s;
   return d.innerHTML;
+}
+
+
+// ── Evals tab: per-BPW perf data tables ──────────────────────────
+
+let evalsLastBpws = [];
+
+async function refreshEvals() {
+  const modelDir = getModelDir();
+  if (!modelDir) {
+    showEvalsEmpty("Enter a model directory first.");
+    return;
+  }
+  const select = document.getElementById("evals-bpw-select");
+  const selectedBpw = select.value;
+  // Fetch the list of BPWs (and optionally the selected BPW's data)
+  await fetchEvalsData(modelDir, selectedBpw || null);
+}
+
+
+async function fetchEvalsData(modelDir, bpw) {
+  const select = document.getElementById("evals-bpw-select");
+  try {
+    let url = `/api/perf-data?model_dir=${encodeURIComponent(modelDir)}`;
+    if (bpw) url += `&bpw=${encodeURIComponent(bpw)}`;
+    const res = await fetch(url);
+    const json = await res.json();
+
+    // Update BPW dropdown if the list changed
+    const newBpws = json.bpws || [];
+    if (JSON.stringify(newBpws) !== JSON.stringify(evalsLastBpws)) {
+      evalsLastBpws = newBpws;
+      const prev = select.value;
+      select.innerHTML = '<option value="">Select a BPW...</option>';
+      for (const b of newBpws) {
+        const opt = document.createElement("option");
+        opt.value = b;
+        opt.textContent = b;
+        select.appendChild(opt);
+      }
+      // Restore selection if it still exists
+      if (prev && newBpws.includes(prev)) {
+        select.value = prev;
+      }
+    }
+
+    if (!newBpws.length) {
+      showEvalsEmpty("No performance data yet. Run a perf eval (-perf) to begin.");
+      return;
+    }
+
+    // If no BPW selected yet, auto-select the first one
+    if (!select.value && newBpws.length) {
+      select.value = newBpws[0];
+      // Re-fetch with the selected BPW
+      await fetchEvalsData(modelDir, select.value);
+      return;
+    }
+
+    const data = json.data || {};
+    const bpwData = data[select.value];
+    if (!bpwData) {
+      showEvalsEmpty("No data for selected BPW.");
+      return;
+    }
+
+    renderEvalsData(bpwData);
+  } catch (e) {
+    showEvalsEmpty("Failed to load performance data.");
+  }
+}
+
+
+function renderEvalsData(bpwData) {
+  const tables = document.getElementById("evals-tables");
+  const empty = document.getElementById("evals-empty");
+
+  const prefill = bpwData.prefill || [];
+  const gen = bpwData.generation || [];
+
+  if (!prefill.length && !gen.length) {
+    showEvalsEmpty("No data for selected BPW.");
+    return;
+  }
+
+  empty.style.display = "none";
+  tables.style.display = "";
+
+  const prefillBody = document.getElementById("evals-prefill-body");
+  prefillBody.innerHTML = prefill.map(r =>
+    `<tr><td>${esc(String(r.context_length))}</td><td>${esc(String(r.tokens_per_second))}</td></tr>`
+  ).join("");
+
+  const genBody = document.getElementById("evals-gen-body");
+  genBody.innerHTML = gen.map(r =>
+    `<tr><td>${esc(String(r.context_length))}</td><td>${esc(String(r.tokens_per_second))}</td></tr>`
+  ).join("");
+}
+
+
+function showEvalsEmpty(msg) {
+  document.getElementById("evals-tables").style.display = "none";
+  const empty = document.getElementById("evals-empty");
+  empty.textContent = msg;
+  empty.style.display = "";
+}
+
+
+function initEvalsTab() {
+  const select = document.getElementById("evals-bpw-select");
+  if (select) {
+    select.addEventListener("change", () => {
+      if (activeTab === "evals") refreshEvals();
+    });
+  }
 }

@@ -73,6 +73,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Data panel horizontal splitter
   initDataSplitter();
 
+  // Evals tab BPW selector
+  initEvalsTab();
+
   // Splitter drag
   initSplitter();
 

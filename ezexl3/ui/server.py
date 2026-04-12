@@ -375,6 +375,27 @@ async def handle_data(request: web.Request) -> web.Response:
         return web.json_response({"rows": [], "error": str(e)})
 
 
+async def handle_perf_data(request: web.Request) -> web.Response:
+    """Return detailed per-context-length perf data from the perf DB."""
+    model_dir = request.query.get("model_dir", "").strip()
+    bpw = request.query.get("bpw", "").strip() or None
+    if not model_dir:
+        return web.json_response({"bpws": [], "data": {}})
+
+    try:
+        from ezexl3.perf_db import (
+            available_bpws,
+            default_perf_db_path,
+            read_perf_data,
+        )
+        perf_db = default_perf_db_path(model_dir)
+        bpws = await asyncio.to_thread(available_bpws, perf_db)
+        data = await asyncio.to_thread(read_perf_data, perf_db, bpw)
+        return web.json_response({"bpws": bpws, "data": data})
+    except Exception as e:
+        return web.json_response({"bpws": [], "data": {}, "error": str(e)})
+
+
 async def handle_graph(request: web.Request) -> web.Response:
     """Generate SVG graph from current DB state and return it."""
     model_dir = request.query.get("model_dir", "").strip()
@@ -616,6 +637,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/run/{job_id}/stop", handle_run_stop)
     app.router.add_get("/api/run/status", handle_run_status)
     app.router.add_get("/api/data", handle_data)
+    app.router.add_get("/api/perf-data", handle_perf_data)
     app.router.add_get("/api/graph", handle_graph)
     app.router.add_get("/api/metadata", handle_metadata_get)
     app.router.add_post("/api/metadata", handle_metadata_set)

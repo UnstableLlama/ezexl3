@@ -242,6 +242,27 @@ def _worker_measure(
                     extractor = RESULT_EXTRACTORS[phase]
                     result_dict = extractor(eval_out)
                     upsert_row_fn(db_path, weights=label, **result_dict)
+
+                    # For perf, also write the detailed per-context-length
+                    # curve to the dedicated perf database.
+                    if phase == "perf":
+                        try:
+                            from ezexl3.evals import extract_perf_detail
+                            from ezexl3.perf_db import (
+                                default_perf_db_path,
+                                upsert_perf_results,
+                            )
+                            detail = extract_perf_detail(eval_out)
+                            if detail["prefill"] or detail["generation"]:
+                                perf_db = default_perf_db_path(base_dir)
+                                upsert_perf_results(
+                                    perf_db, label,
+                                    detail["prefill"],
+                                    detail["generation"],
+                                )
+                        except Exception:
+                            pass  # non-fatal: summary already saved
+
                     results.put({
                         "event": "done", "device": device, "label": label,
                         "phase": phase, "row": result_dict,

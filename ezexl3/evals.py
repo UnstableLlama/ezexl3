@@ -522,6 +522,24 @@ def _extract_perf_result(output: str) -> dict:
     return result
 
 
+def extract_perf_detail(output: str) -> Dict[str, List[tuple]]:
+    """Extract all prefill/generation rows from perf.py output.
+
+    Returns ``{"prefill": [(length, tps), ...], "generation": [(ctx, tps), ...]}``.
+    Each tuple is ``(context_length_int, tokens_per_second_float)``.
+    """
+    clean = _strip_ansi(output)
+    prefill = [
+        (int(m[0]), float(m[1]))
+        for m in _PERF_PREFILL_RE.findall(clean)
+    ]
+    generation = [
+        (int(m[0]), float(m[1]))
+        for m in _PERF_GEN_RE.findall(clean)
+    ]
+    return {"prefill": prefill, "generation": generation}
+
+
 RESULT_EXTRACTORS: Dict[str, Callable[[str], dict]] = {
     "diversity": _extract_diversity_result,
     "humaneval": _extract_humaneval_result,
