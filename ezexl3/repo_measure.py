@@ -725,15 +725,42 @@ def run_measure_stage(
             row = res["row"]
             if phase == "kl":
                 msg = f"✅ [GPU {gpu}] DONE {label} KL: KL={row.get('KL Div', 'N/A')}"
+            elif phase == "ppl":
+                msg = f"✅ [GPU {gpu}] DONE {label} PPL: PPL={row.get('PPL r-100', 'N/A')}"
             elif phase == "catbench":
                 msg = f"🐱 [GPU {gpu}] DONE {label} CATBENCH"
             else:
-                msg = f"✅ [GPU {gpu}] DONE {label} PPL: PPL={row.get('PPL r-100', 'N/A')}"
+                from ezexl3.evals import (
+                    EVAL_REGISTRY,
+                    format_eval_result,
+                    result_is_empty,
+                )
+                eval_def = EVAL_REGISTRY.get(phase)
+                if eval_def is not None:
+                    summary = format_eval_result(phase, row) or "N/A"
+                    if result_is_empty(phase, row):
+                        msg = (
+                            f"⚠️  [GPU {gpu}] DONE {label} {eval_def.phase_label}: "
+                            f"no results extracted (subprocess finished but regex did not match)"
+                        )
+                        failures += 1
+                    else:
+                        msg = f"✅ [GPU {gpu}] DONE {label} {eval_def.phase_label}: {summary}"
+                else:
+                    msg = f"✅ [GPU {gpu}] DONE {label} {phase_tag}"
             gpu_status[gpu] = "idle"
+            # Flush CSV after every DB-writing phase so the on-disk snapshot
+            # tracks reality. Graph update stays gated to KL/PPL because evals
+            # don't feed the graph.
             if phase in ("kl", "ppl"):
                 try:
                     export_csv_fn(db_path, out_csv)
                     maybe_update_graph_fn(model_dir, out_csv)
+                except Exception:
+                    pass
+            elif phase != "catbench":
+                try:
+                    export_csv_fn(db_path, out_csv)
                 except Exception:
                     pass
         elif event == "error":
@@ -760,6 +787,6 @@ def run_measure_stage(
 
     if failures:
         print(f"⚠️ Measurement stage completed with {failures} failure(s). Merged CSV: {out_csv}")
-    else:
-        print(f"✅ All measurements complete. Merged CSV: {out_csv}")
+        return 1
+    print(f"✅ All measurements complete. Merged CSV: {out_csv}")
     return 0

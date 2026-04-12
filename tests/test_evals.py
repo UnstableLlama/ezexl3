@@ -1,5 +1,6 @@
 """Tests for the eval integration module (ezexl3/evals.py)."""
 
+import csv
 import os
 import sqlite3
 import tempfile
@@ -14,6 +15,8 @@ from ezexl3.evals import (
     eval_has_result,
     build_eval_cmd,
     detect_prompt_format,
+    format_eval_result,
+    result_is_empty,
     _parse_diversity_progress,
     _parse_humaneval_progress,
     _parse_ifbench_progress,
@@ -225,6 +228,86 @@ class TestPerfExtractor:
 
 
 # ---------------------------------------------------------------------------
+# Result display formatter tests
+# ---------------------------------------------------------------------------
+
+class TestFormatEvalResult:
+    def test_perf_includes_both_metrics(self):
+        result = {"perf_prefill_tps": "1200.00", "perf_gen_tps": "150.23"}
+        out = format_eval_result("perf", result)
+        assert "1200.00" in out
+        assert "150.23" in out
+        assert "N/A" not in out
+
+    def test_perf_missing_values_show_na(self):
+        out = format_eval_result("perf", {"perf_prefill_tps": "", "perf_gen_tps": ""})
+        assert out.count("N/A") == 2
+
+    def test_diversity(self):
+        out = format_eval_result("diversity", {"diversity_score": "0.847362"})
+        assert "0.847362" in out
+        assert "diversity" in out.lower()
+
+    def test_mmlu(self):
+        out = format_eval_result("mmlu", {"mmlu_accuracy": "84.2%"})
+        assert "84.2%" in out
+
+    def test_humaneval(self):
+        out = format_eval_result("humaneval", {"humaneval_pass": "0.652"})
+        assert "0.652" in out
+        assert "pass@1" in out
+
+    def test_ifbench(self):
+        out = format_eval_result("ifbench", {"ifbench_score": "0.823"})
+        assert "0.823" in out
+
+    def test_longctx(self):
+        out = format_eval_result("longctx", {"longctx_score": "6/6"})
+        assert "6/6" in out
+
+    def test_every_registered_eval_has_formatter(self):
+        """Every eval in the registry must produce a non-empty display string
+        when given a populated result dict."""
+        # One known value per DB column for each eval.
+        samples = {
+            "diversity": {"diversity_score": "0.5"},
+            "humaneval": {"humaneval_pass": "0.5"},
+            "ifbench": {"ifbench_score": "0.5"},
+            "longctx": {"longctx_score": "3/6"},
+            "mmlu": {"mmlu_accuracy": "50.0%"},
+            "perf": {"perf_prefill_tps": "1000", "perf_gen_tps": "100"},
+        }
+        for name in EVAL_REGISTRY:
+            assert format_eval_result(name, samples[name]), f"{name}: empty formatter"
+
+    def test_unknown_eval_returns_empty(self):
+        assert format_eval_result("nonexistent", {}) == ""
+
+
+class TestResultIsEmpty:
+    def test_fully_populated_is_not_empty(self):
+        assert not result_is_empty("perf", {"perf_prefill_tps": "1000", "perf_gen_tps": "100"})
+
+    def test_partially_populated_is_not_empty(self):
+        # perf requires both columns for eval_has_result, but result_is_empty
+        # only cares that at least one produced a value — partial extraction
+        # is still worth surfacing to the user.
+        assert not result_is_empty("perf", {"perf_prefill_tps": "1000", "perf_gen_tps": ""})
+
+    def test_all_empty_is_empty(self):
+        assert result_is_empty("perf", {"perf_prefill_tps": "", "perf_gen_tps": ""})
+
+    def test_missing_keys_is_empty(self):
+        assert result_is_empty("diversity", {})
+
+    def test_whitespace_only_is_empty(self):
+        assert result_is_empty("mmlu", {"mmlu_accuracy": "  "})
+
+    def test_unknown_eval_is_empty(self):
+        assert result_is_empty("nonexistent", {"anything": "1"})
+
+
+# ---------------------------------------------------------------------------
 # Checkpoint logic tests
 # ---------------------------------------------------------------------------
 
@@ -399,6 +482,147 @@ class TestEvalsCliWiring:
 # ---------------------------------------------------------------------------
 # Command builder tests
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# run_measure_stage done-handler integration tests
+# ---------------------------------------------------------------------------
+
+class _SyncProcess:
+    """Process stand-in that runs target immediately in-thread.
+
+    Lets us drive ``run_measure_stage``'s main results loop without spawning
+    real subprocesses or touching GPUs.
+    """
+
+    def __init__(self, target, args):
+        self._target = target
+        self._args = args
+        self.daemon = False
+
+    def start(self):
+        self._target(*self._args)
+
+    def join(self, timeout=None):
+        pass
+
+
+class _FakeQueue:
+    def __init__(self):
+        self._items = []
+
+    def put(self, item):
+        self._items.append(item)
+
+    def get(self):
+        return self._items.pop(0)
+
+
+def _run_stage_with_fake_worker(tmp_path, worker_fn, eval_name, eval_arg=32768):
+    """Drive run_measure_stage with a stubbed worker and capture outputs.
+
+    Returns (rc, captured_msgs, csv_path).
+    """
+    from ezexl3 import repo_measure
+    from ezexl3 import measure_db
+
+    model_dir = str(tmp_path)
+    captured = []
+
+    rc = repo_measure.run_measure_stage(
+        model_dir=model_dir,
+        bpws=["4"],
+        devices=[0],
+        write_logs=False,
+        measure_args=[],
+        evals={eval_name: eval_arg},
+        skip_kl=True,
+        skip_ppl=True,
+        process_cls=_SyncProcess,
+        queue_cls=_FakeQueue,
+        worker_measure_fn=worker_fn,
+        init_gpu_progress_fn=lambda *a, **kw: None,
+        redraw_gpu_progress_fn=lambda *a, **kw: None,
+        print_msg_with_progress_fn=lambda msg, *a, **kw: captured.append(msg),
+        cleanup_gpu_progress_fn=lambda *a, **kw: None,
+        clear_and_redraw_progress_fn=lambda *a, **kw: None,
+        print_above_progress_fn=lambda *a, **kw: None,
+        maybe_update_graph_fn=lambda *a, **kw: None,
+        sleep_fn=lambda *a, **kw: None,
+    )
+    csv_path = measure_db.default_db_path(model_dir).replace(".db", ".csv")
+    # default_csv_path is in ezexl3.measure, use it for accuracy
+    from ezexl3.measure import default_csv_path
+    csv_path = default_csv_path(model_dir)
+    return rc, captured, csv_path
+
+
+class TestRunMeasureStageEvalDoneHandler:
+    def _make_worker(self, result_dict):
+        """Build a fake worker that drains tasks and emits one done event
+        per non-sentinel task with the given result_dict."""
+        from ezexl3 import measure_db
+
+        def fake_worker(model_dir, device, db_path, tasks, results, log_path, ppl_rows):
+            while True:
+                job = tasks.get()
+                if job is None:
+                    results.put(None)
+                    return
+                phase = job["phase"]
+                task_label = job["label"]
+                label = "bf16" if task_label == "base" else str(task_label)
+                if result_dict:
+                    measure_db.upsert_row(db_path, weights=label, **result_dict)
+                results.put({
+                    "event": "done", "device": device, "label": label,
+                    "phase": phase, "row": dict(result_dict),
+                })
+        return fake_worker
+
+    def test_perf_done_message_contains_metric_values(self, tmp_path):
+        """The 'DONE' line must show the actual prefill/gen numbers, not 'PPL=N/A'."""
+        worker = self._make_worker({"perf_prefill_tps": "1234.56", "perf_gen_tps": "56.78"})
+        rc, captured, _ = _run_stage_with_fake_worker(tmp_path, worker, "perf")
+        assert rc == 0
+        done_msgs = [m for m in captured if "DONE" in m]
+        assert done_msgs, f"No DONE messages captured. All msgs: {captured}"
+        # Every DONE msg for a perf task must contain the prefill and gen values.
+        assert any("1234.56" in m for m in done_msgs), f"prefill missing: {done_msgs}"
+        assert any("56.78" in m for m in done_msgs), f"gen missing: {done_msgs}"
+        # None of them should say "PPL=N/A" — that was the old dragnet bug.
+        assert not any("PPL=N/A" in m for m in done_msgs), f"PPL=N/A leaked: {done_msgs}"
+        assert not any("PPL=" in m for m in done_msgs), f"PPL= leaked: {done_msgs}"
+
+    def test_perf_done_writes_to_csv(self, tmp_path):
+        """CSV export runs after a perf task completes (not just kl/ppl)."""
+        worker = self._make_worker({"perf_prefill_tps": "1234.56", "perf_gen_tps": "56.78"})
+        rc, _, csv_path = _run_stage_with_fake_worker(tmp_path, worker, "perf")
+        assert rc == 0
+        assert os.path.isfile(csv_path), f"CSV not exported at {csv_path}"
+        with open(csv_path) as f:
+            rows = list(csv.DictReader(f))
+        by_label = {r["weights"]: r for r in rows}
+        assert "4" in by_label, f"'4' row missing from CSV. Rows: {rows}"
+        assert by_label["4"]["Perf Prefill t/s"] == "1234.56"
+        assert by_label["4"]["Perf Gen t/s"] == "56.78"
+
+    def test_diversity_done_message_contains_score(self, tmp_path):
+        worker = self._make_worker({"diversity_score": "0.847362"})
+        rc, captured, _ = _run_stage_with_fake_worker(tmp_path, worker, "diversity", eval_arg=50)
+        assert rc == 0
+        done_msgs = [m for m in captured if "DONE" in m]
+        assert any("0.847362" in m for m in done_msgs), f"diversity score missing: {done_msgs}"
+
+    def test_empty_result_surfaces_as_warning(self, tmp_path):
+        """A worker 'done' with an all-empty result dict must surface a warning
+        and count as a failure, not silently pretend the eval succeeded."""
+        worker = self._make_worker({"perf_prefill_tps": "", "perf_gen_tps": ""})
+        rc, captured, _ = _run_stage_with_fake_worker(tmp_path, worker, "perf")
+        # Non-zero return code because result_is_empty flagged a failure.
+        assert rc != 0, f"Expected failure rc for empty result, got {rc}. Msgs: {captured}"
+        warning_msgs = [m for m in captured if "no results extracted" in m]
+        assert warning_msgs, f"Expected warning msg, got: {captured}"
+
 
 class TestBuildEvalCmd:
     def test_mmlu_cmd(self, tmp_path):

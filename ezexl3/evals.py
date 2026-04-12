@@ -533,6 +533,57 @@ RESULT_EXTRACTORS: Dict[str, Callable[[str], dict]] = {
 
 
 # ---------------------------------------------------------------------------
+# Result display formatters
+# ---------------------------------------------------------------------------
+# Formats an eval's result_dict (the dict returned by RESULT_EXTRACTORS) into
+# a short human-readable string for the "DONE" progress line. Keeps the
+# presentation next to the regexes so adding a new eval only requires touching
+# one file.
+
+
+def _fmt(val: str) -> str:
+    """Empty string → 'N/A', otherwise return value unchanged."""
+    return val if val else "N/A"
+
+
+def format_eval_result(eval_name: str, result_dict: Dict[str, str]) -> str:
+    """Render an eval's result dict for display in the 'DONE' message.
+
+    Takes DB-column-keyed values (e.g. ``perf_prefill_tps``) and returns a
+    compact, human-readable summary. Returns an empty string for unknown
+    evals.
+    """
+    if eval_name == "diversity":
+        return f"diversity={_fmt(result_dict.get('diversity_score', ''))}"
+    if eval_name == "humaneval":
+        return f"pass@1={_fmt(result_dict.get('humaneval_pass', ''))}"
+    if eval_name == "ifbench":
+        return f"score={_fmt(result_dict.get('ifbench_score', ''))}"
+    if eval_name == "longctx":
+        return f"tests={_fmt(result_dict.get('longctx_score', ''))}"
+    if eval_name == "mmlu":
+        return f"accuracy={_fmt(result_dict.get('mmlu_accuracy', ''))}"
+    if eval_name == "perf":
+        prefill = _fmt(result_dict.get("perf_prefill_tps", ""))
+        gen = _fmt(result_dict.get("perf_gen_tps", ""))
+        return f"prefill={prefill} t/s, gen={gen} t/s"
+    return ""
+
+
+def result_is_empty(eval_name: str, result_dict: Dict[str, str]) -> bool:
+    """Return True if the extractor produced no usable values.
+
+    Used by the measure loop to warn when an eval ran to completion but the
+    extractor regex didn't match anything, which otherwise looks identical to
+    a successful run.
+    """
+    eval_def = EVAL_REGISTRY.get(eval_name)
+    if eval_def is None:
+        return True
+    return not any((result_dict.get(col) or "").strip() for col in eval_def.db_columns)
+
+
+# ---------------------------------------------------------------------------
 # Generic eval subprocess runner
 # ---------------------------------------------------------------------------
 
