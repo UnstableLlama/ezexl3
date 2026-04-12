@@ -71,9 +71,22 @@ def _plan_repo_bpws(
 
     requested_ints = _dedupe_preserve_order(ints)
     requested_fracs = _dedupe_preserve_order(fracs)
-    # Standard fractionals go into the quant queue alongside integers
-    quant_queue = _dedupe_preserve_order(requested_ints + standard_fracs + required_neighbors)
-    measure_targets = _dedupe_preserve_order(quant_queue + optimized_fracs)
+    # Quant queue: integers + integer neighbors of -opt targets + standard
+    # (non-opt) fractionals, sorted numerically so the run progresses
+    # monotonically through the BPW range instead of batching fractionals
+    # at the tail.
+    quant_queue = sorted(
+        _dedupe_preserve_order(requested_ints + standard_fracs + required_neighbors),
+        key=float,
+    )
+    # Measure queue: everything in the quant queue plus the -opt targets,
+    # also in numeric order. Optimized fracs can be interleaved here
+    # because the measure stage always runs after optimize.py has produced
+    # the corresponding BPW directories.
+    measure_targets = sorted(
+        _dedupe_preserve_order(quant_queue + optimized_fracs),
+        key=float,
+    )
 
     return {
         "requested_integers": requested_ints,
