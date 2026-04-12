@@ -661,6 +661,7 @@ def run_measure_stage(
 
     # --- Eval tasks ---
     eval_tasks: List[dict] = []
+    all_gpu_eval_tasks: List[dict] = []
     skipped_eval: List[str] = []
     enabled_evals = evals or {}
 
@@ -671,6 +672,7 @@ def run_measure_stage(
             if eval_name not in enabled_evals:
                 continue
             eval_arg = enabled_evals[eval_name]
+            eval_def = EVAL_REGISTRY[eval_name]
             all_targets = list(bpws)
             # Include base/bf16 for all evals
             if "base" not in all_targets:
@@ -680,15 +682,18 @@ def run_measure_stage(
                 if eval_has_result(db_path, label, eval_name):
                     skipped_eval.append(f"{label}/{eval_name}")
                 else:
-                    eval_tasks.append({
-                        "label": bpw, "phase": eval_name, "eval_arg": eval_arg,
-                    })
+                    task = {"label": bpw, "phase": eval_name, "eval_arg": eval_arg}
+                    if eval_def.needs_all_gpus and len(devices) > 1:
+                        all_gpu_eval_tasks.append(task)
+                    else:
+                        eval_tasks.append(task)
 
         if skipped_eval:
             print(f"🟦 skipping evals: {', '.join(skipped_eval)} (already measured)")
 
     total_jobs = (len(kl_tasks) + len(ppl_tasks) + len(catbench_tasks)
-                  + len(multi_gpu_catbench_tasks) + len(eval_tasks))
+                  + len(multi_gpu_catbench_tasks) + len(eval_tasks)
+                  + len(all_gpu_eval_tasks))
     if total_jobs == 0:
         if catbench_n > 0:
             catbench_out_dir = os.path.join(model_dir, "catbench")
@@ -703,6 +708,7 @@ def run_measure_stage(
     n_ppl = len(ppl_tasks)
     n_cat = len(catbench_tasks) + len(multi_gpu_catbench_tasks)
     n_eval = len(eval_tasks)
+    n_allgpu_eval = len(all_gpu_eval_tasks)
 
     if multi_gpu_catbench_tasks:
         from queue import Queue as TQueue
@@ -782,7 +788,10 @@ def run_measure_stage(
             print("\n🎨 Generating SVGs from catbench results...")
             n_svgs = catbench_generate_svgs_fn(catbench_out_dir)
             print(f"✅ All catbench jobs complete: {n_svgs} SVGs generated.")
-        return 0
+        if not all_gpu_eval_tasks:
+            return 0
+
+    failures = 0
 
     tasks = queue_cls()
     results = queue_cls()
@@ -820,7 +829,8 @@ def run_measure_stage(
 
     cat_msg = f" + {n_cat} CAT" if n_cat else ""
     eval_msg = f" + {n_eval} EVAL" if n_eval else ""
-    print(f"\n🚀 Measuring {n_kl} KL + {n_ppl} PPL{cat_msg}{eval_msg} jobs on {len(devices)} GPUs...")
+    allgpu_msg = f" (+ {n_allgpu_eval} all-GPU eval after)" if n_allgpu_eval else ""
+    print(f"\n🚀 Measuring {n_kl} KL + {n_ppl} PPL{cat_msg}{eval_msg} jobs on {len(devices)} GPUs...{allgpu_msg}")
 
     use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     gpu_status: Dict[int, str] = {d: "idle" for d in devices}
@@ -828,7 +838,6 @@ def run_measure_stage(
     init_gpu_progress_fn(use_ansi, gpu_status)
 
     active_workers = len(devices)
-    failures = 0
     while active_workers > 0:
         res = results.get()
         if res is None:
@@ -904,6 +913,143 @@ def run_measure_stage(
 
     for p in procs:
         p.join()
+
+    # ------------------------------------------------------------------
+    # All-GPU eval tasks (perf, longctx) — run sequentially with every
+    # GPU so the model can be tensor-parallel and see full VRAM.
+    # ------------------------------------------------------------------
+    if all_gpu_eval_tasks:
+        from queue import Queue as TQueue
+        from ezexl3.evals import (
+            EVAL_REGISTRY as _EVAL_REG,
+            RESULT_EXTRACTORS as _EVAL_EXTRACTORS,
+            build_eval_cmd as _build_eval_cmd,
+            run_eval_subprocess as _run_eval_sub,
+            format_eval_result as _fmt_eval,
+            result_is_empty as _eval_empty,
+        )
+
+        device_str = ",".join(str(d) for d in devices)
+        agpu_use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+        print(f"\n🚀 Running {len(all_gpu_eval_tasks)} all-GPU eval(s) on GPUs [{device_str}]...")
+        agpu_status: Dict[int, str] = {d: "idle" for d in devices}
+        agpu_num_lines = len(devices)
+        if agpu_use_ansi:
+            for d in sorted(agpu_status):
+                sys.stdout.write(f"\033[2K  GPU {d} | idle\n")
+            sys.stdout.flush()
+
+        agpu_log_path = os.path.join(model_dir, "logs", "measure_allgpu_eval.log") if write_logs else None
+        agpu_log_f = None
+        if agpu_log_path:
+            os.makedirs(os.path.dirname(agpu_log_path) or ".", exist_ok=True)
+            agpu_log_f = open(agpu_log_path, "w")
+
+        for task in all_gpu_eval_tasks:
+            task_label = task["label"]
+            phase = task["phase"]
+            eval_arg = task.get("eval_arg", 0)
+            label = "bf16" if task_label == "base" else str(task_label)
+            task_model_dir = model_dir if task_label == "base" else os.path.join(model_dir, str(task_label))
+            eval_def = _EVAL_REG[phase]
+            phase_label = f"{label} {eval_def.phase_label}"
+
+            for d in devices:
+                agpu_status[d] = f"{phase_label} | starting..."
+            if agpu_use_ansi:
+                clear_and_redraw_progress_fn(agpu_status, agpu_num_lines)
+
+            eval_cmd = _build_eval_cmd(
+                phase, task_model_dir, devices[0], model_dir, label, eval_arg,
+                num_devices=len(devices),
+            )
+
+            agpu_q: TQueue = TQueue()
+            agpu_error: List[Optional[Exception]] = [None]
+            agpu_output: List[str] = [""]
+
+            def _run_allgpu_eval(
+                _cmd=eval_cmd, _dev=devices[0], _q=agpu_q,
+                _pl=phase_label, _phase=phase, _cvd=device_str,
+                _log=agpu_log_f,
+            ):
+                try:
+                    out = _run_eval_sub(
+                        _cmd, _dev, _q, _pl, _phase, _log,
+                        cuda_visible_devices=_cvd,
+                    )
+                    agpu_output[0] = out
+                except Exception as exc:
+                    agpu_error[0] = exc
+                _q.put(None)
+
+            t = threading.Thread(target=_run_allgpu_eval)
+            t.start()
+
+            while True:
+                ev = agpu_q.get()
+                if ev is None:
+                    break
+                if ev.get("event") == "progress":
+                    for d in devices:
+                        agpu_status[d] = ev["text"]
+                    if agpu_use_ansi:
+                        clear_and_redraw_progress_fn(agpu_status, agpu_num_lines)
+
+            t.join()
+
+            if agpu_error[0] is not None:
+                failures += 1
+                msg = f"🔴 FAIL {phase_label}: {agpu_error[0]}"
+            else:
+                extractor = _EVAL_EXTRACTORS[phase]
+                result_dict = extractor(agpu_output[0])
+                upsert_row_fn(db_path, weights=label, **result_dict)
+
+                # Persist perf detail curve to the dedicated perf database.
+                if phase == "perf":
+                    try:
+                        from ezexl3.evals import extract_perf_detail
+                        from ezexl3.perf_db import default_perf_db_path, upsert_perf_results
+                        detail = extract_perf_detail(agpu_output[0])
+                        if detail["prefill"] or detail["generation"]:
+                            perf_db = default_perf_db_path(model_dir)
+                            upsert_perf_results(perf_db, label, detail["prefill"], detail["generation"])
+                    except Exception:
+                        pass  # non-fatal: summary already saved
+
+                try:
+                    export_csv_fn(db_path, out_csv)
+                except Exception:
+                    pass
+
+                if _eval_empty(phase, result_dict):
+                    msg = (
+                        f"⚠️  DONE {phase_label}: "
+                        f"no results extracted (subprocess finished but regex did not match)"
+                    )
+                    failures += 1
+                else:
+                    summary = _fmt_eval(phase, result_dict)
+                    msg = f"✅ DONE {phase_label} (all-GPU [{device_str}]): {summary}"
+
+            for d in devices:
+                agpu_status[d] = "idle"
+            if agpu_use_ansi:
+                print_above_progress_fn(msg, agpu_status, agpu_num_lines)
+            else:
+                print(msg)
+
+        # Clean up progress lines.
+        if agpu_use_ansi:
+            sys.stdout.write(f"\033[{agpu_num_lines}A")
+            for _ in range(agpu_num_lines):
+                sys.stdout.write("\033[2K\n")
+            sys.stdout.write(f"\033[{agpu_num_lines}A")
+            sys.stdout.flush()
+
+        if agpu_log_f:
+            agpu_log_f.close()
 
     export_csv_fn(db_path, out_csv)
 

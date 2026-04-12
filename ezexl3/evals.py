@@ -49,6 +49,7 @@ class EvalDef:
     db_columns: List[str]                  # DB column names this eval writes
     phase_label: str                       # short tag for progress display, e.g. "MMLU"
     needs_prompt_format: bool = False
+    needs_all_gpus: bool = False           # run sequentially with all GPUs (perf, longctx)
     # For output files (humaneval, ifbench)
     output_subdir: Optional[str] = None    # e.g. "evals/humaneval"
     output_ext: str = ".jsonl"
@@ -100,6 +101,7 @@ _register(EvalDef(
     cli_long="--longctx",
     db_columns=["longctx_score"],
     phase_label="LCTX",
+    needs_all_gpus=True,
 ))
 
 _register(EvalDef(
@@ -118,6 +120,7 @@ _register(EvalDef(
     cli_long="--perf",
     db_columns=["perf_prefill_tps", "perf_gen_tps"],
     phase_label="PERF",
+    needs_all_gpus=True,
 ))
 
 # Ordered shortest-first for queue scheduling.
@@ -192,6 +195,7 @@ def build_eval_cmd(
     base_dir: str,
     label: str,
     eval_arg: int | bool = 0,
+    num_devices: int = 1,
 ) -> List[str]:
     """Build the subprocess command for an eval script.
 
@@ -199,12 +203,19 @@ def build_eval_cmd(
     subprocess environment, not via CLI args.  The eval scripts use
     exllamav3's ``model_init`` which accepts ``-gs`` (GPU split / VRAM
     allocation) but not ``-d``.
+
+    When *num_devices* > 1 the command includes ``-gs 99,99,...`` so
+    model_init splits across all visible GPUs.
     """
     script_path = find_eval_script(eval_name)
 
     # All eval scripts use exllamav3's model_init which takes -m for model dir.
     # Device is set via CUDA_VISIBLE_DEVICES (handled by the subprocess runner).
     cmd = [sys.executable, script_path, "-m", model_dir]
+
+    # Multi-GPU: tell model_init to split across all visible devices.
+    if num_devices > 1:
+        cmd += ["-gs", ",".join("99" for _ in range(num_devices))]
 
     if eval_name == "diversity":
         n_samples = eval_arg if isinstance(eval_arg, int) and eval_arg > 0 else 50
