@@ -72,6 +72,8 @@ const COMMANDS = {
     label: "Measure",
     subtitle: "Measure Only",
     description: "Run KL divergence + perplexity measurement",
+    hasMetadata: true,
+    metadataFields: ["MODEL"],
     fields: [
       { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "Model directory with quantized outputs" },
       { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6" },

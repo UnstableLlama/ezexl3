@@ -992,6 +992,36 @@ function renderEvalsPanel(commandKey) {
 }
 
 
+function showModelNameWait(modelDir) {
+  metadataWaitingDir = modelDir;
+  metadataFrozen = false;
+
+  // Stay on current command (measure) — don't switch to readme
+  switchTab("command");
+
+  const panel = document.getElementById("metadata-panel");
+  if (panel) {
+    panel.style.display = "";
+    panel.classList.add("metadata-waiting");
+  }
+
+  // Allow lock toggles even though a job is running
+  const locks = document.querySelectorAll(".meta-lock");
+  for (const btn of locks) {
+    btn.classList.remove("run-locked");
+  }
+
+  const btn = document.getElementById("metadata-confirm");
+  if (btn) {
+    btn.style.display = "";
+    btn.addEventListener("click", confirmMetadata);
+  }
+
+  loadMetadataDefaults(true);
+  updateMetadataConfirm();
+}
+
+
 function showMetadataWait(modelDir) {
   metadataWaitingDir = modelDir;
   // If we ever get back here (e.g. README retry), make sure the freeze

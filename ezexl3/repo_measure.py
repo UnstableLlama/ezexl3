@@ -89,6 +89,111 @@ def _parse_measure_args(measure_args: List[str], default_devices: List[int]) -> 
     return ppl_rows, devices
 
 
+def _model_name_is_locked(model_dir: str) -> bool:
+    """Check if the MODEL field is locked in saved metadata."""
+    import json as _json
+    meta_path = os.path.join(model_dir, ".ezexl3_readme_meta.json")
+    if not os.path.exists(meta_path):
+        return False
+    try:
+        meta = _json.loads(open(meta_path, "r").read())
+        locked = meta.get("_locked") or {}
+        return bool(locked.get("MODEL") and meta.get("MODEL", "").strip())
+    except Exception:
+        return False
+
+
+def _wait_for_model_name(
+    model_dir: str,
+    csv_path: str,
+    maybe_update_graph_fn: Callable,
+) -> None:
+    """If MODEL isn't locked, pause for the user to confirm it, then regenerate graphs."""
+    if _model_name_is_locked(model_dir):
+        # Already locked — regenerate graphs with the confirmed name and return.
+        try:
+            maybe_update_graph_fn(model_dir, csv_path)
+        except Exception:
+            pass
+        return
+
+    # Write auto-detected default so the UI has something to show
+    import json as _json
+    meta_path = os.path.join(model_dir, ".ezexl3_readme_meta.json")
+    existing = {}
+    if os.path.exists(meta_path):
+        try:
+            existing = _json.loads(open(meta_path, "r").read())
+        except Exception:
+            pass
+
+    if not existing.get("MODEL"):
+        auto_name = _resolve_model_name(model_dir)
+        existing.setdefault("MODEL", auto_name)
+        os.makedirs(model_dir, exist_ok=True)
+        with open(meta_path, "w") as f:
+            _json.dump(existing, f, indent=2)
+
+    print(f"\n<<EZEXL3:WAITING_MODEL_NAME:{model_dir}>>")
+    print("⏳ Waiting for model name confirmation...")
+    print("   Lock the Model Name field and click 'Resume'")
+    sys.stdout.flush()
+
+    poll_count = 0
+    while True:
+        time.sleep(1)
+        poll_count += 1
+        if poll_count % 30 == 0:
+            print("⏳ Still waiting for model name...")
+            sys.stdout.flush()
+        if _model_name_is_locked(model_dir):
+            break
+
+    model_name = _resolve_model_name(model_dir)
+    print(f"📝 Model name confirmed: {model_name}")
+
+    # Regenerate graphs with the confirmed name
+    try:
+        maybe_update_graph_fn(model_dir, csv_path)
+    except Exception:
+        pass
+
+    # Regenerate perf charts too
+    try:
+        from ezexl3.perf_db import available_bpws, default_perf_db_path
+        from ezexl3.graph_svg import generate_perf_svg
+        perf_db = default_perf_db_path(model_dir)
+        if os.path.exists(perf_db):
+            bpws = available_bpws(perf_db)
+            for bpw in bpws:
+                title = f"{model_name} — {bpw} BPW"
+                basename = os.path.basename(os.path.abspath(model_dir)).lower()
+                svg_out = os.path.join(model_dir, f"{basename}_perf_{bpw}.svg")
+                generate_perf_svg(perf_db, bpw, svg_out, title)
+            if bpws:
+                print(f"✅ Regenerated perf charts for {len(bpws)} BPW(s)")
+    except Exception:
+        pass
+
+
+def _resolve_model_name(model_dir: str) -> str:
+    """Get display name: locked MODEL from metadata, or underscore-stripped basename."""
+    import json as _json
+    meta_path = os.path.join(model_dir, ".ezexl3_readme_meta.json")
+    if os.path.exists(meta_path):
+        try:
+            meta = _json.loads(open(meta_path, "r").read())
+            locked = meta.get("_locked") or {}
+            if locked.get("MODEL") and meta.get("MODEL", "").strip():
+                return meta["MODEL"]
+        except Exception:
+            pass
+    name = os.path.basename(os.path.abspath(model_dir))
+    if "_" in name:
+        name = name.split("_", 1)[1]
+    return name
+
+
 def _maybe_update_graph(model_dir: str, csv_path: str) -> None:
     import numpy as np
     from ezexl3.graph_svg import load_series, make_plot
@@ -103,9 +208,10 @@ def _maybe_update_graph(model_dir: str, csv_path: str) -> None:
 
     if len(bpw) < 2:
         return
+    title = _resolve_model_name(model_dir)
     basename = os.path.basename(os.path.abspath(model_dir)).lower()
     svg_path = os.path.join(model_dir, f"{basename}.svg")
-    make_plot(bpw, kld, ppl, gib, title=basename, outfile=svg_path, add_checks=False)
+    make_plot(bpw, kld, ppl, gib, title=title, outfile=svg_path, add_checks=False)
 
 
 def _init_measure_db(
@@ -448,6 +554,7 @@ def run_measure_stage(
     catbench_cache_tokens: int = 4608,
     executable: str = sys.executable,
     sleep_fn: Callable = time.sleep,
+    wait_for_model_name_fn: Callable = _wait_for_model_name,
 ) -> int:
     model_dir = os.path.abspath(model_dir)
     bpws = [str(b) for b in bpws]
@@ -810,4 +917,10 @@ def run_measure_stage(
         print(f"⚠️ Measurement stage completed with {failures} failure(s). Merged CSV: {out_csv}")
         return 1
     print(f"✅ All measurements complete. Merged CSV: {out_csv}")
+
+    # --- Model name confirmation gate ---
+    # If MODEL isn't locked in metadata, pause so the user can confirm or
+    # override the auto-detected name before final graph generation.
+    wait_for_model_name_fn(model_dir, out_csv, maybe_update_graph_fn)
+
     return 0
