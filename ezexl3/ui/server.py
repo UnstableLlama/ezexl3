@@ -445,6 +445,41 @@ def _bpw_key(label: str) -> float:
         return float("inf")
 
 
+async def handle_perf_graph(request: web.Request) -> web.Response:
+    """Generate a perf chart SVG for the selected BPW and return it inline."""
+    model_dir = request.query.get("model_dir", "").strip()
+    bpw = request.query.get("bpw", "").strip()
+    if not model_dir or not bpw:
+        return web.json_response({"error": "model_dir and bpw required"}, status=400)
+
+    try:
+        from ezexl3.perf_db import default_perf_db_path
+        perf_db = default_perf_db_path(model_dir)
+        if not os.path.exists(perf_db):
+            return web.json_response({"error": "No perf data yet"}, status=404)
+
+        model_name = os.path.basename(os.path.abspath(model_dir))
+        title = f"{model_name} — {bpw} BPW"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            svg_path = os.path.join(tmp, "perf.svg")
+            from ezexl3.graph_svg import generate_perf_svg
+            await asyncio.to_thread(
+                generate_perf_svg, perf_db, bpw, svg_path, title,
+            )
+            svg_content = Path(svg_path).read_text(encoding="utf-8")
+
+        return web.Response(
+            text=svg_content,
+            content_type="image/svg+xml",
+            headers={"Cache-Control": "no-cache"},
+        )
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=404)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
 async def handle_metadata_get(request: web.Request) -> web.Response:
     """Return saved README metadata or computed defaults for a model directory."""
     model_dir = request.query.get("model_dir", "").strip()
@@ -638,6 +673,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/run/status", handle_run_status)
     app.router.add_get("/api/data", handle_data)
     app.router.add_get("/api/perf-data", handle_perf_data)
+    app.router.add_get("/api/perf-graph", handle_perf_graph)
     app.router.add_get("/api/graph", handle_graph)
     app.router.add_get("/api/metadata", handle_metadata_get)
     app.router.add_post("/api/metadata", handle_metadata_set)

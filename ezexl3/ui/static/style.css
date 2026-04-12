@@ -349,6 +349,21 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   font-family: "SF Mono", "Fira Code", "Consolas", monospace;
   min-width: 120px;
 }
+#evals-chart-wrap {
+  margin-bottom: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #000;
+}
+#evals-chart {
+  width: 100%;
+  line-height: 0;
+}
+#evals-chart svg {
+  width: 100%;
+  height: auto;
+}
 #evals-tables {
   display: flex;
   gap: 32px;

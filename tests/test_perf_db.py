@@ -1,5 +1,6 @@
-"""Tests for the perf detail database (ezexl3/perf_db.py)
-and the extract_perf_detail() extractor (ezexl3/evals.py)."""
+"""Tests for the perf detail database (ezexl3/perf_db.py),
+the extract_perf_detail() extractor (ezexl3/evals.py),
+and perf chart generation (ezexl3/graph_svg.py)."""
 
 import os
 import tempfile
@@ -191,3 +192,78 @@ class TestPerfRoundTrip:
 
         bpws = available_bpws(db)
         assert bpws == ["4"]
+
+
+# ---------------------------------------------------------------------------
+# Perf chart generation
+# ---------------------------------------------------------------------------
+
+class TestMakePerfPlot:
+    @pytest.fixture(autouse=True)
+    def _skip_no_matplotlib(self):
+        pytest.importorskip("matplotlib")
+
+    def test_generates_svg(self, tmp_path):
+        from ezexl3.graph_svg import make_perf_plot
+
+        out = str(tmp_path / "perf.svg")
+        make_perf_plot(
+            [256, 512, 1024], [1715.0, 2410.0, 2839.0],
+            [0, 256, 512], [49.0, 46.0, 45.0],
+            title="Test Model — 4 BPW", outfile=out,
+        )
+        assert os.path.exists(out)
+        content = open(out).read()
+        assert "<svg" in content
+        assert "Test Model" in content
+
+    def test_prefill_only(self, tmp_path):
+        from ezexl3.graph_svg import make_perf_plot
+
+        out = str(tmp_path / "perf.svg")
+        make_perf_plot(
+            [256, 512], [1715.0, 2410.0],
+            [], [],
+            title="Prefill Only", outfile=out,
+        )
+        assert os.path.exists(out)
+
+    def test_generation_only(self, tmp_path):
+        from ezexl3.graph_svg import make_perf_plot
+
+        out = str(tmp_path / "perf.svg")
+        make_perf_plot(
+            [], [],
+            [0, 256], [49.0, 46.0],
+            title="Gen Only", outfile=out,
+        )
+        assert os.path.exists(out)
+
+
+class TestGeneratePerfSvg:
+    @pytest.fixture(autouse=True)
+    def _skip_no_matplotlib(self):
+        pytest.importorskip("matplotlib")
+
+    def test_round_trip_db_to_svg(self, tmp_path):
+        from ezexl3.graph_svg import generate_perf_svg
+
+        db = str(tmp_path / "perf.db")
+        upsert_perf_results(db, "4",
+                            [(256, 1715.0), (512, 2410.0)],
+                            [(0, 49.0), (256, 46.0)])
+
+        out = str(tmp_path / "chart.svg")
+        generate_perf_svg(db, "4", out, "Test Model — 4 BPW")
+        assert os.path.exists(out)
+        content = open(out).read()
+        assert "<svg" in content
+
+    def test_missing_bpw_raises(self, tmp_path):
+        from ezexl3.graph_svg import generate_perf_svg
+
+        db = str(tmp_path / "perf.db")
+        upsert_perf_results(db, "4", [(256, 1715.0)], [(0, 49.0)])
+
+        with pytest.raises(ValueError, match="No perf data"):
+            generate_perf_svg(db, "8", str(tmp_path / "x.svg"), "title")

@@ -213,6 +213,135 @@ def make_plot(bpw, kld, ppl, gib, title, outfile, add_checks=True):
     plt.close(fig)
 
 
+def make_perf_plot(
+    prefill_ctx, prefill_tps,
+    gen_ctx, gen_tps,
+    title, outfile,
+):
+    """Dual-axis performance chart: prefill (left/cyan) and generation (right/magenta).
+
+    Uses the same dark-mode aesthetics as make_plot().
+    X-axis is context length (shared).
+    """
+    import matplotlib.pyplot as plt  # type: ignore
+    import numpy as np  # type: ignore
+    cyan = "#00E5FF"
+    magenta = "#FF00FF"
+    white = "#FFFFFF"
+    bg = "#000000"
+
+    fig, ax = plt.subplots(figsize=(13.65, 7.68), dpi=150)
+    fig.patch.set_facecolor(bg)
+    ax.set_facecolor(bg)
+
+    has_prefill = len(prefill_ctx) > 0
+    has_gen = len(gen_ctx) > 0
+
+    handles = []
+
+    if has_prefill:
+        prefill_ctx = np.asarray(prefill_ctx, dtype=float)
+        prefill_tps = np.asarray(prefill_tps, dtype=float)
+        # Black outline behind line
+        ax.plot(prefill_ctx, prefill_tps, color=bg, linewidth=5.0,
+                marker="o", markersize=10, markerfacecolor=bg, markeredgecolor=bg)
+        l1, = ax.plot(prefill_ctx, prefill_tps, color=cyan, linewidth=3.0,
+                      marker="o", markersize=8, markerfacecolor=cyan,
+                      markeredgecolor=cyan, label="Prefill")
+        handles.append(l1)
+
+    ax.set_xlabel("Context Length", color=white, fontsize=16, labelpad=12)
+    ax.set_ylabel("Prefill (tokens/s)", color=cyan, fontsize=16, labelpad=14)
+    ax.tick_params(axis="x", colors=white, labelsize=13, length=6, width=1.2)
+    ax.tick_params(axis="y", colors=cyan, labelsize=13, length=6, width=1.2)
+
+    ax.minorticks_on()
+    ax.grid(True, which="major", linestyle="--", linewidth=1.0, alpha=0.45, color=white)
+    ax.grid(True, which="minor", linestyle="--", linewidth=0.7, alpha=0.25, color=white)
+
+    for s in ax.spines.values():
+        s.set_color(white)
+        s.set_linewidth(1.2)
+
+    axr = ax.twinx()
+    axr.set_facecolor("none")
+    ax.set_zorder(axr.get_zorder() + 1)
+    ax.patch.set_visible(False)
+
+    if has_gen:
+        gen_ctx = np.asarray(gen_ctx, dtype=float)
+        gen_tps = np.asarray(gen_tps, dtype=float)
+        l2, = axr.plot(gen_ctx, gen_tps, color=magenta, linewidth=3.0,
+                       marker="s", markersize=8, markerfacecolor=magenta,
+                       markeredgecolor=magenta, label="Generation")
+        handles.append(l2)
+
+    axr.set_ylabel("Generation (tokens/s)", color=magenta, fontsize=16, labelpad=14)
+    axr.tick_params(axis="y", colors=magenta, labelsize=13, length=6, width=1.2)
+    for s in axr.spines.values():
+        s.set_color(white)
+        s.set_linewidth(1.2)
+
+    # X limits
+    all_ctx = []
+    if has_prefill:
+        all_ctx.extend(prefill_ctx.tolist())
+    if has_gen:
+        all_ctx.extend(gen_ctx.tolist())
+    if all_ctx:
+        ax.set_xlim(min(all_ctx) - max(all_ctx) * 0.02,
+                     max(all_ctx) + max(all_ctx) * 0.02)
+
+    # Y limits
+    if has_prefill:
+        ax.set_ylim(*pad(float(np.min(prefill_tps)), float(np.max(prefill_tps)), 0.10))
+    if has_gen:
+        axr.set_ylim(*pad(float(np.min(gen_tps)), float(np.max(gen_tps)), 0.10))
+
+    ax.text(
+        0.5, 0.90, title,
+        transform=ax.transAxes, ha="center", va="center",
+        color=cyan, fontsize=22, fontweight="bold",
+    )
+
+    if handles:
+        labels = [h.get_label() for h in handles]
+        leg = ax.legend(handles, labels, loc="upper right", frameon=False,
+                        fontsize=14, handlelength=2.6)
+        for text in leg.get_texts():
+            text.set_color(white)
+
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(outfile) or ".", exist_ok=True)
+    fig.savefig(outfile, facecolor=bg, bbox_inches="tight")
+    plt.close(fig)
+
+
+def generate_perf_svg(perf_db_path: str, bpw: str, out_svg: str, title: str) -> str:
+    """Generate a perf chart SVG from the perf DB for a given BPW."""
+    from ezexl3.perf_db import read_perf_data
+
+    data = read_perf_data(perf_db_path, bpw)
+    if bpw not in data:
+        raise ValueError(f"No perf data for BPW {bpw}")
+
+    bpw_data = data[bpw]
+    prefill = bpw_data.get("prefill", [])
+    generation = bpw_data.get("generation", [])
+
+    if not prefill and not generation:
+        raise ValueError(f"No perf data for BPW {bpw}")
+
+    prefill_ctx = [r["context_length"] for r in prefill]
+    prefill_tps = [r["tokens_per_second"] for r in prefill]
+    gen_ctx = [r["context_length"] for r in generation]
+    gen_tps = [r["tokens_per_second"] for r in generation]
+
+    make_perf_plot(prefill_ctx, prefill_tps, gen_ctx, gen_tps,
+                   title=title, outfile=out_svg)
+    return out_svg
+
+
 def generate_iceblink_svg(csv_path: str, out_svg: str, title: str) -> str:
     bpw, kld, ppl, gib, _ = load_series(csv_path, drop_bf16=True)
     if len(bpw) < 2:

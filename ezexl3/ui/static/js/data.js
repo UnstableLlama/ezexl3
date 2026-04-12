@@ -247,8 +247,37 @@ async function fetchEvalsData(modelDir, bpw) {
     }
 
     renderEvalsData(bpwData);
+    fetchEvalsChart(modelDir, select.value);
   } catch (e) {
     showEvalsEmpty("Failed to load performance data.");
+  }
+}
+
+
+async function fetchEvalsChart(modelDir, bpw) {
+  const chartWrap = document.getElementById("evals-chart-wrap");
+  const chartEl = document.getElementById("evals-chart");
+
+  if (!bpw) {
+    chartWrap.style.display = "none";
+    chartEl.innerHTML = "";
+    return;
+  }
+
+  try {
+    const url = `/api/perf-graph?model_dir=${encodeURIComponent(modelDir)}&bpw=${encodeURIComponent(bpw)}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      chartWrap.style.display = "none";
+      chartEl.innerHTML = "";
+      return;
+    }
+    const svg = await res.text();
+    chartWrap.style.display = "";
+    chartEl.innerHTML = svg;
+  } catch (e) {
+    chartWrap.style.display = "none";
+    chartEl.innerHTML = "";
   }
 }
 
@@ -282,6 +311,8 @@ function renderEvalsData(bpwData) {
 
 function showEvalsEmpty(msg) {
   document.getElementById("evals-tables").style.display = "none";
+  document.getElementById("evals-chart-wrap").style.display = "none";
+  document.getElementById("evals-chart").innerHTML = "";
   const empty = document.getElementById("evals-empty");
   empty.textContent = msg;
   empty.style.display = "";
