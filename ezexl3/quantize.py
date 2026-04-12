@@ -48,9 +48,11 @@ def _ensure_exl3_cal_data() -> None:
     The actual .utf8 files only exist in the source repo, so we fetch
     them on first use.
     """
-    from exllamav3.conversion import calibration_data as cd_mod
+    import exllamav3.conversion as _conv
 
-    cal_dir = os.path.join(os.path.dirname(cd_mod.__file__), "standard_cal_data")
+    # Derive the calibration data dir from the conversion package path.
+    conv_dir = os.path.dirname(_conv.__file__)
+    cal_dir = os.path.join(conv_dir, "standard_cal_data")
 
     # Quick check: if the first file exists, assume all are present
     if os.path.exists(os.path.join(cal_dir, _CAL_FILES[0])):
