@@ -218,10 +218,11 @@ def make_perf_plot(
     gen_ctx, gen_tps,
     title, outfile,
 ):
-    """Dual-axis performance chart: prefill (left/cyan) and generation (right/magenta).
+    """Dual-axis performance chart: generation (left/cyan, frontmost) and prefill (right/magenta).
 
     Uses the same dark-mode aesthetics as make_plot().
-    X-axis is context length (shared).
+    X-axis is context length (shared). Generation is the primary axis
+    drawn on top since it's the most critical figure.
     """
     import matplotlib.pyplot as plt  # type: ignore
     import numpy as np  # type: ignore
@@ -239,19 +240,40 @@ def make_perf_plot(
 
     handles = []
 
+    # Secondary axis (back layer): prefill in magenta
+    axr = ax.twinx()
+    axr.set_facecolor("none")
+    ax.set_zorder(axr.get_zorder() + 1)
+    ax.patch.set_visible(False)
+
     if has_prefill:
         prefill_ctx = np.asarray(prefill_ctx, dtype=float)
         prefill_tps = np.asarray(prefill_tps, dtype=float)
-        # Black outline behind line
-        ax.plot(prefill_ctx, prefill_tps, color=bg, linewidth=5.0,
+        l2, = axr.plot(prefill_ctx, prefill_tps, color=magenta, linewidth=3.0,
+                       marker="s", markersize=8, markerfacecolor=magenta,
+                       markeredgecolor=magenta, label="Prefill")
+        handles.append(l2)
+
+    axr.set_ylabel("Prefill (tokens/s)", color=magenta, fontsize=16, labelpad=14)
+    axr.tick_params(axis="y", colors=magenta, labelsize=13, length=6, width=1.2)
+    for s in axr.spines.values():
+        s.set_color(white)
+        s.set_linewidth(1.2)
+
+    # Primary axis (front layer): generation in cyan
+    if has_gen:
+        gen_ctx = np.asarray(gen_ctx, dtype=float)
+        gen_tps = np.asarray(gen_tps, dtype=float)
+        # Black outline behind the cyan line
+        ax.plot(gen_ctx, gen_tps, color=bg, linewidth=5.0,
                 marker="o", markersize=10, markerfacecolor=bg, markeredgecolor=bg)
-        l1, = ax.plot(prefill_ctx, prefill_tps, color=cyan, linewidth=3.0,
+        l1, = ax.plot(gen_ctx, gen_tps, color=cyan, linewidth=3.0,
                       marker="o", markersize=8, markerfacecolor=cyan,
-                      markeredgecolor=cyan, label="Prefill")
-        handles.append(l1)
+                      markeredgecolor=cyan, label="Generation")
+        handles.insert(0, l1)
 
     ax.set_xlabel("Context Length", color=white, fontsize=16, labelpad=12)
-    ax.set_ylabel("Prefill (tokens/s)", color=cyan, fontsize=16, labelpad=14)
+    ax.set_ylabel("Generation (tokens/s)", color=cyan, fontsize=16, labelpad=14)
     ax.tick_params(axis="x", colors=white, labelsize=13, length=6, width=1.2)
     ax.tick_params(axis="y", colors=cyan, labelsize=13, length=6, width=1.2)
 
@@ -260,25 +282,6 @@ def make_perf_plot(
     ax.grid(True, which="minor", linestyle="--", linewidth=0.7, alpha=0.25, color=white)
 
     for s in ax.spines.values():
-        s.set_color(white)
-        s.set_linewidth(1.2)
-
-    axr = ax.twinx()
-    axr.set_facecolor("none")
-    ax.set_zorder(axr.get_zorder() + 1)
-    ax.patch.set_visible(False)
-
-    if has_gen:
-        gen_ctx = np.asarray(gen_ctx, dtype=float)
-        gen_tps = np.asarray(gen_tps, dtype=float)
-        l2, = axr.plot(gen_ctx, gen_tps, color=magenta, linewidth=3.0,
-                       marker="s", markersize=8, markerfacecolor=magenta,
-                       markeredgecolor=magenta, label="Generation")
-        handles.append(l2)
-
-    axr.set_ylabel("Generation (tokens/s)", color=magenta, fontsize=16, labelpad=14)
-    axr.tick_params(axis="y", colors=magenta, labelsize=13, length=6, width=1.2)
-    for s in axr.spines.values():
         s.set_color(white)
         s.set_linewidth(1.2)
 
@@ -293,10 +296,10 @@ def make_perf_plot(
                      max(all_ctx) + max(all_ctx) * 0.02)
 
     # Y limits
-    if has_prefill:
-        ax.set_ylim(*pad(float(np.min(prefill_tps)), float(np.max(prefill_tps)), 0.10))
     if has_gen:
-        axr.set_ylim(*pad(float(np.min(gen_tps)), float(np.max(gen_tps)), 0.10))
+        ax.set_ylim(*pad(float(np.min(gen_tps)), float(np.max(gen_tps)), 0.10))
+    if has_prefill:
+        axr.set_ylim(*pad(float(np.min(prefill_tps)), float(np.max(prefill_tps)), 0.10))
 
     ax.text(
         0.5, 0.90, title,
