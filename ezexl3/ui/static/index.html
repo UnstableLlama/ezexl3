@@ -69,6 +69,7 @@
             <span id="tab-command-label">Repo</span>
           </button>
           <button class="tab-btn" data-tab="data">Data</button>
+          <button class="tab-btn" data-tab="evals">Evals</button>
         </div>
         <p id="command-desc" class="tab-bar-desc">Quantize &rarr; Measure KL+PPL &rarr; README</p>
       </div>
@@ -134,6 +135,39 @@
           <div id="data-graph-wrap">
             <div id="data-graph-placeholder" class="data-graph-placeholder">Graph will appear after 2+ measurements</div>
             <div id="data-graph"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Evals tab -->
+      <div id="evals-tab-panel" class="tab-content">
+        <div id="evals-tab-content">
+          <div id="evals-toolbar">
+            <label for="evals-bpw-select">BPW:</label>
+            <select id="evals-bpw-select">
+              <option value="">Select a BPW...</option>
+            </select>
+          </div>
+          <div id="evals-empty" class="evals-empty">No performance data yet. Run a perf eval (<code>-perf</code>) to begin.</div>
+          <div id="evals-tables" style="display:none">
+            <div class="evals-section">
+              <h3 class="evals-section-title">Prefill</h3>
+              <table class="evals-table">
+                <thead>
+                  <tr><th>Length</th><th>Tokens/s</th></tr>
+                </thead>
+                <tbody id="evals-prefill-body"></tbody>
+              </table>
+            </div>
+            <div class="evals-section">
+              <h3 class="evals-section-title">Generation</h3>
+              <table class="evals-table">
+                <thead>
+                  <tr><th>Context</th><th>Tokens/s</th></tr>
+                </thead>
+                <tbody id="evals-gen-body"></tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
