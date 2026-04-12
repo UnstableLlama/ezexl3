@@ -349,12 +349,32 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   font-family: "SF Mono", "Fira Code", "Consolas", monospace;
   min-width: 120px;
 }
+#evals-body {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+#evals-tables {
+  display: flex;
+  gap: 16px;
+  flex: 0 0 50%;
+  max-width: 50%;
+  overflow-y: auto;
+}
+.evals-section {
+  flex: 1;
+  min-width: 0;
+}
 #evals-chart-wrap {
-  margin-bottom: 20px;
+  flex: 1;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
   background: #000;
+  display: flex;
+  align-items: center;
 }
 #evals-chart {
   width: 100%;
@@ -363,15 +383,6 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
 #evals-chart svg {
   width: 100%;
   height: auto;
-}
-#evals-tables {
-  display: flex;
-  gap: 32px;
-  flex-wrap: wrap;
-}
-.evals-section {
-  flex: 1;
-  min-width: 200px;
 }
 .evals-section-title {
   font-size: 13px;
