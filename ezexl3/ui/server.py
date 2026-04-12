@@ -418,6 +418,9 @@ async def handle_graph(request: web.Request) -> web.Response:
 
         # Export to temp CSV, generate SVG, return inline
         model_name = os.path.basename(os.path.abspath(model_dir))
+        # Strip author prefix (e.g. "AuthorName-ModelName" -> "ModelName")
+        if "-" in model_name:
+            model_name = model_name.split("-", 1)[1]
         with tempfile.TemporaryDirectory() as tmp:
             csv_path = os.path.join(tmp, "data.csv")
             svg_path = os.path.join(tmp, "graph.svg")
@@ -459,6 +462,9 @@ async def handle_perf_graph(request: web.Request) -> web.Response:
             return web.json_response({"error": "No perf data yet"}, status=404)
 
         model_name = os.path.basename(os.path.abspath(model_dir))
+        # Strip author prefix (e.g. "AuthorName-ModelName" -> "ModelName")
+        if "-" in model_name:
+            model_name = model_name.split("-", 1)[1]
         title = f"{model_name} — {bpw} BPW"
 
         with tempfile.TemporaryDirectory() as tmp:
