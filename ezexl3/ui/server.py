@@ -417,10 +417,7 @@ async def handle_graph(request: web.Request) -> web.Response:
             return web.json_response({"error": "Need at least 2 completed measurements"}, status=404)
 
         # Export to temp CSV, generate SVG, return inline
-        model_name = os.path.basename(os.path.abspath(model_dir))
-        # Strip author prefix (e.g. "AuthorName-ModelName" -> "ModelName")
-        if "-" in model_name:
-            model_name = model_name.split("-", 1)[1]
+        model_name = _resolve_model_name(model_dir)
         with tempfile.TemporaryDirectory() as tmp:
             csv_path = os.path.join(tmp, "data.csv")
             svg_path = os.path.join(tmp, "graph.svg")
@@ -448,6 +445,23 @@ def _bpw_key(label: str) -> float:
         return float("inf")
 
 
+def _resolve_model_name(model_dir: str) -> str:
+    """Get display name: locked MODEL from metadata, or underscore-stripped basename."""
+    meta_path = os.path.join(model_dir, ".ezexl3_readme_meta.json")
+    if os.path.exists(meta_path):
+        try:
+            meta = json.loads(Path(meta_path).read_text("utf-8"))
+            locked = meta.get("_locked") or {}
+            if locked.get("MODEL") and meta.get("MODEL", "").strip():
+                return meta["MODEL"]
+        except Exception:
+            pass
+    name = os.path.basename(os.path.abspath(model_dir))
+    if "_" in name:
+        name = name.split("_", 1)[1]
+    return name
+
+
 async def handle_perf_graph(request: web.Request) -> web.Response:
     """Generate a perf chart SVG for the selected BPW and return it inline."""
     model_dir = request.query.get("model_dir", "").strip()
@@ -461,10 +475,7 @@ async def handle_perf_graph(request: web.Request) -> web.Response:
         if not os.path.exists(perf_db):
             return web.json_response({"error": "No perf data yet"}, status=404)
 
-        model_name = os.path.basename(os.path.abspath(model_dir))
-        # Strip author prefix (e.g. "AuthorName-ModelName" -> "ModelName")
-        if "-" in model_name:
-            model_name = model_name.split("-", 1)[1]
+        model_name = _resolve_model_name(model_dir)
         title = f"{model_name} — {bpw} BPW"
 
         with tempfile.TemporaryDirectory() as tmp:

@@ -328,6 +328,13 @@ function checkMetadataWait(text) {
     }
     return;
   }
+  const modelMatch = text.match(/<<EZEXL3:WAITING_MODEL_NAME:(.+?)>>/);
+  if (modelMatch) {
+    if (typeof showModelNameWait === "function") {
+      showModelNameWait(modelMatch[1]);
+    }
+    return;
+  }
   // The backend starts writing the README — freeze the metadata locks.
   // This also covers the "all locks were already set, no pause needed"
   // path where WAITING_METADATA is never printed.

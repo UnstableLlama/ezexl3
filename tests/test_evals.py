@@ -548,6 +548,7 @@ def _run_stage_with_fake_worker(tmp_path, worker_fn, eval_name, eval_arg=32768):
         print_above_progress_fn=lambda *a, **kw: None,
         maybe_update_graph_fn=lambda *a, **kw: None,
         sleep_fn=lambda *a, **kw: None,
+        wait_for_model_name_fn=lambda *a, **kw: None,
     )
     csv_path = measure_db.default_db_path(model_dir).replace(".db", ".csv")
     # default_csv_path is in ezexl3.measure, use it for accuracy
