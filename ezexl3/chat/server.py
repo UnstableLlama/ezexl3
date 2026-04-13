@@ -58,6 +58,7 @@ def create_app(engine: ChatEngine) -> web.Application:
     app.router.add_post("/api/session/load", handle_session_load)
     app.router.add_get("/api/gpus", handle_gpus)
     app.router.add_get("/api/browse", handle_browse)
+    app.router.add_get("/api/pick_directory", handle_pick_directory)
     app.router.add_post("/api/model/load", handle_model_load)
     app.router.add_post("/api/model/unload", handle_model_unload)
     app.router.add_post("/api/ui/launch", handle_ui_launch)
@@ -211,6 +212,26 @@ async def handle_browse(request: web.Request) -> web.Response:
         "entries": entries,
         "is_model": is_model,
     })
+
+
+async def handle_pick_directory(request: web.Request) -> web.Response:
+    """Open the native OS directory picker dialog."""
+    import asyncio
+    from ezexl3.native_dialog import pick_directory
+
+    initial = request.query.get("initial", "")
+    loop = asyncio.get_event_loop()
+    try:
+        path = await asyncio.wait_for(
+            loop.run_in_executor(None, pick_directory, initial),
+            timeout=300,
+        )
+    except asyncio.TimeoutError:
+        return web.json_response({"path": None, "error": "Dialog timed out"})
+    except Exception as e:
+        return web.json_response({"path": None, "error": str(e)})
+
+    return web.json_response({"path": path})
 
 
 async def handle_model_load(request: web.Request) -> web.Response:

@@ -193,6 +193,26 @@ async def handle_browse(request: web.Request) -> web.Response:
     })
 
 
+async def handle_pick_directory(request: web.Request) -> web.Response:
+    """Open the native OS directory picker dialog."""
+    import asyncio
+    from ezexl3.native_dialog import pick_directory
+
+    initial = request.query.get("initial", "")
+    loop = asyncio.get_event_loop()
+    try:
+        path = await asyncio.wait_for(
+            loop.run_in_executor(None, pick_directory, initial),
+            timeout=300,
+        )
+    except asyncio.TimeoutError:
+        return web.json_response({"path": None, "error": "Dialog timed out"})
+    except Exception as e:
+        return web.json_response({"path": None, "error": str(e)})
+
+    return web.json_response({"path": path})
+
+
 async def handle_gpus(request: web.Request) -> web.Response:
     gpus = []
     try:
@@ -681,6 +701,7 @@ def create_app() -> web.Application:
 
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/browse", handle_browse)
+    app.router.add_get("/api/pick_directory", handle_pick_directory)
     app.router.add_get("/api/gpus", handle_gpus)
     app.router.add_get("/api/hf-auth", handle_hf_auth)
     app.router.add_get("/api/templates", handle_templates)

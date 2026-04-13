@@ -2,14 +2,32 @@
 
 let browserTargetField = null;
 
-function openBrowser(fieldName) {
+async function openBrowser(fieldName) {
+  // Try native OS file dialog first.
+  const input = document.getElementById(`field-${fieldName}`);
+  const startPath = input && input.value.trim() ? input.value.trim() : "";
+
+  try {
+    const url = "/api/pick_directory" + (startPath ? "?initial=" + encodeURIComponent(startPath) : "");
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.path) {
+      if (input) {
+        input.value = data.path;
+        input.classList.remove("input-error");
+        if (fieldName === "models") {
+          saveModelDir(data.path);
+          if (typeof syncModelDirMirror === "function") syncModelDirMirror(true);
+        }
+      }
+      return;  // native dialog succeeded
+    }
+  } catch (_) {}
+
+  // Fall back to in-browser modal.
   browserTargetField = fieldName;
   const modal = document.getElementById("browser-modal");
   modal.style.display = "flex";
-
-  // Start from current field value or home
-  const input = document.getElementById(`field-${fieldName}`);
-  const startPath = input && input.value.trim() ? input.value.trim() : "";
   browseTo(startPath);
 }
 
