@@ -202,6 +202,15 @@ body { display: flex; overflow: hidden; }
 }
 
 /* File browser */
+.path-input-wrap {
+  display: flex; gap: 6px;
+}
+.path-input-wrap #browser-path-input {
+  flex: 1; min-width: 0;
+}
+.browse-btn {
+  flex-shrink: 0; font-size: 11px; padding: 4px 10px;
+}
 #browser-path-input {
   font-family: var(--mono); font-size: 12px;
 }

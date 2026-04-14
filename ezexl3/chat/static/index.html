@@ -30,7 +30,10 @@
     </div>
     <div id="model-panel-body" class="section-body">
       <label class="sb-label">Model Directory</label>
-      <input type="text" id="browser-path-input" placeholder="Type a path and press Enter">
+      <div class="path-input-wrap">
+        <input type="text" id="browser-path-input" placeholder="Type a path and press Enter">
+        <button id="browse-native-btn" class="sb-btn browse-btn" type="button">Browse</button>
+      </div>
       <div id="browser-list"></div>
       <div id="browser-model-indicator" class="model-indicator" style="display:none"></div>
 

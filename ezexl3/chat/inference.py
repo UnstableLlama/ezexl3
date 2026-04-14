@@ -19,6 +19,41 @@ from .templates import prompt_formats
 
 
 # ---------------------------------------------------------------------------
+# Defensive exllamav3 symbol resolution
+# ---------------------------------------------------------------------------
+# Some exllamav3 installs (e.g. partial / editable builds inside containers)
+# resolve the package as a PEP-420 namespace package, so the top-level
+# re-exports from exllamav3/__init__.py aren't available. These helpers try
+# the top-level first, then fall back to explicit submodule paths.
+
+def _import_model_init():
+    try:
+        from exllamav3 import model_init  # type: ignore
+        return model_init
+    except ImportError:
+        import exllamav3.model_init as model_init  # type: ignore
+        return model_init
+
+
+def _import_generator():
+    try:
+        from exllamav3 import Generator  # type: ignore
+        return Generator
+    except ImportError:
+        from exllamav3.generator import Generator  # type: ignore
+        return Generator
+
+
+def _import_job():
+    try:
+        from exllamav3 import Job  # type: ignore
+        return Job
+    except ImportError:
+        from exllamav3.generator import Job  # type: ignore
+        return Job
+
+
+# ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
 
@@ -99,7 +134,8 @@ class ChatEngine:
 
     def load(self):
         """Load model synchronously (called at startup)."""
-        from exllamav3 import Generator, model_init
+        Generator = _import_generator()
+        model_init = _import_model_init()
 
         # Set visible devices before model_init touches CUDA
         devices = self._devices or list(range(torch.cuda.device_count()))
@@ -243,7 +279,7 @@ class ChatEngine:
         return stop_conditions
 
     def _get_sampler(self):
-        from exllamav3 import model_init
+        model_init = _import_model_init()
         import argparse
 
         s = self.settings
@@ -309,7 +345,7 @@ class ChatEngine:
             {"type": "done", "eos_reason": "..."}
             {"type": "error", "message": "..."}
         """
-        from exllamav3 import Job
+        Job = _import_job()
 
         if not self.is_loaded:
             yield {"type": "error", "message": "Model not loaded"}
@@ -469,7 +505,7 @@ def _build_model_args(
     exllamav3.model_init.init() expects.
     """
     import argparse
-    from exllamav3 import model_init
+    model_init = _import_model_init()
 
     # Build the parser to discover defaults, then feed it the required args
     parser = argparse.ArgumentParser()
