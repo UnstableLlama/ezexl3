@@ -177,7 +177,16 @@ def run_catbench(args) -> list:
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
     import torch
-    from exllamav3 import Generator, Job, model_init
+    # Defensive: if exllamav3 ends up as a PEP-420 namespace package, the
+    # top-level re-exports aren't available. Fall back to explicit submodules.
+    try:
+        from exllamav3 import Generator, Job
+    except ImportError:
+        from exllamav3.generator import Generator, Job
+    try:
+        from exllamav3 import model_init
+    except ImportError:
+        import exllamav3.model_init as model_init
     from exllamav3.util.memory import free_mem
 
     n_samples = args.n_samples
@@ -301,7 +310,10 @@ def run_catbench(args) -> list:
 
 if __name__ == "__main__":
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-    from exllamav3 import model_init
+    try:
+        from exllamav3 import model_init
+    except ImportError:
+        import exllamav3.model_init as model_init
 
     parser = argparse.ArgumentParser(description="Run SVG Catbench on a model")
     model_init.add_args(parser, cache=True, add_sampling_args=False)
