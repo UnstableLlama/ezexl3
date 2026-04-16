@@ -33,13 +33,8 @@ const COMMANDS = {
       // Evals section — KL and PPL are on by default (inverted: emit flag when OFF)
       { name: "no_kl", flag: "--no-kl", type: "boolean", label: "KL Divergence", help: "KL divergence measurement", section: "evals", defaultOn: true, invertFlag: true },
       { name: "no_ppl", flag: "--no-ppl", type: "boolean", label: "Perplexity", help: "Perplexity measurement", section: "evals", defaultOn: true, invertFlag: true },
-      { name: "catbench", flag: "-cb", type: "number", label: "Catbench", placeholder: "3", help: "cat attempts per BPW", toggleable: true, section: "evals" },
-      { name: "diversity", flag: "-div", type: "number", label: "Diversity", placeholder: "50", help: "Output diversity eval (N samples)", toggleable: true, section: "evals" },
-      { name: "humaneval", flag: "-he", type: "number", label: "HumanEval", placeholder: "200", help: "Code generation eval (N samples/task)", toggleable: true, section: "evals" },
-      { name: "ifbench", flag: "-ifb", type: "number", label: "IFBench", placeholder: "16384", help: "Instruction following eval (max tokens)", toggleable: true, section: "evals" },
-      { name: "longctx", flag: "-lctx", type: "boolean", label: "Long Context", help: "Long context understanding eval", section: "evals" },
-      { name: "mmlu", flag: "-mmlu", type: "number", label: "MMLU", placeholder: "5", help: "Knowledge benchmark (N fewshot examples)", toggleable: true, section: "evals" },
       { name: "perf", flag: "-perf", type: "number", label: "Perf", placeholder: "32768", help: "Inference performance benchmark (max length)", toggleable: true, section: "evals" },
+      { name: "catbench", flag: "-cb", type: "number", label: "Catbench", placeholder: "3", help: "cat attempts per BPW", toggleable: true, section: "evals" },
     ],
   },
 
@@ -83,13 +78,8 @@ const COMMANDS = {
       // Evals section — KL and PPL are on by default (inverted: emit flag when OFF)
       { name: "no_kl", flag: "--no-kl", type: "boolean", label: "KL Divergence", help: "KL divergence measurement", section: "evals", defaultOn: true, invertFlag: true },
       { name: "no_ppl", flag: "--no-ppl", type: "boolean", label: "Perplexity", help: "Perplexity measurement", section: "evals", defaultOn: true, invertFlag: true },
-      { name: "catbench", flag: "-cb", type: "number", label: "Catbench", placeholder: "3", help: "cat attempts per BPW", toggleable: true, section: "evals" },
-      { name: "diversity", flag: "-div", type: "number", label: "Diversity", placeholder: "50", help: "Output diversity eval (N samples)", toggleable: true, section: "evals" },
-      { name: "humaneval", flag: "-he", type: "number", label: "HumanEval", placeholder: "200", help: "Code generation eval (N samples/task)", toggleable: true, section: "evals" },
-      { name: "ifbench", flag: "-ifb", type: "number", label: "IFBench", placeholder: "16384", help: "Instruction following eval (max tokens)", toggleable: true, section: "evals" },
-      { name: "longctx", flag: "-lctx", type: "boolean", label: "Long Context", help: "Long context understanding eval", section: "evals" },
-      { name: "mmlu", flag: "-mmlu", type: "number", label: "MMLU", placeholder: "5", help: "Knowledge benchmark (N fewshot examples)", toggleable: true, section: "evals" },
       { name: "perf", flag: "-perf", type: "number", label: "Perf", placeholder: "32768", help: "Inference performance benchmark (max length)", toggleable: true, section: "evals" },
+      { name: "catbench", flag: "-cb", type: "number", label: "Catbench", placeholder: "3", help: "cat attempts per BPW", toggleable: true, section: "evals" },
     ],
   },
 

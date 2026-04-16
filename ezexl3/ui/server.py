@@ -517,6 +517,83 @@ async def handle_perf_graph(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=500)
 
 
+_CATBENCH_NUMBERED_RE = re.compile(r"_\d+\.svg$")
+
+
+def _scan_catbench_dir(catbench_dir: str) -> list[dict]:
+    """List canonical catbench SVGs in *catbench_dir*, sorted by BPW.
+
+    Skips numbered variants ({prefix}_1.svg, …) so only one tile appears
+    per BPW. ``bf16`` sorts last. Filenames that don't match the expected
+    ``{bpw}bpw.svg`` or ``bf16.svg`` layout are ignored.
+    """
+    if not os.path.isdir(catbench_dir):
+        return []
+
+    items: list[tuple[float, dict]] = []
+    for fn in os.listdir(catbench_dir):
+        if not fn.endswith(".svg") or _CATBENCH_NUMBERED_RE.search(fn):
+            continue
+        if fn == "bf16.svg":
+            items.append((float("inf"), {"label": "BF16", "bpw": "bf16", "file": fn}))
+        elif fn.endswith("bpw.svg"):
+            try:
+                val = float(fn[:-len("bpw.svg")])
+            except ValueError:
+                continue
+            items.append((val, {"label": f"{val:.2f} bpw", "bpw": f"{val:.2f}", "file": fn}))
+
+    items.sort(key=lambda t: t[0])
+    return [item for _, item in items]
+
+
+async def handle_catbench_file(request: web.Request) -> web.Response:
+    """Serve catbench artifacts for a model dir.
+
+    Two modes (distinguished by ``file`` query param):
+
+    * ``?model_dir=X``            → JSON listing of canonical SVGs
+    * ``?model_dir=X&file=Y.svg`` → serve that SVG file inline
+
+    The file-serving branch normalizes the requested path and rejects
+    anything that escapes ``{model_dir}/catbench/``.
+    """
+    model_dir = request.query.get("model_dir", "").strip()
+    fname = request.query.get("file", "").strip()
+    if not model_dir:
+        return web.json_response({"error": "No model_dir"}, status=400)
+
+    catbench_dir = os.path.join(model_dir, "catbench")
+
+    # Listing mode
+    if not fname:
+        try:
+            items = await asyncio.to_thread(_scan_catbench_dir, catbench_dir)
+            return web.json_response({"items": items})
+        except Exception as e:
+            return web.json_response({"items": [], "error": str(e)}, status=500)
+
+    # File-serving mode — path must resolve inside catbench_dir
+    try:
+        catbench_real = Path(catbench_dir).resolve()
+        requested = (Path(catbench_dir) / fname).resolve()
+    except (OSError, ValueError):
+        return web.json_response({"error": "Invalid path"}, status=400)
+
+    try:
+        requested.relative_to(catbench_real)
+    except ValueError:
+        return web.json_response({"error": "Path escapes catbench dir"}, status=400)
+
+    if requested.suffix != ".svg" or not requested.is_file():
+        return web.json_response({"error": "Not found"}, status=404)
+
+    return web.FileResponse(
+        requested,
+        headers={"Content-Type": "image/svg+xml", "Cache-Control": "no-cache"},
+    )
+
+
 async def handle_metadata_get(request: web.Request) -> web.Response:
     """Return saved README metadata or computed defaults for a model directory."""
     model_dir = request.query.get("model_dir", "").strip()
@@ -712,6 +789,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/data", handle_data)
     app.router.add_get("/api/perf-data", handle_perf_data)
     app.router.add_get("/api/perf-graph", handle_perf_graph)
+    app.router.add_get("/api/catbench-file", handle_catbench_file)
     app.router.add_get("/api/graph", handle_graph)
     app.router.add_get("/api/metadata", handle_metadata_get)
     app.router.add_post("/api/metadata", handle_metadata_set)

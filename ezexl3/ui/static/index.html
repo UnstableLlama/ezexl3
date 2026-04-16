@@ -143,10 +143,19 @@
       <div id="evals-tab-panel" class="tab-content">
         <div id="evals-tab-content">
           <div id="evals-toolbar">
-            <label for="evals-bpw-select">BPW:</label>
-            <select id="evals-bpw-select">
-              <option value="">Select a BPW...</option>
-            </select>
+            <div class="evals-toolbar-group">
+              <label for="evals-kind-select">Eval:</label>
+              <select id="evals-kind-select">
+                <option value="perf">Performance</option>
+                <option value="catbench">Catbench</option>
+              </select>
+            </div>
+            <div class="evals-toolbar-group" id="evals-bpw-group">
+              <label for="evals-bpw-select">BPW:</label>
+              <select id="evals-bpw-select">
+                <option value="">Select a BPW...</option>
+              </select>
+            </div>
           </div>
           <div id="evals-empty" class="evals-empty">No performance data yet. Run a perf eval (<code>-perf</code>) to begin.</div>
           <div id="evals-body" style="display:none">
@@ -174,6 +183,7 @@
               <div id="evals-chart"></div>
             </div>
           </div>
+          <div id="evals-catbench-grid" class="evals-catbench-grid" style="display:none"></div>
         </div>
       </div>
     </div>
