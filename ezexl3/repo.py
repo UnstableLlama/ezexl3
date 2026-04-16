@@ -439,6 +439,7 @@ def run_measure_stage(
     evals: Optional[Dict[str, Any]] = None,
     skip_kl: bool = False,
     skip_ppl: bool = False,
+    prompt_for_model_name: bool = True,
 ) -> int:
     return repo_measure.run_measure_stage(
         model_dir=model_dir,
@@ -450,6 +451,7 @@ def run_measure_stage(
         evals=evals,
         skip_kl=skip_kl,
         skip_ppl=skip_ppl,
+        prompt_for_model_name=prompt_for_model_name,
         parse_measure_args_fn=_parse_measure_args,
         init_measure_db_fn=_init_measure_db,
         read_db_rows_fn=_read_db_rows,
