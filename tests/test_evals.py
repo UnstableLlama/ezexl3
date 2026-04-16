@@ -679,3 +679,54 @@ class TestBuildEvalCmd:
         for name in EVAL_REGISTRY:
             path = _vendor_script(name)
             assert os.path.isfile(path), f"Vendored script missing: {path}"
+
+
+class TestRunEvalSubprocessPartialSalvage:
+    """When an eval subprocess crashes mid-run but has already printed
+    parseable output, run_eval_subprocess should salvage the partial output
+    instead of raising and discarding everything."""
+
+    def _make_q(self):
+        from queue import Queue as TQueue
+        return TQueue()
+
+    def test_partial_perf_output_is_salvaged_on_nonzero_exit(self):
+        """Simulates eval_perf.py printing prefill + some generation rows
+        and then crashing (non-zero exit). Expect: no RuntimeError,
+        returned output contains the parseable rows."""
+        import sys as _sys
+        from ezexl3.evals import run_eval_subprocess
+        script = (
+            "import sys; "
+            "print('Prefill:'); "
+            "print('Length    256:     1000.00 tokens/s'); "
+            "print('Length    512:      900.00 tokens/s'); "
+            "print('Generation'); "
+            "print('Context      0:      120.00 tokens/s'); "
+            "print('Context    256:      110.00 tokens/s'); "
+            "sys.stdout.flush(); "
+            "sys.exit(1)"
+        )
+        cmd = [_sys.executable, "-c", script]
+        q = self._make_q()
+        out = run_eval_subprocess(
+            cmd, device=0, results=q,
+            phase_label="4 PERF", eval_name="perf",
+        )
+        assert "1000.00 tokens/s" in out
+        assert "120.00 tokens/s" in out
+
+    def test_no_parseable_output_still_raises(self):
+        """When the subprocess exits nonzero and the extractor finds
+        nothing, run_eval_subprocess must still raise so the caller
+        reports a full failure."""
+        import sys as _sys
+        from ezexl3.evals import run_eval_subprocess
+        script = "import sys; print('boom'); sys.exit(1)"
+        cmd = [_sys.executable, "-c", script]
+        q = self._make_q()
+        with pytest.raises(RuntimeError, match="failed with exit code"):
+            run_eval_subprocess(
+                cmd, device=0, results=q,
+                phase_label="4 PERF", eval_name="perf",
+            )

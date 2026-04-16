@@ -743,9 +743,40 @@ def run_eval_subprocess(
         log_f.flush()
 
     if proc.returncode != 0:
+        # Non-zero exit. If the subprocess printed usable output before
+        # crashing (e.g. CUDA OOM/illegal-memory-access on the final
+        # context length after most results were already reported),
+        # surface a warning and return what we captured so downstream
+        # extractors can salvage partial results. If no parseable output
+        # exists, fall through and raise — the caller will report it as
+        # a full failure.
+        tail = full_output[-2000:]
+        warn = (
+            f"⚠️  Eval {eval_name} exited with code {proc.returncode} "
+            f"(attempting to salvage partial output)"
+        )
+        if log_f:
+            log_f.write(warn + "\n")
+            log_f.flush()
+        parser = RESULT_EXTRACTORS.get(eval_name)
+        partial_ok = False
+        if parser is not None:
+            try:
+                partial_result = parser(full_output)
+                partial_ok = any(
+                    (v or "").strip() for v in partial_result.values()
+                )
+            except Exception:
+                partial_ok = False
+        if partial_ok:
+            results.put({
+                "event": "progress", "device": device,
+                "text": f"{phase_label} | exited code {proc.returncode}, salvaged partial",
+            })
+            return full_output
         raise RuntimeError(
             f"Eval {eval_name} failed with exit code {proc.returncode}: "
-            f"{' '.join(cmd)}\n\nOutput:\n{full_output[-2000:]}"
+            f"{' '.join(cmd)}\n\nOutput:\n{tail}"
         )
 
     return full_output
