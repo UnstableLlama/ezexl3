@@ -33,7 +33,7 @@ const COMMANDS = {
       // Evals section — KL and PPL are on by default (inverted: emit flag when OFF)
       { name: "no_kl", flag: "--no-kl", type: "boolean", label: "KL Divergence", help: "KL divergence measurement", section: "evals", defaultOn: true, invertFlag: true },
       { name: "no_ppl", flag: "--no-ppl", type: "boolean", label: "Perplexity", help: "Perplexity measurement", section: "evals", defaultOn: true, invertFlag: true },
-      { name: "perf", flag: "-perf", type: "number", label: "Perf", placeholder: "32768", help: "Inference performance benchmark (max length)", toggleable: true, section: "evals" },
+      { name: "perf", flag: "-perf", type: "number", label: "Performance", placeholder: "32768", help: "Inference performance benchmark (max length)", toggleable: true, section: "evals" },
       { name: "catbench", flag: "-cb", type: "number", label: "Catbench", placeholder: "3", help: "cat attempts per BPW", toggleable: true, section: "evals" },
     ],
   },
@@ -78,7 +78,7 @@ const COMMANDS = {
       // Evals section — KL and PPL are on by default (inverted: emit flag when OFF)
       { name: "no_kl", flag: "--no-kl", type: "boolean", label: "KL Divergence", help: "KL divergence measurement", section: "evals", defaultOn: true, invertFlag: true },
       { name: "no_ppl", flag: "--no-ppl", type: "boolean", label: "Perplexity", help: "Perplexity measurement", section: "evals", defaultOn: true, invertFlag: true },
-      { name: "perf", flag: "-perf", type: "number", label: "Perf", placeholder: "32768", help: "Inference performance benchmark (max length)", toggleable: true, section: "evals" },
+      { name: "perf", flag: "-perf", type: "number", label: "Performance", placeholder: "32768", help: "Inference performance benchmark (max length)", toggleable: true, section: "evals" },
       { name: "catbench", flag: "-cb", type: "number", label: "Catbench", placeholder: "3", help: "cat attempts per BPW", toggleable: true, section: "evals" },
     ],
   },
