@@ -62,11 +62,17 @@ function _updateProgressLine(el, text) {
 }
 
 function _finalizeAllProgress(el) {
-  // Convert all active progress spans into permanent text
+  // Convert all active progress spans into permanent text, preserving
+  // the last value each one was showing. This is what keeps the final
+  // perf result ("prefill @32768: 1057 t/s") and the like visible in
+  // scrollback once a normal log line arrives — replacing with a bare
+  // "\n" (the previous behavior) erased the value and showed a blank
+  // line instead.
   const progs = el.querySelectorAll(".term-progress");
   if (progs.length) {
     for (const prog of progs) {
-      prog.replaceWith(document.createTextNode("\n"));
+      const finalText = prog.textContent + "\n";
+      prog.replaceWith(document.createTextNode(finalText));
     }
   }
 }
