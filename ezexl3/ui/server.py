@@ -629,7 +629,11 @@ async def handle_metadata_set(request: web.Request) -> web.Response:
     if not model_dir:
         return web.json_response({"error": "No model_dir"}, status=400)
 
-    # Only clear _waiting when the dashboard explicitly confirms (Resume click)
+    # Legacy: clients used to POST _confirm=true when the user clicked a
+    # Resume button. That button was removed — the backend now auto-resumes
+    # when every field is locked — so this branch is effectively dead, but
+    # left in place so any stale client that still POSTs the flag behaves
+    # correctly.
     confirm = data.get("_confirm", False)
 
     meta_path = os.path.join(model_dir, ".ezexl3_readme_meta.json")

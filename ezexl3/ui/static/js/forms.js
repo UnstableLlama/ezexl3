@@ -511,6 +511,7 @@ function createToggleEl(field) {
   const cb = document.createElement("input");
   cb.type = "checkbox";
   cb.id = `field-${field.name}`;
+  if (field.defaultOn) cb.checked = true;
   item.appendChild(cb);
 
   const slider = document.createElement("span");
@@ -667,10 +668,11 @@ function renderMetadataPanel(commandKey) {
   }
 
   panel.style.display = "";
-  // Preserve waiting state across re-renders
+  // Preserve waiting state across re-renders (pulse animation on the panel
+  // signals "lock me to resume" — there is no Resume button anymore; the
+  // backend auto-resumes as soon as it polls a locked model-name field).
   if (metadataWaitingDir) {
     panel.classList.add("metadata-waiting");
-    document.getElementById("metadata-confirm").style.display = "";
   }
 
   const container = document.getElementById("metadata-fields");
@@ -817,8 +819,9 @@ function toggleMetaLock(key) {
 
 function syncMetaLockState() {
   // Visually mark locked fields as frozen only during the README write
-  // window (between Resume click and README_DONE). Outside that window
-  // — even during the rest of the run — users can freely toggle locks.
+  // window (between README_WRITING and README_DONE markers). Outside
+  // that window — even during the rest of the run — users can freely
+  // toggle locks.
   const locks = document.querySelectorAll(".meta-lock.locked");
   for (const btn of locks) {
     btn.classList.toggle("run-locked", metadataFrozen);
@@ -889,48 +892,9 @@ async function saveMetadata() {
 }
 
 
-async function confirmMetadata() {
-  // Save with _confirm flag to clear the _waiting state on disk
-  const dir = getModelDir() || metadataWaitingDir;
-  if (dir) {
-    const cmd = COMMANDS[activeCommand];
-    const visible = getVisibleMetaFields(cmd);
-    const meta = { model_dir: dir, _confirm: true };
-    const locked = {};
-    for (const f of visible) {
-      if (f.transient) continue;
-      const input = document.getElementById(`meta-${f.key}`);
-      const field = document.querySelector(`.meta-field[data-key="${f.key}"]`);
-      meta[f.key] = input ? input.value.trim() : "";
-      locked[f.key] = !!(field && field.classList.contains("locked"));
-    }
-    meta._locked = locked;
-    try {
-      await fetch("/api/metadata", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(meta),
-      });
-    } catch (e) { /* non-critical */ }
-  }
-
-  const panel = document.getElementById("metadata-panel");
-  panel.classList.remove("metadata-waiting");
-  document.getElementById("metadata-confirm").style.display = "none";
-  metadataWaitingDir = null;
-  // Backend will start writing the README momentarily — freeze the locks
-  // until the README_DONE marker comes back through the stream.
-  metadataFrozen = true;
-  syncMetaLockState();
-}
-
-
 function updateMetadataConfirm() {
   const cmd = COMMANDS[activeCommand];
   const allLocked = allVisibleMetaFieldsReady(cmd);
-
-  const btn = document.getElementById("metadata-confirm");
-  if (btn) btn.disabled = !allLocked;
 
   // Upload tab uses the two-action Create/Upload buttons — gate them on the
   // same "all visible fields locked" condition. The user must lock MODEL +
@@ -989,16 +953,12 @@ function showModelNameWait(modelDir) {
     panel.classList.add("metadata-waiting");
   }
 
-  // Allow lock toggles even though a job is running
+  // Allow lock toggles even though a job is running. The backend polls
+  // the locked state and auto-resumes once the user clicks the lock —
+  // no explicit "Resume" button needed.
   const locks = document.querySelectorAll(".meta-lock");
   for (const btn of locks) {
     btn.classList.remove("run-locked");
-  }
-
-  const btn = document.getElementById("metadata-confirm");
-  if (btn) {
-    btn.style.display = "";
-    btn.addEventListener("click", confirmMetadata);
   }
 
   loadMetadataDefaults(true);
@@ -1029,16 +989,12 @@ function showMetadataWait(modelDir) {
     panel.classList.add("metadata-waiting");
   }
 
-  // Allow lock toggles even though a job is running (user needs to lock fields)
+  // Allow lock toggles even though a job is running (user needs to lock fields).
+  // The backend polls the locked state each second and auto-resumes once every
+  // required field is locked — no explicit "Resume" button needed.
   const locks = document.querySelectorAll(".meta-lock");
   for (const btn of locks) {
     btn.classList.remove("run-locked");
-  }
-
-  const btn = document.getElementById("metadata-confirm");
-  if (btn) {
-    btn.style.display = "";
-    btn.addEventListener("click", confirmMetadata);
   }
 
   // Populate with defaults the subprocess wrote
