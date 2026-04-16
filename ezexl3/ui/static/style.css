@@ -166,12 +166,16 @@ body {
 /* ── Upper panel (tabs + content) ─────────────────────────────── */
 #upper-panel {
   flex: 0 0 auto;
-  height: 55%;
+  height: 90%;
   min-height: 80px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: height 0.25s ease-out;
 }
+/* Disable the snap transition while the user is actively dragging the
+   splitter — otherwise every mousemove chases the tween and feels laggy. */
+body.splitter-active #upper-panel { transition: none; }
 
 /* Tab bar */
 #tab-bar {
