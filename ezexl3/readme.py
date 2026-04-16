@@ -70,14 +70,19 @@ def _compute_defaults(model_dir: str) -> Dict[str, str]:
 
 
 def _wait_for_dashboard_metadata(model_dir: str, defaults: Dict[str, str]) -> Dict[str, str]:
-    """Write defaults with a waiting flag and poll until the dashboard confirms."""
+    """Write defaults with a waiting flag and poll until the dashboard confirms.
+
+    The dashboard signals "ready" by locking all four metadata fields; there
+    is no longer an explicit Resume button. The loop exits as soon as every
+    field is locked and non-empty.
+    """
     waiting_meta = dict(defaults)
     waiting_meta["_waiting"] = True
     _write_saved_metadata(model_dir, waiting_meta)
 
     print(f"\n<<EZEXL3:WAITING_METADATA:{model_dir}>>")
     print("⏳ Waiting for README metadata from dashboard...")
-    print("   Review the metadata fields, lock all four, and click 'Resume'")
+    print("   Review the metadata fields and lock all four to resume.")
     sys.stdout.flush()
 
     poll_count = 0
@@ -88,7 +93,11 @@ def _wait_for_dashboard_metadata(model_dir: str, defaults: Dict[str, str]) -> Di
             print("⏳ Still waiting for metadata...")
             sys.stdout.flush()
         saved = _read_saved_metadata(model_dir)
-        if saved and not saved.get("_waiting"):
+        if (
+            saved
+            and _all_fields_locked(saved)
+            and all((saved.get(k) or "").strip() for k in _META_KEYS)
+        ):
             print("📝 Metadata received from dashboard")
             result = {k: saved.get(k, defaults.get(k, "")) for k in _META_KEYS}
             result["QUANT_METHOD"] = "exl3"
@@ -106,9 +115,12 @@ def prompt_metadata(model_dir: str, bpws: List[str], interactive: bool = True) -
     """Collect README metadata from saved file, dashboard, or interactive prompts."""
     defaults = _compute_defaults(model_dir)
 
-    # Check for saved metadata — only auto-use if ALL fields are locked
+    # Check for saved metadata — only auto-use if ALL fields are locked.
+    # `_waiting` is left behind from the previous run's wait loop but carries
+    # no gating meaning now that the dashboard auto-resumes on lock; the
+    # ground truth is "all four fields locked and non-empty".
     saved = _read_saved_metadata(model_dir)
-    if (saved and not saved.get("_waiting")
+    if (saved
             and all(saved.get(k) for k in _META_KEYS)
             and _all_fields_locked(saved)):
         print(f"📝 Using saved README metadata from {_META_FILENAME}")

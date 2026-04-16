@@ -131,6 +131,11 @@ async function runUploadAction(action) {
   terminalStatus().textContent = runningLabel;
   terminalStatus().className = "terminal-status running";
 
+  // Reveal more terminal real estate now that a job is starting.
+  // The boot-time default is upper-panel = 90%; snap to 50/50 here.
+  const upperPanel = document.getElementById("upper-panel");
+  if (upperPanel) upperPanel.style.height = "50%";
+
   try {
     const res = await fetch("/api/run", {
       method: "POST",

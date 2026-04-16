@@ -136,7 +136,7 @@ def _wait_for_model_name(
 
     print(f"\n<<EZEXL3:WAITING_MODEL_NAME:{model_dir}>>")
     print("⏳ Waiting for model name confirmation...")
-    print("   Lock the Model Name field and click 'Resume'")
+    print("   Lock the Model Name field in the dashboard to resume.")
     sys.stdout.flush()
 
     poll_count = 0
