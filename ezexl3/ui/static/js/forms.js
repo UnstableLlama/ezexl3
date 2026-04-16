@@ -850,25 +850,9 @@ async function loadMetadataDefaults(force) {
         input.value = data[f.key];
       }
     }
-    // Restore lock state the backend saved for our visible fields so the
-    // user's previous lock choices persist across reloads.
-    const savedLocks = data._locked || {};
-    for (const f of visible) {
-      if (f.transient) continue;
-      if (!savedLocks[f.key]) continue;
-      const field = document.querySelector(`.meta-field[data-key="${f.key}"]`);
-      const input = document.getElementById(`meta-${f.key}`);
-      const lockBtn = document.querySelector(`.meta-lock[data-key="${f.key}"]`);
-      if (field && !field.classList.contains("locked") && input && input.value.trim()) {
-        field.classList.add("locked");
-        if (lockBtn) {
-          lockBtn.classList.add("locked");
-          lockBtn.textContent = "\u{1F512}";
-          lockBtn.title = "Unlock this field";
-        }
-        input.readOnly = true;
-      }
-    }
+    // Always start with locks unlocked on page load — the user re-locks
+    // per session as needed. The backend's _locked state is overwritten
+    // by the saveMetadata() call below.
     updateMetadataConfirm();
     // Sync on-disk state with current UI (clears stale _locked from previous sessions)
     saveMetadata();
