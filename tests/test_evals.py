@@ -412,7 +412,12 @@ class TestMeasureDBEvalColumns:
         assert rows["4"]["PPL r-100"] == "7.2"
         assert rows["4"]["MMLU"] == "84.2%"
 
-    def test_export_csv_includes_eval_columns(self, tmp_path):
+    def test_export_csv_dynamic_eval_columns(self, tmp_path):
+        """CSV should only include eval columns that have a populated row.
+
+        This keeps the baseline output file clean (KL/PPL/GiB only) while
+        still surfacing hidden-flag evals when they produce data.
+        """
         db_path = str(tmp_path / "test.db")
         csv_path = str(tmp_path / "out.csv")
         upsert_row(db_path, weights="4", kl_div="0.5", mmlu_accuracy="84.2%")
@@ -420,9 +425,31 @@ class TestMeasureDBEvalColumns:
         export_csv(db_path, csv_path)
         with open(csv_path) as f:
             header = f.readline()
+        # Core columns: always present
+        assert "weights" in header
+        assert "KL Div" in header
+        assert "PPL r-100" in header
+        assert "GiB" in header
+        # Populated eval column: included
         assert "MMLU" in header
-        assert "Diversity" in header
-        assert "Perf Prefill t/s" in header
+        # Unpopulated eval columns: omitted
+        assert "Diversity" not in header
+        assert "HumanEval" not in header
+        assert "IFBench" not in header
+        assert "LongCtx" not in header
+        assert "Perf Prefill t/s" not in header
+        assert "Perf Gen t/s" not in header
+
+    def test_export_csv_core_only_when_no_evals(self, tmp_path):
+        """With only KL/PPL/GiB populated the CSV is the classic 4 cols."""
+        db_path = str(tmp_path / "test.db")
+        csv_path = str(tmp_path / "out.csv")
+        upsert_row(db_path, weights="4", kl_div="0.5", ppl="7.2", gib="3.1")
+        from ezexl3.measure_db import export_csv
+        export_csv(db_path, csv_path)
+        with open(csv_path) as f:
+            header = f.readline().strip()
+        assert header == "weights,KL Div,PPL r-100,GiB"
 
 
 # ---------------------------------------------------------------------------
