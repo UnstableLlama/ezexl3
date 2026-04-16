@@ -283,7 +283,8 @@ async function loadModel() {
   loadingEl.textContent = 'Loading model...';
 
   const gpuConfig = getGpuConfig();
-  const cacheSize = parseInt(document.getElementById('model-cache-size').value) || null;
+  const seqLength = parseInt(document.getElementById('model-seq-length').value) || null;
+  const cacheSize = seqLength ? seqLength * 2 : null;
   const cacheQuant = document.getElementById('model-cache-quant').value.trim() || null;
 
   try {
