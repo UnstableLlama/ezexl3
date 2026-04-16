@@ -561,6 +561,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     evals=enabled_evals or None,
                     skip_kl=getattr(args, "no_kl", False),
                     skip_ppl=getattr(args, "no_ppl", False),
+                    prompt_for_model_name=False,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
