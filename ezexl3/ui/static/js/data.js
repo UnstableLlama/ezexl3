@@ -183,9 +183,34 @@ function esc(s) {
 }
 
 
-// ── Evals tab: per-BPW perf data tables ──────────────────────────
+// ── Evals tab: perf tables + catbench grid ───────────────────────
 
 let evalsLastBpws = [];
+let evalsLastCatbenchKey = "";
+
+function getEvalsKind() {
+  const el = document.getElementById("evals-kind-select");
+  return el ? el.value : "perf";
+}
+
+function setEvalsViewMode(kind) {
+  // Toggle visibility of perf-specific vs. catbench-specific elements.
+  const bpwGroup = document.getElementById("evals-bpw-group");
+  const perfBody = document.getElementById("evals-body");
+  const empty = document.getElementById("evals-empty");
+  const grid = document.getElementById("evals-catbench-grid");
+
+  if (kind === "catbench") {
+    if (bpwGroup) bpwGroup.style.display = "none";
+    if (perfBody) perfBody.style.display = "none";
+    if (empty) empty.style.display = "none";
+    if (grid) grid.style.display = "";
+  } else {
+    if (bpwGroup) bpwGroup.style.display = "";
+    if (grid) { grid.style.display = "none"; grid.innerHTML = ""; }
+    evalsLastCatbenchKey = "";
+  }
+}
 
 async function refreshEvals() {
   const modelDir = getModelDir();
@@ -193,10 +218,60 @@ async function refreshEvals() {
     showEvalsEmpty("Enter a model directory first.");
     return;
   }
+  const kind = getEvalsKind();
+  if (kind === "catbench") {
+    await fetchCatbenchGrid(modelDir);
+    return;
+  }
   const select = document.getElementById("evals-bpw-select");
   const selectedBpw = select.value;
   // Fetch the list of BPWs (and optionally the selected BPW's data)
   await fetchEvalsData(modelDir, selectedBpw || null);
+}
+
+
+async function fetchCatbenchGrid(modelDir) {
+  const grid = document.getElementById("evals-catbench-grid");
+  try {
+    const res = await fetch(
+      `/api/catbench-file?model_dir=${encodeURIComponent(modelDir)}`
+    );
+    const json = await res.json();
+    const items = json.items || [];
+
+    if (!items.length) {
+      // Only clobber innerHTML when we actually have to — avoids the
+      // "flash" you'd otherwise get on every 4 s poll.
+      if (evalsLastCatbenchKey !== "__empty__") {
+        grid.innerHTML =
+          '<div class="evals-empty">No catbench results yet. ' +
+          'Run catbench (<code>-cb</code>) to begin.</div>';
+        evalsLastCatbenchKey = "__empty__";
+      }
+      return;
+    }
+
+    // Skip re-render if the file list is unchanged. Each <img> already
+    // has a stable src, so the browser won't re-fetch on repaint.
+    const key = items.map(it => it.file).join("|");
+    if (key === evalsLastCatbenchKey) return;
+    evalsLastCatbenchKey = key;
+
+    grid.innerHTML = items.map(it => {
+      const src = `/api/catbench-file?model_dir=${encodeURIComponent(modelDir)}&file=${encodeURIComponent(it.file)}`;
+      return (
+        '<figure class="evals-catbench-tile">'
+        + `  <div class="evals-catbench-img"><img src="${src}" alt="${esc(it.label)}"></div>`
+        + `  <figcaption>${esc(it.label)}</figcaption>`
+        + '</figure>'
+      );
+    }).join("");
+  } catch (e) {
+    if (evalsLastCatbenchKey !== "__error__") {
+      grid.innerHTML = '<div class="evals-empty">Failed to load catbench grid.</div>';
+      evalsLastCatbenchKey = "__error__";
+    }
+  }
 }
 
 
@@ -318,5 +393,14 @@ function initEvalsTab() {
     select.addEventListener("change", () => {
       if (activeTab === "evals") refreshEvals();
     });
+  }
+  const kindSelect = document.getElementById("evals-kind-select");
+  if (kindSelect) {
+    kindSelect.addEventListener("change", () => {
+      setEvalsViewMode(kindSelect.value);
+      if (activeTab === "evals") refreshEvals();
+    });
+    // Initialize show/hide based on current selection
+    setEvalsViewMode(kindSelect.value);
   }
 }

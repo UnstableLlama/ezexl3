@@ -288,11 +288,38 @@ def run_catbench(args) -> list:
 
         response = "".join(response_chunks)
 
-        # Save raw response as .txt — SVG extraction happens later in batch
+        # Save raw response as .txt (always), then attempt SVG extraction
+        # inline so the dashboard can show results live. The end-of-phase
+        # batch pass in repo.py remains as an idempotent safety net that
+        # re-normalizes numbering in case per-sample extraction failed.
         with open(txt_path, "w") as f:
             f.write(response)
         saved_paths.append(txt_path)
         print(f" -- Sample {i}: saved .txt ({len(response)} chars)", flush=True)
+
+        svg_content = extract_svg(response)
+        if svg_content:
+            # First successful extraction for this prefix → canonical name.
+            # Subsequent successes get _1, _2, … appended.
+            canonical = os.path.join(output_dir, f"{file_prefix}.svg")
+            if not os.path.exists(canonical):
+                svg_path = canonical
+            else:
+                idx = 1
+                while os.path.exists(
+                    os.path.join(output_dir, f"{file_prefix}_{idx}.svg")
+                ):
+                    idx += 1
+                svg_path = os.path.join(output_dir, f"{file_prefix}_{idx}.svg")
+            with open(svg_path, "w") as f:
+                f.write(svg_content)
+            print(
+                f" -- Sample {i}: SVG extracted → {os.path.basename(svg_path)} "
+                f"({len(svg_content)} chars)",
+                flush=True,
+            )
+        else:
+            print(f" -- Sample {i}: no SVG extracted (batch pass will retry)", flush=True)
 
         print(f"CATBENCH_SAMPLE_DONE {i}/{n_samples}", flush=True)
 

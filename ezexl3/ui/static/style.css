@@ -329,8 +329,13 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
 #evals-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 24px;
   margin-bottom: 16px;
+}
+.evals-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 #evals-toolbar label {
   font-size: 12px;
@@ -339,7 +344,8 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-#evals-bpw-select {
+#evals-bpw-select,
+#evals-kind-select {
   padding: 5px 10px;
   background: var(--bg-input);
   border: 1px solid var(--border);
@@ -427,6 +433,50 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   padding: 1px 5px;
   border-radius: 3px;
   font-size: 12px;
+}
+
+/* Catbench grid — auto-fill reflows on window resize and as tiles arrive. */
+.evals-catbench-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+  align-content: start;
+}
+.evals-catbench-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #fff;
+  overflow: hidden;
+}
+.evals-catbench-img {
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.evals-catbench-img img,
+.evals-catbench-img svg {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.evals-catbench-tile figcaption {
+  padding: 6px 8px 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
 }
 
 #form-header { margin-bottom: 16px; }
