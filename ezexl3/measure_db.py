@@ -19,9 +19,13 @@ import sqlite3
 import time
 from typing import Dict, List, Optional, Set
 
-CSV_FIELDS = ["weights", "KL Div", "PPL r-100", "GiB",
-               "Diversity", "HumanEval", "IFBench", "LongCtx",
-               "MMLU", "Perf Prefill t/s", "Perf Gen t/s"]
+CSV_CORE_FIELDS = ["weights", "KL Div", "PPL r-100", "GiB"]
+CSV_EVAL_FIELDS = ["Diversity", "HumanEval", "IFBench", "LongCtx",
+                   "MMLU", "Perf Prefill t/s", "Perf Gen t/s"]
+# Legacy name kept for any external importers; describes the *full* column
+# order when every eval is populated. The on-disk CSV is now dynamic —
+# eval columns are only emitted when at least one row has a value.
+CSV_FIELDS = CSV_CORE_FIELDS + CSV_EVAL_FIELDS
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS measurements (
@@ -186,11 +190,27 @@ def _bpw_sort_key(label: str) -> float:
 
 
 def export_csv(db_path: str, csv_path: str) -> None:
-    """Write the database contents to a CSV file (sorted by BPW)."""
+    """Write the database contents to a CSV file (sorted by BPW).
+
+    Columns are emitted dynamically: the 4 core columns
+    (``weights``, ``KL Div``, ``PPL r-100``, ``GiB``) are always
+    included. Each eval column is included only if at least one row
+    has a non-empty value for it, so a baseline KL/PPL/GiB run
+    produces a clean 4-column CSV while hidden-flag runs that set
+    Diversity / MMLU / Perf / etc. keep those values in the output.
+    """
     rows = read_all_rows(db_path)
     os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
+
+    # Pick up each eval column only when some row actually populated it.
+    active_eval_fields = [
+        field for field in CSV_EVAL_FIELDS
+        if any((row.get(field) or "").strip() for row in rows.values())
+    ]
+    fieldnames = CSV_CORE_FIELDS + active_eval_fields
+
     with open(csv_path, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+        w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         w.writeheader()
         for key in sorted(rows.keys(), key=_bpw_sort_key):
             w.writerow(rows[key])
