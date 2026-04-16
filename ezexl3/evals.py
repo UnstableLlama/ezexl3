@@ -207,11 +207,16 @@ def build_eval_cmd(
     When *num_devices* > 1 the command includes ``-gs 99,99,...`` so
     model_init splits across all visible GPUs.
     """
-    script_path = find_eval_script(eval_name)
-
-    # All eval scripts use exllamav3's model_init which takes -m for model dir.
-    # Device is set via CUDA_VISIBLE_DEVICES (handled by the subprocess runner).
-    cmd = [sys.executable, script_path, "-m", model_dir]
+    # The perf eval is invoked through ezexl3.perf_runner, a wrapper that
+    # monkey-patches heartbeat output into the (otherwise unmodified)
+    # vendored script. Other evals run their vendored script directly.
+    if eval_name == "perf":
+        cmd = [sys.executable, "-m", "ezexl3.perf_runner", "-m", model_dir]
+    else:
+        script_path = find_eval_script(eval_name)
+        # All eval scripts use exllamav3's model_init which takes -m for model dir.
+        # Device is set via CUDA_VISIBLE_DEVICES (handled by the subprocess runner).
+        cmd = [sys.executable, script_path, "-m", model_dir]
 
     # Multi-GPU: tell model_init to split across all visible devices.
     if num_devices > 1:
@@ -399,6 +404,10 @@ def _parse_perf_progress(line: str) -> Optional[str]:
     clean = _strip_ansi(line).strip()
     if not clean:
         return None
+    # Inner-loop heartbeat (emitted by vendored eval_perf.py)
+    if clean.startswith("PERF_HEARTBEAT"):
+        # Strip the marker prefix and pass the rest through for display.
+        return clean[len("PERF_HEARTBEAT"):].strip()
     # Throughput result lines
     m = re.search(r"(Length|Context)\s+(\d+):\s+([\d.]+)\s+tokens/s", clean)
     if m:
@@ -653,6 +662,24 @@ def run_eval_subprocess(
     had_progress = False
     load_start = time.monotonic()
 
+    # Per-eval updating heartbeat in the parent's stdout. The leading
+    # "\r{eval_name}:" prefix lets the UI's terminal.js group these into
+    # a single line that updates in place (instead of cascading into
+    # scrollback). Throttled separately from the in-place progress event.
+    last_stdout_hb: float = 0.0
+    stdout_hb_interval: float = 1.5
+    stdout_progress_key = f"{eval_name}:"
+
+    def _emit_stdout_progress(text: str) -> None:
+        sys.stdout.write(f"\r{stdout_progress_key} {phase_label} | {text}\n")
+        sys.stdout.flush()
+
+    def _emit_stdout_log(text: str) -> None:
+        # Permanent (non-overwriting) line — used for completed-length
+        # result rows that should stay visible in the UI scrollback.
+        sys.stdout.write(f"[{eval_name}] {phase_label} | {text}\n")
+        sys.stdout.flush()
+
     # Asymptotic ticker for loading phase (same pattern as catbench)
     ticker_stop = threading.Event()
 
@@ -718,6 +745,21 @@ def run_eval_subprocess(
                         "text": f"{phase_label} | {progress_text}",
                     })
                     last_send = now
+                # Per-length perf result lines ("prefill @256: 1000.00 t/s",
+                # "gen @512: 110.00 t/s") get a permanent log entry; everything
+                # else (PERF_HEARTBEAT, ProgressBar %, section headers) goes to
+                # the throttled in-place updating line.
+                is_perf_result = (
+                    eval_name == "perf"
+                    and (progress_text.startswith("prefill @")
+                         or progress_text.startswith("gen @"))
+                )
+                if is_perf_result:
+                    _emit_stdout_log(progress_text)
+                    last_stdout_hb = now
+                elif now - last_stdout_hb >= stdout_hb_interval:
+                    _emit_stdout_progress(progress_text)
+                    last_stdout_hb = now
                 last_progress_time = now
 
     # Process any remaining bytes in line_buf
@@ -773,6 +815,14 @@ def run_eval_subprocess(
                 "event": "progress", "device": device,
                 "text": f"{phase_label} | exited code {proc.returncode}, salvaged partial",
             })
+            # Also surface a permanent log line so the salvage is visible
+            # in the UI terminal scrollback (the progress event above gets
+            # overwritten by subsequent updates / the final DONE line).
+            print(
+                f"⚠️  [{eval_name}] {phase_label} crashed with exit code "
+                f"{proc.returncode} — partial results captured (see {phase_label}'s DONE summary below)"
+            )
+            sys.stdout.flush()
             return full_output
         raise RuntimeError(
             f"Eval {eval_name} failed with exit code {proc.returncode}: "
