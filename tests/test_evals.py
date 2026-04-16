@@ -681,6 +681,34 @@ class TestBuildEvalCmd:
             assert os.path.isfile(path), f"Vendored script missing: {path}"
 
 
+class TestPerfRunnerInvocation:
+    """Perf eval runs through the heartbeat-emitting wrapper, not the
+    raw vendored script."""
+
+    def test_perf_cmd_uses_runner_wrapper(self, tmp_path):
+        cmd = build_eval_cmd("perf", str(tmp_path), 0, str(tmp_path), "4", 16384)
+        # Should invoke our wrapper module, not the vendored script directly.
+        assert "-m" in cmd
+        assert "ezexl3.perf_runner" in cmd
+        # Vendored eval_perf.py should NOT be on the command line for perf.
+        assert not any("eval_perf.py" in c for c in cmd)
+
+    def test_other_evals_still_use_vendored_script(self, tmp_path):
+        # mmlu (and friends) still invoke the vendored script directly.
+        cmd = build_eval_cmd("mmlu", str(tmp_path), 0, str(tmp_path), "4", 5)
+        assert any("eval_mmlu.py" in c for c in cmd)
+
+    def test_perf_heartbeat_parser_recognises_marker(self):
+        # Inner-loop heartbeat lines from perf_runner are forwarded to the UI.
+        out = _parse_perf_progress(
+            "PERF_HEARTBEAT gen length=32768 50/100 (8.50 t/s)"
+        )
+        assert out is not None
+        assert "gen length=32768" in out
+        assert "50/100" in out
+        assert "8.50 t/s" in out
+
+
 class TestRunEvalSubprocessPartialSalvage:
     """When an eval subprocess crashes mid-run but has already printed
     parseable output, run_eval_subprocess should salvage the partial output

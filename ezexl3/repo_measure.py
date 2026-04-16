@@ -555,6 +555,7 @@ def run_measure_stage(
     executable: str = sys.executable,
     sleep_fn: Callable = time.sleep,
     wait_for_model_name_fn: Callable = _wait_for_model_name,
+    prompt_for_model_name: bool = True,
 ) -> int:
     model_dir = os.path.abspath(model_dir)
     bpws = [str(b) for b in bpws]
@@ -1066,7 +1067,15 @@ def run_measure_stage(
 
     # --- Model name confirmation gate ---
     # If MODEL isn't locked in metadata, pause so the user can confirm or
-    # override the auto-detected name before final graph generation.
-    wait_for_model_name_fn(model_dir, out_csv, maybe_update_graph_fn)
+    # override the auto-detected name before final graph generation. The
+    # standalone `measure` CLI skips this entirely (no README is being
+    # generated), so we just refresh the graph with whatever name we have.
+    if prompt_for_model_name:
+        wait_for_model_name_fn(model_dir, out_csv, maybe_update_graph_fn)
+    else:
+        try:
+            maybe_update_graph_fn(model_dir, out_csv)
+        except Exception:
+            pass
 
     return 0

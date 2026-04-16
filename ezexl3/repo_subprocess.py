@@ -316,11 +316,25 @@ def _run_catbench_subprocess(
     # Persistent log-line feedback so the UI terminal shows something every
     # few seconds during the (minutes-long) token-generation phase, in
     # addition to the in-place progress bar.
+    #
+    # Two channels:
+    #  * _emit_log: one-off scrollback events (model loaded, sample N
+    #    starting, informational lines from catbench.py).
+    #  * _emit_progress: recurring per-token heartbeats that should overwrite
+    #    a single line in the UI terminal. The leading "\rgpu{N}: " prefix
+    #    lets terminal.js's _updateProgressLine group them per-GPU so each
+    #    device gets its own updating line instead of cascading into
+    #    scrollback.
     gpu_tag = f"[gpu{device}] {phase_label}"
-    heartbeat_interval = 5.0
+    progress_key = f"gpu{device}:"
+    heartbeat_interval = 2.0
 
     def _emit_log(text: str) -> None:
         sys.stdout.write(f"{gpu_tag} {text}\n")
+        sys.stdout.flush()
+
+    def _emit_progress(text: str) -> None:
+        sys.stdout.write(f"\r{progress_key} {phase_label} {text}\n")
         sys.stdout.flush()
 
     def _loading_progress_ticker():
@@ -385,11 +399,10 @@ def _run_catbench_subprocess(
                     "text": f"{phase_label} | sample {current_sample} | {tokens} tokens ({tps} t/s)",
                 })
                 last_send = now
-            # Persistent heartbeat every 5s so the UI terminal scrollback
-            # shows mid-sample progress even if the updating progress bar
-            # is missed.
+            # Per-GPU updating heartbeat in the UI terminal so the user
+            # sees live token counts without flooding scrollback.
             if now - last_heartbeat >= heartbeat_interval:
-                _emit_log(f"sample {current_sample} | {tokens} tokens ({tps} t/s)")
+                _emit_progress(f"sample {current_sample} | {tokens} tokens ({tps} t/s)")
                 last_heartbeat = now
             continue
 
