@@ -693,6 +693,22 @@ class TestPerfRunnerInvocation:
         # Vendored eval_perf.py should NOT be on the command line for perf.
         assert not any("eval_perf.py" in c for c in cmd)
 
+    def test_perf_cmd_sets_cache_size_double_max_length(self, tmp_path):
+        # The vendored gen loop forwards 100 tokens past max_length, so the
+        # cache must be sized at 2× max_length to avoid CUDA overflow on the
+        # final iteration.
+        cmd = build_eval_cmd("perf", str(tmp_path), 0, str(tmp_path), "4", 16384)
+        assert "-max_length" in cmd
+        assert cmd[cmd.index("-max_length") + 1] == "16384"
+        assert "-cs" in cmd
+        assert cmd[cmd.index("-cs") + 1] == str(16384 * 2)
+
+    def test_perf_cmd_default_max_length_also_doubles_cache(self, tmp_path):
+        # eval_arg=0 falls back to the 32768 default; -cs must follow suit.
+        cmd = build_eval_cmd("perf", str(tmp_path), 0, str(tmp_path), "4", 0)
+        assert cmd[cmd.index("-max_length") + 1] == "32768"
+        assert cmd[cmd.index("-cs") + 1] == str(32768 * 2)
+
     def test_other_evals_still_use_vendored_script(self, tmp_path):
         # mmlu (and friends) still invoke the vendored script directly.
         cmd = build_eval_cmd("mmlu", str(tmp_path), 0, str(tmp_path), "4", 5)
