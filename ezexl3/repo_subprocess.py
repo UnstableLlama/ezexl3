@@ -6,6 +6,7 @@ import pty
 import re
 import select
 import subprocess
+import sys
 import threading
 import time
 from typing import IO, List, Optional
@@ -306,10 +307,21 @@ def _run_catbench_subprocess(
 
     buf_lines: List[str] = []
     last_send: float = 0.0
+    last_heartbeat: float = 0.0
     current_sample = ""
     model_loaded = False
     load_start: float = time.monotonic()
     load_done = threading.Event()
+
+    # Persistent log-line feedback so the UI terminal shows something every
+    # few seconds during the (minutes-long) token-generation phase, in
+    # addition to the in-place progress bar.
+    gpu_tag = f"[gpu{device}] {phase_label}"
+    heartbeat_interval = 5.0
+
+    def _emit_log(text: str) -> None:
+        sys.stdout.write(f"{gpu_tag} {text}\n")
+        sys.stdout.flush()
 
     def _loading_progress_ticker():
         while not load_done.wait(timeout=0.5):
@@ -342,6 +354,7 @@ def _run_catbench_subprocess(
                 "text": f"{phase_label} {bar} (loaded)",
             })
             last_send = time.monotonic()
+            _emit_log("model loaded")
             continue
 
         if not model_loaded:
@@ -356,6 +369,8 @@ def _run_catbench_subprocess(
                 "text": f"{phase_label} | sample {current_sample} | 0 tokens",
             })
             last_send = time.monotonic()
+            last_heartbeat = last_send
+            _emit_log(f"sample {current_sample} starting")
             continue
 
         m = _CATBENCH_TOKENS_RE.search(line)
@@ -370,6 +385,12 @@ def _run_catbench_subprocess(
                     "text": f"{phase_label} | sample {current_sample} | {tokens} tokens ({tps} t/s)",
                 })
                 last_send = now
+            # Persistent heartbeat every 5s so the UI terminal scrollback
+            # shows mid-sample progress even if the updating progress bar
+            # is missed.
+            if now - last_heartbeat >= heartbeat_interval:
+                _emit_log(f"sample {current_sample} | {tokens} tokens ({tps} t/s)")
+                last_heartbeat = now
             continue
 
         m = _CATBENCH_SAMPLE_RE.search(line)
@@ -382,6 +403,18 @@ def _run_catbench_subprocess(
                 "text": f"{phase_label} | sample {i_done}/{n_total} done",
             })
             last_send = time.monotonic()
+            continue
+
+        # Non-marker informational line from catbench.py (e.g. " -- Sample 1:
+        # 2048 tokens in 82.3s (24.9 t/s), stopped: eos_token_id").  Echo to
+        # parent stdout so it lands in the UI terminal, stripped of the
+        # leading " -- " noise for readability.
+        stripped = line.rstrip("\n")
+        if stripped.strip():
+            clean = stripped.lstrip()
+            if clean.startswith("-- "):
+                clean = clean[3:]
+            _emit_log(clean)
 
     proc.stdout.close()
     proc.wait()
