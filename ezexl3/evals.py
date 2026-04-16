@@ -293,6 +293,30 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
+# Matches a Python traceback's terminating exception line, which is always
+# at column 0 and looks like "ExceptionType: message". Used to surface the
+# real cause when an eval subprocess crashes; the surrounding frames get
+# truncated by the 2000-char tail clip and aren't useful at the top level.
+_EXC_LINE_RE = re.compile(
+    r"^([A-Z][A-Za-z0-9_.]*(?:Error|Exception|Warning|Interrupt))(?::\s.*)?$"
+)
+
+
+def _extract_last_exception(output: str) -> Optional[str]:
+    """Return the last exception line from a Python traceback in `output`,
+    or None if no traceback-style line is present. Walks bottom-up so a
+    chained exception (`during handling of the above…`) reports the
+    outermost — most user-visible — failure.
+    """
+    for line in reversed(output.splitlines()):
+        s = line.rstrip()
+        if not s or s[:1].isspace():
+            continue
+        if _EXC_LINE_RE.match(s):
+            return s
+    return None
+
+
 # ProgressBar from rich/exllamav3 outputs like: "Description  42%"
 # or lines with N/M patterns
 _PCT_RE = re.compile(r"(\d+)%")
@@ -680,6 +704,16 @@ def run_eval_subprocess(
         sys.stdout.write(f"[{eval_name}] {phase_label} | {text}\n")
         sys.stdout.flush()
 
+    def _emit_stdout_phase_progress(phase: str, text: str) -> None:
+        # In-place updating line per perf phase. Using a phase-suffixed key
+        # ("perf-prefill:" / "perf-gen:") keeps each phase on its own line
+        # so they don't overwrite each other; both stay visible until the
+        # next non-\r line (e.g. the DONE summary) finalizes them.
+        sys.stdout.write(
+            f"\r{eval_name}-{phase}: {phase_label} | {text}\n"
+        )
+        sys.stdout.flush()
+
     # Asymptotic ticker for loading phase (same pattern as catbench)
     ticker_stop = threading.Event()
 
@@ -746,16 +780,20 @@ def run_eval_subprocess(
                     })
                     last_send = now
                 # Per-length perf result lines ("prefill @256: 1000.00 t/s",
-                # "gen @512: 110.00 t/s") get a permanent log entry; everything
-                # else (PERF_HEARTBEAT, ProgressBar %, section headers) goes to
-                # the throttled in-place updating line.
-                is_perf_result = (
-                    eval_name == "perf"
-                    and (progress_text.startswith("prefill @")
-                         or progress_text.startswith("gen @"))
-                )
-                if is_perf_result:
-                    _emit_stdout_log(progress_text)
+                # "gen @512: 110.00 t/s") update a per-phase \r-keyed line so
+                # they replace in place instead of cascading; the eventual
+                # DONE summary (a non-\r line) finalizes the last value as
+                # permanent text. Everything else (PERF_HEARTBEAT,
+                # ProgressBar %, section headers) goes to the throttled
+                # generic in-place updating line.
+                perf_phase: Optional[str] = None
+                if eval_name == "perf":
+                    if progress_text.startswith("prefill @"):
+                        perf_phase = "prefill"
+                    elif progress_text.startswith("gen @"):
+                        perf_phase = "gen"
+                if perf_phase is not None:
+                    _emit_stdout_phase_progress(perf_phase, progress_text)
                     last_stdout_hb = now
                 elif now - last_stdout_hb >= stdout_hb_interval:
                     _emit_stdout_progress(progress_text)
@@ -793,6 +831,12 @@ def run_eval_subprocess(
         # exists, fall through and raise — the caller will report it as
         # a full failure.
         tail = full_output[-2000:]
+        # Pull out the actual exception line (the last line in the output
+        # that starts at column 0 and looks like "ExceptionType: msg").
+        # Python tracebacks always end with this; the rest is frame noise.
+        # Surfacing it separately keeps the failure summary readable even
+        # when the 2000-char tail truncates the top of the traceback.
+        exc_line = _extract_last_exception(full_output)
         warn = (
             f"⚠️  Eval {eval_name} exited with code {proc.returncode} "
             f"(attempting to salvage partial output)"
@@ -818,15 +862,24 @@ def run_eval_subprocess(
             # Also surface a permanent log line so the salvage is visible
             # in the UI terminal scrollback (the progress event above gets
             # overwritten by subsequent updates / the final DONE line).
-            print(
+            crash_line = (
                 f"⚠️  [{eval_name}] {phase_label} crashed with exit code "
-                f"{proc.returncode} — partial results captured (see {phase_label}'s DONE summary below)"
+                f"{proc.returncode} — partial results captured "
+                f"(see {phase_label}'s DONE summary below)"
             )
+            if exc_line:
+                crash_line += f"\n   ↳ {exc_line}"
+            print(crash_line)
             sys.stdout.flush()
             return full_output
+        # No salvageable partial — raise with the exception line on its own,
+        # then the truncated traceback tail underneath for context.
+        exc_summary = exc_line or "(no exception line found in output)"
         raise RuntimeError(
             f"Eval {eval_name} failed with exit code {proc.returncode}: "
-            f"{' '.join(cmd)}\n\nOutput:\n{tail}"
+            f"{' '.join(cmd)}\n"
+            f"Error: {exc_summary}\n\n"
+            f"Output (last 2000 chars):\n{tail}"
         )
 
     return full_output
