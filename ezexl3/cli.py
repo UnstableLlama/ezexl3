@@ -547,6 +547,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1 if failed_models else 0
 
     if cmd == "measure":
+        # Gate graph generation on MODEL-lock only when we have a UI to
+        # unblock us. Standalone CLI (stdin is a TTY) has no dashboard to
+        # lock the field, so we skip the wait and use the auto-detected
+        # name. The dashboard spawns measure with stdin piped/closed, so
+        # isatty() is False there and the gate runs as expected.
+        prompt_for_model = not sys.stdin.isatty()
         failed_models: List[str] = []
         for model_dir in args.models:
             print(f"\nMeasuring model: {model_dir}")
@@ -561,7 +567,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     evals=enabled_evals or None,
                     skip_kl=getattr(args, "no_kl", False),
                     skip_ppl=getattr(args, "no_ppl", False),
-                    prompt_for_model_name=False,
+                    prompt_for_model_name=prompt_for_model,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
