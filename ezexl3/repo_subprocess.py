@@ -325,13 +325,13 @@ def _run_catbench_subprocess(
     #    lets terminal.js's _updateProgressLine group them per-GPU so each
     #    device gets its own updating line instead of cascading into
     #    scrollback.
-    gpu_tag = f"[gpu{device}] {phase_label}"
+    # Catbench is purely visual (no data rows, no CSV), so we funnel every
+    # terminal update through a single \r-prefixed line per GPU instead of
+    # interleaving scrollback events. terminal.js's _updateProgressLine
+    # groups lines by the "gpuN:" key, so each device gets exactly one
+    # line that cycles through states: loading → sample N | tokens → done.
     progress_key = f"gpu{device}:"
     heartbeat_interval = 2.0
-
-    def _emit_log(text: str) -> None:
-        sys.stdout.write(f"{gpu_tag} {text}\n")
-        sys.stdout.flush()
 
     def _emit_progress(text: str) -> None:
         sys.stdout.write(f"\r{progress_key} {phase_label} {text}\n")
@@ -343,6 +343,7 @@ def _run_catbench_subprocess(
             pct = int(95 * (1 - 2 ** (-elapsed / 30)))
             pct = max(pct, 1)
             bar = _build_synthetic_bar(pct)
+            _emit_progress(f"loading {pct}%")
             results.put({
                 "event": "progress",
                 "device": device,
@@ -368,7 +369,7 @@ def _run_catbench_subprocess(
                 "text": f"{phase_label} {bar} (loaded)",
             })
             last_send = time.monotonic()
-            _emit_log("model loaded")
+            _emit_progress("loaded")
             continue
 
         if not model_loaded:
@@ -384,7 +385,7 @@ def _run_catbench_subprocess(
             })
             last_send = time.monotonic()
             last_heartbeat = last_send
-            _emit_log(f"sample {current_sample} starting")
+            _emit_progress(f"sample {current_sample} | starting")
             continue
 
         m = _CATBENCH_TOKENS_RE.search(line)
@@ -416,18 +417,14 @@ def _run_catbench_subprocess(
                 "text": f"{phase_label} | sample {i_done}/{n_total} done",
             })
             last_send = time.monotonic()
+            _emit_progress(f"sample {i_done}/{n_total} done")
             continue
-
-        # Non-marker informational line from catbench.py (e.g. " -- Sample 1:
-        # 2048 tokens in 82.3s (24.9 t/s), stopped: eos_token_id").  Echo to
-        # parent stdout so it lands in the UI terminal, stripped of the
-        # leading " -- " noise for readability.
-        stripped = line.rstrip("\n")
-        if stripped.strip():
-            clean = stripped.lstrip()
-            if clean.startswith("-- "):
-                clean = clean[3:]
-            _emit_log(clean)
+        # All other informational stdout from catbench.py (model size,
+        # cache info, per-sample wrap-up, SVG extraction notices, etc.)
+        # is intentionally dropped from the UI terminal — the per-GPU
+        # progress line above already reflects live state, and these
+        # lines would otherwise cascade in scrollback. They still reach
+        # buf_lines and the log file so post-mortem debugging is intact.
 
     proc.stdout.close()
     proc.wait()
