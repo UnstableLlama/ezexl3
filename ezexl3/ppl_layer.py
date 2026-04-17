@@ -16,6 +16,8 @@ import torch
 
 def get_test_tokens(tokenizer, rows, eval_len=2048, eval_stride=512):
     from datasets import load_dataset
+    from ezexl3._exllamav3_compat import install_progress_shim
+    install_progress_shim()
     from exllamav3.util.progress import ProgressBar
     
     print(" -- Tokenizing dataset...")
