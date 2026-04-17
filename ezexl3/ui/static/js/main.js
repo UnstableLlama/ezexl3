@@ -76,6 +76,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Evals tab BPW selector
   initEvalsTab();
 
+  // Evals perf panel horizontal splitter
+  initEvalsSplitter();
+
   // Splitter drag
   initSplitter();
 

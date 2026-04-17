@@ -368,8 +368,8 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
 #evals-tables {
   display: flex;
   gap: 16px;
-  flex: 0 0 33.333%;
-  max-width: 33.333%;
+  flex: 0 0 50%;
+  min-width: 180px;
   overflow-y: auto;
 }
 .evals-section {
