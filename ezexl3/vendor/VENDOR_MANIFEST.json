@@ -9,7 +9,7 @@
   },
   "eval_ifbench.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/ifbench.py",
-    "sha256": "6a4b98e17945566c36501fe59674d40ce8e38d0e4b0a2192eed3cf9b2b4b0cac"
+    "sha256": "2259c518d7caa06b2ca669ea0a7999d3c1f16cdfba5fcc8323776bb0c53c2a74"
   },
   "eval_longctx.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/longctx.py",
@@ -17,7 +17,7 @@
   },
   "eval_mmlu.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/mmlu.py",
-    "sha256": "a56c0ce619c63d1744b2fe1972961101dbae791377e00d8ee7e93661e593e539"
+    "sha256": "9a23b16062451d82aae243bc5c3d3409eea19985105f24664770bfbd275dd81b"
   },
   "eval_perf.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/perf.py",
