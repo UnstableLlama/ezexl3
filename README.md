@@ -107,7 +107,7 @@ The dashboard exposes four paint buttons that toggle quantization flags on indiv
 - `-opt` — opt-in optimized fractional pipeline (only applies to fractional BPWs)
 - `-pm` — global MoE speedup, applies to all BPWs at once
 <p align="center">
-  <img src="docs/args2.png" width="65%" />
+  <img src="docs/args2.png" width="45%" />
 </p>
 The same flags work from the CLI via `--quant-args`, but the dashboard is faster for mixing them across BPWs.
 
