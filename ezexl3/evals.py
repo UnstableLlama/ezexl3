@@ -253,11 +253,10 @@ def build_eval_cmd(
 
     elif eval_name == "perf":
         max_length = eval_arg if isinstance(eval_arg, int) and eval_arg > 0 else 32768
-        # Cache must hold the full prefill (max_length tokens) AND the 100
-        # extra tokens the gen loop forwards at past_len=max_length. The
-        # exllamav3 convention is to size the cache at 2× max_length so the
-        # final gen iteration doesn't overflow.
-        cmd += ["-max_length", str(max_length), "-cs", str(max_length * 2)]
+        # Upstream's measure_generate caps past_len at max_length - 256 and
+        # reserves length + 256 in batch_shape, so cache = max_length is
+        # sufficient (no 2× headroom needed).
+        cmd += ["-max_length", str(max_length), "-cs", str(max_length)]
 
     return cmd
 
