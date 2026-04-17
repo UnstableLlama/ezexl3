@@ -711,86 +711,13 @@ def run_measure_stage(
     n_eval = len(eval_tasks)
     n_allgpu_eval = len(all_gpu_eval_tasks)
 
-    if multi_gpu_catbench_tasks:
-        from queue import Queue as TQueue
+    # multi_gpu_catbench_tasks and catbench_tasks are now processed in a
+    # dedicated phase after the all-GPU eval block (see below), so the
+    # timeline matches the dashboard Evals panel's top-to-bottom order.
 
-        mgpu_use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
-        print(f"\n🐱 Running {len(multi_gpu_catbench_tasks)} multi-GPU catbench job(s)...")
-        mgpu_status: Dict[int, str] = {d: "idle" for d in devices}
-        mgpu_num_lines = len(devices)
-        if mgpu_use_ansi:
-            for d in sorted(mgpu_status):
-                sys.stdout.write(f"\033[2K  GPU {d} | idle\n")
-            sys.stdout.flush()
-
-        for task in multi_gpu_catbench_tasks:
-            task_label = task["label"]
-            label = "bf16" if task_label == "base" else str(task_label)
-            task_model_dir = model_dir if task_label == "base" else os.path.join(model_dir, str(task_label))
-            device_str = task["device_str"]
-            catbench_cmd = [
-                executable, "-m", "ezexl3.catbench",
-                "-m", task_model_dir,
-                "-gs", ",".join("99" for _ in device_str.split(",")),
-                "-cs", str(catbench_cache_tokens),
-                "-n", str(task.get("n_samples", 3)),
-                "-o", os.path.join(model_dir, "catbench"),
-                "-l", label,
-            ]
-            phase_label = f"{label} CAT"
-            mgpu_results: TQueue = TQueue()
-            mgpu_error: List[Optional[Exception]] = [None]
-
-            def _run_mgpu_catbench(_cmd=catbench_cmd, _dev=devices[0], _q=mgpu_results, _pl=phase_label, _cvd=device_str):
-                try:
-                    run_catbench_subprocess_fn(_cmd, _dev, _q, _pl, cuda_visible_devices=_cvd)
-                except Exception as exc:
-                    mgpu_error[0] = exc
-                _q.put(None)
-
-            t = threading.Thread(target=_run_mgpu_catbench)
-            t.start()
-
-            while True:
-                ev = mgpu_results.get()
-                if ev is None:
-                    break
-                if ev["event"] == "progress":
-                    for d in devices:
-                        mgpu_status[d] = ev["text"]
-                    if mgpu_use_ansi:
-                        clear_and_redraw_progress_fn(mgpu_status, mgpu_num_lines)
-
-            t.join()
-
-            if mgpu_error[0] is not None:
-                msg = f"🔴 Multi-GPU catbench failed for {label}: {mgpu_error[0]}"
-            else:
-                msg = f"🐱 DONE {label} CATBENCH (multi-GPU [{device_str}])"
-
-            for d in devices:
-                mgpu_status[d] = "idle"
-            if mgpu_use_ansi:
-                print_above_progress_fn(msg, mgpu_status, mgpu_num_lines)
-            else:
-                print(msg)
-
-        if mgpu_use_ansi:
-            sys.stdout.write(f"\033[{mgpu_num_lines}A")
-            for _ in range(mgpu_num_lines):
-                sys.stdout.write("\033[2K\n")
-            sys.stdout.write(f"\033[{mgpu_num_lines}A")
-            sys.stdout.flush()
-
-    remaining_jobs = len(kl_tasks) + len(ppl_tasks) + len(catbench_tasks) + len(eval_tasks)
-    if remaining_jobs == 0:
-        if multi_gpu_catbench_tasks:
-            catbench_out_dir = os.path.join(model_dir, "catbench")
-            print("\n🎨 Generating SVGs from catbench results...")
-            n_svgs = catbench_generate_svgs_fn(catbench_out_dir)
-            print(f"✅ All catbench jobs complete: {n_svgs} SVGs generated.")
-        if not all_gpu_eval_tasks:
-            return 0
+    remaining_jobs = len(kl_tasks) + len(ppl_tasks) + len(eval_tasks)
+    if remaining_jobs == 0 and not all_gpu_eval_tasks and n_cat == 0:
+        return 0
 
     failures = 0
 
@@ -813,10 +740,12 @@ def run_measure_stage(
     for label in sorted(bpw_tasks, key=_local_bpw_sort_key):
         for t in bpw_tasks[label]:
             tasks.put(t)
-    for t in catbench_tasks:
-        tasks.put(t)
     for t in eval_tasks:
         tasks.put(t)
+    # catbench_tasks (and multi_gpu_catbench_tasks) run in a dedicated
+    # phase AFTER the all-GPU eval block so the job timeline matches the
+    # dashboard Evals panel's top-to-bottom order (KL → PPL → perf →
+    # catbench).
     for _ in devices:
         tasks.put(None)
 
@@ -828,10 +757,14 @@ def run_measure_stage(
         procs.append(p)
         sleep_fn(2.0)
 
-    cat_msg = f" + {n_cat} CAT" if n_cat else ""
     eval_msg = f" + {n_eval} EVAL" if n_eval else ""
-    allgpu_msg = f" (+ {n_allgpu_eval} all-GPU eval after)" if n_allgpu_eval else ""
-    print(f"\n🚀 Measuring {n_kl} KL + {n_ppl} PPL{cat_msg}{eval_msg} jobs on {len(devices)} GPUs...{allgpu_msg}")
+    trailing: List[str] = []
+    if n_allgpu_eval:
+        trailing.append(f"{n_allgpu_eval} all-GPU eval")
+    if n_cat:
+        trailing.append(f"{n_cat} CAT")
+    trailing_msg = f" (+ {', '.join(trailing)} after)" if trailing else ""
+    print(f"\n🚀 Measuring {n_kl} KL + {n_ppl} PPL{eval_msg} jobs on {len(devices)} GPUs...{trailing_msg}")
 
     use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     gpu_status: Dict[int, str] = {d: "idle" for d in devices}
@@ -1053,6 +986,137 @@ def run_measure_stage(
             agpu_log_f.close()
 
     export_csv_fn(db_path, out_csv)
+
+    # ──────────────────────────────────────────────────────────────────
+    # Catbench phase — runs LAST so the job order matches the dashboard
+    # Evals panel (KL → PPL → perf → catbench) top-to-bottom.
+    # ──────────────────────────────────────────────────────────────────
+    if multi_gpu_catbench_tasks:
+        from queue import Queue as TQueue
+
+        mgpu_use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+        print(f"\n🐱 Running {len(multi_gpu_catbench_tasks)} multi-GPU catbench job(s)...")
+        mgpu_status: Dict[int, str] = {d: "idle" for d in devices}
+        mgpu_num_lines = len(devices)
+        if mgpu_use_ansi:
+            for d in sorted(mgpu_status):
+                sys.stdout.write(f"\033[2K  GPU {d} | idle\n")
+            sys.stdout.flush()
+
+        for task in multi_gpu_catbench_tasks:
+            task_label = task["label"]
+            label = "bf16" if task_label == "base" else str(task_label)
+            task_model_dir = model_dir if task_label == "base" else os.path.join(model_dir, str(task_label))
+            device_str = task["device_str"]
+            catbench_cmd = [
+                executable, "-m", "ezexl3.catbench",
+                "-m", task_model_dir,
+                "-gs", ",".join("99" for _ in device_str.split(",")),
+                "-cs", str(catbench_cache_tokens),
+                "-n", str(task.get("n_samples", 3)),
+                "-o", os.path.join(model_dir, "catbench"),
+                "-l", label,
+            ]
+            phase_label = f"{label} CAT"
+            mgpu_results: TQueue = TQueue()
+            mgpu_error: List[Optional[Exception]] = [None]
+
+            def _run_mgpu_catbench(_cmd=catbench_cmd, _dev=devices[0], _q=mgpu_results, _pl=phase_label, _cvd=device_str):
+                try:
+                    run_catbench_subprocess_fn(_cmd, _dev, _q, _pl, cuda_visible_devices=_cvd)
+                except Exception as exc:
+                    mgpu_error[0] = exc
+                _q.put(None)
+
+            t = threading.Thread(target=_run_mgpu_catbench)
+            t.start()
+
+            while True:
+                ev = mgpu_results.get()
+                if ev is None:
+                    break
+                if ev["event"] == "progress":
+                    for d in devices:
+                        mgpu_status[d] = ev["text"]
+                    if mgpu_use_ansi:
+                        clear_and_redraw_progress_fn(mgpu_status, mgpu_num_lines)
+
+            t.join()
+
+            if mgpu_error[0] is not None:
+                msg = f"🔴 Multi-GPU catbench failed for {label}: {mgpu_error[0]}"
+            else:
+                msg = f"🐱 DONE {label} CATBENCH (multi-GPU [{device_str}])"
+
+            for d in devices:
+                mgpu_status[d] = "idle"
+            if mgpu_use_ansi:
+                print_above_progress_fn(msg, mgpu_status, mgpu_num_lines)
+            else:
+                print(msg)
+
+        if mgpu_use_ansi:
+            sys.stdout.write(f"\033[{mgpu_num_lines}A")
+            for _ in range(mgpu_num_lines):
+                sys.stdout.write("\033[2K\n")
+            sys.stdout.write(f"\033[{mgpu_num_lines}A")
+            sys.stdout.flush()
+
+    if catbench_tasks:
+        cb_tasks_q = queue_cls()
+        cb_results_q = queue_cls()
+        for t in catbench_tasks:
+            cb_tasks_q.put(t)
+        for _ in devices:
+            cb_tasks_q.put(None)
+
+        cb_procs = []
+        for d, logp in zip(devices, log_paths):
+            p = process_cls(
+                target=worker_measure_fn,
+                args=(model_dir, d, db_path, cb_tasks_q, cb_results_q, logp, ppl_rows),
+            )
+            p.daemon = False
+            p.start()
+            cb_procs.append(p)
+            sleep_fn(2.0)
+
+        print(f"\n🐱 Running {len(catbench_tasks)} catbench job(s) on {len(devices)} GPU(s)...")
+        cb_use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+        cb_status: Dict[int, str] = {d: "idle" for d in devices}
+        cb_num_lines = len(devices)
+        init_gpu_progress_fn(cb_use_ansi, cb_status)
+
+        cb_active = len(devices)
+        while cb_active > 0:
+            res = cb_results_q.get()
+            if res is None:
+                cb_active -= 1
+                continue
+            gpu = res["device"]
+            ev = res["event"]
+            if ev == "progress":
+                cb_status[gpu] = res["text"]
+                redraw_gpu_progress_fn(cb_use_ansi, cb_status, cb_num_lines)
+                continue
+            label = res["label"]
+            if ev == "start":
+                msg = f"🧪 [GPU {gpu}] START {label} CATBENCH"
+                cb_status[gpu] = f"{label} CATBENCH | starting..."
+            elif ev == "done":
+                msg = f"🐱 [GPU {gpu}] DONE {label} CATBENCH"
+                cb_status[gpu] = "idle"
+            elif ev == "error":
+                failures += 1
+                msg = f"🔴 [GPU {gpu}] FAIL {label} CATBENCH: {res['error']}"
+                cb_status[gpu] = "idle"
+            else:
+                continue
+            print_msg_with_progress_fn(msg, cb_use_ansi, cb_status, cb_num_lines)
+
+        cleanup_gpu_progress_fn(cb_use_ansi, cb_num_lines)
+        for p in cb_procs:
+            p.join()
 
     if catbench_n > 0:
         catbench_out_dir = os.path.join(model_dir, "catbench")
