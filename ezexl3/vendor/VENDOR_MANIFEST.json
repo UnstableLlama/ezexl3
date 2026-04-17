@@ -21,6 +21,6 @@
   },
   "eval_perf.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/perf.py",
-    "sha256": "9ab5f84ff7dac516b34e49479c61cf2ce9fa19d196f00c7c567911d5598e482b"
+    "sha256": "ffa7bbbc49692feaf75f6d0a37b3bde2f79f1d0accf1582d4db4d9f242288110"
   }
 }
