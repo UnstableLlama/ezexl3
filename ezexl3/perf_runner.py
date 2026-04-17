@@ -104,7 +104,9 @@ def _measure_generate_with_heartbeat(args, model, cache, warmup=False):
     100-iteration forward loop.
     """
     chunk_size = args.chunk_size
-    lengths = [0] + eval_perf.get_lengths(chunk_size if warmup else args.max_length)
+    # Upstream shrinks past_len by 256 and pads batch_shape by 256 so the
+    # 100-iteration forward past past_len fits in a cache sized at max_length.
+    lengths = [0] + eval_perf.get_lengths(chunk_size if warmup else args.max_length - 256)
     progress = 0
     results: dict[int, float] = {}
     max_progress = len(lengths)
@@ -126,7 +128,7 @@ def _measure_generate_with_heartbeat(args, model, cache, warmup=False):
                         "attn_mode": "flash_attn",
                         "cache": cache,
                         "past_len": length,
-                        "batch_shape": (1, max(length, 256)),
+                        "batch_shape": (1, max(length + 256, 256)),
                     }
                     if "recurrent_states" in model.caps and length > 0:
                         for v in eval_perf.faux_recurrent_states.values():

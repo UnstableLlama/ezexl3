@@ -86,7 +86,7 @@ def measure_prefill(args, model, cache, warmup = False):
 def measure_generate(args, model, cache, warmup = False):
     global faux_recurrent_states
     chunk_size = args.chunk_size
-    lengths = [0] + get_lengths(chunk_size if warmup else args.max_length)
+    lengths = [0] + get_lengths(chunk_size if warmup else args.max_length - 256)
     progress = 0
     results = {}
     max_progress = len(lengths)
@@ -99,7 +99,7 @@ def measure_generate(args, model, cache, warmup = False):
                         "attn_mode": "flash_attn",
                         "cache": cache,
                         "past_len": length,
-                        "batch_shape": (1, max(length, 256)),
+                        "batch_shape": (1, max(length + 256, 256)),
                     }
                     if "recurrent_states" in model.caps and length > 0:
                         for v in faux_recurrent_states.values():

@@ -64,11 +64,13 @@ class TestVendorManifestIntegrity:
             )
 
 
+@pytest.mark.online
 class TestVendorUpstreamStaleness:
     """Online: checks if upstream scripts have changed since we vendored.
 
-    These tests are expected to fail (xfail) when upstream updates occur.
-    They serve as a notification, not a hard gate.
+    Hard-fails when upstream drift is detected so CI actually breaks.
+    Run offline with ``pytest -m "not online"`` to skip. Run these
+    explicitly in a nightly job with ``pytest -m online``.
     """
 
     @staticmethod
@@ -79,7 +81,7 @@ class TestVendorUpstreamStaleness:
 
     @pytest.mark.parametrize("filename", _load_manifest().keys() if os.path.isfile(_MANIFEST_PATH) else [])
     def test_upstream_unchanged(self, filename):
-        """Fetch upstream and compare hash. Warns (xfail) if changed."""
+        """Fetch upstream and compare hash. Fails if changed."""
         manifest = _load_manifest()
         meta = manifest[filename]
         url = meta["source"]
@@ -91,10 +93,12 @@ class TestVendorUpstreamStaleness:
 
         upstream_hash = hashlib.sha256(upstream_data).hexdigest()
 
-        if upstream_hash != meta["sha256"]:
-            pytest.xfail(
-                f"UPSTREAM CHANGED: {filename} has been updated in exllamav3. "
-                f"Local manifest hash: {meta['sha256'][:16]}..., "
-                f"upstream hash: {upstream_hash[:16]}... "
-                f"Re-vendor this script to pick up changes."
-            )
+        assert upstream_hash == meta["sha256"], (
+            f"UPSTREAM CHANGED: {filename} has been updated in exllamav3. "
+            f"Local manifest hash: {meta['sha256'][:16]}..., "
+            f"upstream hash: {upstream_hash[:16]}... "
+            f"Re-vendor this script (copy upstream into ezexl3/vendor/, "
+            f"preserve the 4-line attribution header, update the hash in "
+            f"VENDOR_MANIFEST.json) and audit any wrappers that depend on "
+            f"the file's contract."
+        )
