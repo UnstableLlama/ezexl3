@@ -171,9 +171,7 @@ def main() -> None:
     eval_perf.measure_generate = _measure_generate_with_heartbeat
 
     parser = argparse.ArgumentParser()
-    # Default cache must be 2× default max_length so the gen loop's
-    # 100-token-past-prefill measurement doesn't overflow at the final length.
-    eval_perf.model_init.add_args(parser, default_cache_size=65536)
+    eval_perf.model_init.add_args(parser, default_cache_size=32768)
     parser.add_argument(
         "-max_length", "--max_length", type=int,
         help="Max context length to measure (default: 32768)", default=32768,
