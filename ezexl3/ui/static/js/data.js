@@ -4,6 +4,15 @@ let dataPollingInterval = null;
 let lastRowCount = 0;
 let activeTab = "command";  // "command" | "data" | "evals"
 
+// Sticky-render flags: once we've drawn a real table or graph for this
+// page session, subsequent empty / 404 responses (transient fetches
+// mid-run, or a poll right after a new run starts before anything is
+// measured) don't blank the view. The only things that clear the data
+// panel are an explicit new run (clearDataView in runCommand) or the
+// user clearing the model dir field.
+let hasRenderedDataTable = false;
+let hasRenderedDataGraph = false;
+
 function switchTab(tab) {
   activeTab = tab;
   document.querySelectorAll(".tab-btn").forEach(b => {
@@ -61,6 +70,10 @@ function renderTable(rows) {
   const table = document.getElementById("data-table");
 
   if (!rows.length) {
+    // Keep whatever the last good render was. clearDataView() resets
+    // hasRenderedDataTable when a new run starts, which re-enables the
+    // empty state.
+    if (hasRenderedDataTable) return;
     tbody.innerHTML = "";
     empty.style.display = "";
     table.style.display = "none";
@@ -84,6 +97,7 @@ function renderTable(rows) {
   }).join("");
 
   lastRowCount = rows.filter(r => r["KL Div"] && r["PPL r-100"]).length;
+  hasRenderedDataTable = true;
 }
 
 
@@ -94,6 +108,9 @@ async function fetchGraph(modelDir) {
   try {
     const res = await fetch(`/api/graph?model_dir=${encodeURIComponent(modelDir)}`);
     if (!res.ok) {
+      // Transient: while a run is in progress the server 404s until 2+
+      // BPWs are measured. Keep the last drawn chart visible.
+      if (hasRenderedDataGraph) return;
       graphEl.innerHTML = "";
       placeholder.style.display = "";
       return;
@@ -101,7 +118,9 @@ async function fetchGraph(modelDir) {
     const svg = await res.text();
     placeholder.style.display = "none";
     graphEl.innerHTML = svg;
+    hasRenderedDataGraph = true;
   } catch (e) {
+    if (hasRenderedDataGraph) return;
     graphEl.innerHTML = "";
     placeholder.style.display = "";
   }
@@ -115,6 +134,18 @@ function showDataEmpty(msg) {
   document.getElementById("data-table").style.display = "none";
   document.getElementById("data-graph").innerHTML = "";
   document.getElementById("data-graph-placeholder").style.display = "";
+  hasRenderedDataTable = false;
+  hasRenderedDataGraph = false;
+}
+
+
+function clearDataView() {
+  // Called when a new run starts — flush the sticky-render memory so
+  // the next empty / 404 responses correctly show the empty state
+  // until fresh measurements arrive.
+  hasRenderedDataTable = false;
+  hasRenderedDataGraph = false;
+  showDataEmpty("No measurement data yet. Run a repo or measure command to begin.");
 }
 
 
