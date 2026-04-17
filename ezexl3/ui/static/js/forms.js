@@ -883,12 +883,19 @@ async function saveMetadata() {
   meta._locked = locked;
 
   try {
-    await fetch("/api/metadata", {
+    const res = await fetch("/api/metadata", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(meta),
     });
-  } catch (e) { /* non-critical */ }
+    if (!res.ok) {
+      let detail = "";
+      try { detail = (await res.json()).error || ""; } catch (_) {}
+      console.warn("saveMetadata: server rejected request", { status: res.status, detail });
+    }
+  } catch (e) {
+    console.warn("saveMetadata: request failed", e);
+  }
 }
 
 

@@ -176,6 +176,45 @@ function initDataSplitter() {
 }
 
 
+function initEvalsSplitter() {
+  const splitter = document.getElementById("evals-splitter");
+  const tables = document.getElementById("evals-tables");
+  const body = document.getElementById("evals-body");
+  if (!splitter || !tables || !body) return;
+
+  let startX = 0;
+  let startWidth = 0;
+
+  function onMouseDown(e) {
+    e.preventDefault();
+    startX = e.clientX;
+    startWidth = tables.getBoundingClientRect().width;
+    splitter.classList.add("dragging");
+    document.body.classList.add("data-splitter-active");
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }
+
+  function onMouseMove(e) {
+    const bodyRect = body.getBoundingClientRect();
+    const delta = e.clientX - startX;
+    const newWidth = startWidth + delta;
+    const maxWidth = bodyRect.width - 180 - 6;
+    const clamped = Math.max(180, Math.min(newWidth, maxWidth));
+    tables.style.flexBasis = clamped + "px";
+  }
+
+  function onMouseUp() {
+    splitter.classList.remove("dragging");
+    document.body.classList.remove("data-splitter-active");
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+  }
+
+  splitter.addEventListener("mousedown", onMouseDown);
+}
+
+
 function esc(s) {
   const d = document.createElement("div");
   d.textContent = s;

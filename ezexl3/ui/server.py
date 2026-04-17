@@ -629,6 +629,15 @@ async def handle_metadata_set(request: web.Request) -> web.Response:
     if not model_dir:
         return web.json_response({"error": "No model_dir"}, status=400)
 
+    # Reject paths that exist but aren't a directory (e.g. the user pasted
+    # /path/to/model/README.md instead of /path/to/model). makedirs below
+    # would raise FileExistsError in that case and crash the handler.
+    if os.path.exists(model_dir) and not os.path.isdir(model_dir):
+        return web.json_response(
+            {"error": f"model_dir is not a directory: {model_dir}"},
+            status=400,
+        )
+
     # Legacy: clients used to POST _confirm=true when the user clicked a
     # Resume button. That button was removed — the backend now auto-resumes
     # when every field is locked — so this branch is effectively dead, but
