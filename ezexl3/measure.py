@@ -132,7 +132,9 @@ def parse_quants_str(s: str) -> List[str]:
 
 def run_cmd_capture(cmd: List[str]) -> str:
     """Run a command, stream stdout live, and also capture full output."""
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    env = os.environ.copy()
+    env["PYTHONSAFEPATH"] = "1"
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
     assert proc.stdout is not None
     out_lines: List[str] = []
     for line in proc.stdout:
