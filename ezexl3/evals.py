@@ -199,13 +199,11 @@ def build_eval_cmd(
 ) -> List[str]:
     """Build the subprocess command for an eval script.
 
-    Note: device selection is handled via CUDA_VISIBLE_DEVICES in the
-    subprocess environment, not via CLI args.  The eval scripts use
-    exllamav3's ``model_init`` which accepts ``-gs`` (GPU split / VRAM
-    allocation) but not ``-d``.
-
-    When *num_devices* > 1 the command includes ``-gs 99,99,...`` so
-    model_init splits across all visible GPUs.
+    Device selection is handled via CUDA_VISIBLE_DEVICES in the subprocess
+    environment, not via CLI args (``model_init`` has no ``-d``). When
+    more than one GPU is visible, we let ``model_init`` auto-split by
+    default — no ``-gs`` (per-GPU VRAM ceiling in GB) or ``-tp`` (tensor-
+    parallel, not universally supported) required.
     """
     # The perf eval is invoked through ezexl3.perf_runner, a wrapper that
     # monkey-patches heartbeat output into the (otherwise unmodified)
@@ -218,9 +216,10 @@ def build_eval_cmd(
         # Device is set via CUDA_VISIBLE_DEVICES (handled by the subprocess runner).
         cmd = [sys.executable, script_path, "-m", model_dir]
 
-    # Multi-GPU: tell model_init to split across all visible devices.
-    if num_devices > 1:
-        cmd += ["-gs", ",".join("99" for _ in range(num_devices))]
+    # Multi-GPU: let model_init auto-split across whatever is visible via
+    # CUDA_VISIBLE_DEVICES. Not passing -gs (per-GPU VRAM ceiling in GB)
+    # or -tp (tensor-parallel, not universally supported) — the default
+    # pipeline-split behavior works for every model.
 
     if eval_name == "diversity":
         n_samples = eval_arg if isinstance(eval_arg, int) and eval_arg > 0 else 50
