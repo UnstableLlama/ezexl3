@@ -182,6 +182,7 @@ async function runCommand() {
   }
 
   clearTerminal();
+  if (typeof clearDataView === "function") clearDataView();
   const cmdStr = `ezexl3 ${activeCommand} ${args.join(" ")}`;
   appendTerminal(`$ ${cmdStr}\n`, "term-cmd");
   appendTerminal("\n");
