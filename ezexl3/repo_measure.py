@@ -1008,10 +1008,12 @@ def run_measure_stage(
             label = "bf16" if task_label == "base" else str(task_label)
             task_model_dir = model_dir if task_label == "base" else os.path.join(model_dir, str(task_label))
             device_str = task["device_str"]
+            # Multi-GPU catbench: just expose all relevant devices via
+            # CUDA_VISIBLE_DEVICES (set by _run_catbench_subprocess) and let
+            # model_init auto-split. No -gs / -tp needed.
             catbench_cmd = [
                 executable, "-m", "ezexl3.catbench",
                 "-m", task_model_dir,
-                "-gs", ",".join("99" for _ in device_str.split(",")),
                 "-cs", str(catbench_cache_tokens),
                 "-n", str(task.get("n_samples", 3)),
                 "-o", os.path.join(model_dir, "catbench"),
