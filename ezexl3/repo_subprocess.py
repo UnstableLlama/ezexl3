@@ -86,7 +86,9 @@ def _run_quant_one_isolated(
 
 def _run_cmd(cmd: List[str]) -> None:
     print(f"$ {' '.join(cmd)}")
-    proc = subprocess.run(cmd, check=False)
+    env = os.environ.copy()
+    env["PYTHONSAFEPATH"] = "1"
+    proc = subprocess.run(cmd, check=False, env=env)
     if proc.returncode != 0:
         raise RuntimeError(f"Command failed with exit code {proc.returncode}: {' '.join(cmd)}")
 
@@ -103,15 +105,17 @@ def _run_cmd_with_progress(
         log_f.flush()
 
     master_fd: Optional[int] = None
+    env = os.environ.copy()
+    env["PYTHONSAFEPATH"] = "1"
     try:
         master_fd, slave_fd = pty.openpty()
-        proc = subprocess.Popen(cmd, stdout=slave_fd, stderr=slave_fd, close_fds=True)
+        proc = subprocess.Popen(cmd, stdout=slave_fd, stderr=slave_fd, close_fds=True, env=env)
         os.close(slave_fd)
     except Exception:
         if master_fd is not None:
             os.close(master_fd)
             master_fd = None
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
 
     last_send: float = 0.0
     buf = ""
@@ -204,6 +208,7 @@ def _run_measure_subprocess(
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONSAFEPATH"] = "1"
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -294,6 +299,7 @@ def _run_catbench_subprocess(
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONSAFEPATH"] = "1"
     env["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices or str(device)
     proc = subprocess.Popen(
         cmd,

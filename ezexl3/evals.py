@@ -674,6 +674,7 @@ def run_eval_subprocess(
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONSAFEPATH"] = "1"
     if cuda_visible_devices:
         env["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
 
