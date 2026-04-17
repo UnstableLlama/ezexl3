@@ -1,6 +1,6 @@
 # ezexl3
 
-**ezexl3** is a complete exl3 quantization lifecycle tool: quantize, verify, benchmark, visualize, and chat. One pip install, one CLI.
+**ezexl3** is a simplified interface for exllamav3: quantize, verify, benchmark, visualize, upload, and chat. One pip install, one CLI.
 
 ```bash
 pip install ezexl3
@@ -28,8 +28,14 @@ ezexl3 ui
 Launches a web dashboard on port 8801. Every CLI subcommand is a clickable form with live terminal output via SSE streaming. Real-time measurement table and SVG graph update as your quant runs. GPU auto-detection. Boolean arguments exposed as toggles. This is the easiest way to use ezexl3.
 
 <p align="center">
-  <img src="docs/dashboard.png" width="49%" />
-  <img src="docs/data.png" width="49%" />
+  <img src="docs/ezUI1.png" width="65%" />
+
+</p>
+
+The Evals tab shows perf measurements (prefill and generation tokens/s across context lengths) on a dual-axis chart, and the catbench gallery if you ran one. Switch between BPWs with the dropdown.
+
+<p align="center">
+  <img src="docs/performance.png" width="65%" />
 </p>
 
 ### Chat
@@ -37,6 +43,8 @@ Launches a web dashboard on port 8801. Every CLI subcommand is a clickable form 
 ezexl3 chat
 ```
 Launches a lightweight chat web interface for testing quantized models. Browse to your model in the file picker, select GPUs, click load. Branching conversation tree with regeneration, message editing, and sibling navigation. Exllama native, based on chat.py and the generator. No CLI flags needed.
+
+Supports multi-GPU (`-d 0,1`), configurable sequence length (cache is sized 2x behind the scenes), and cache quantization (`-cq 6,6`). Auto-detects prompt format from the model name. Useful for spot-checking quant quality at different BPW levels before uploading.
 
 <p align="center">
   <img src="docs/chat.png" width="65%" />
@@ -57,13 +65,15 @@ ezexl3 wraps the exllamav3 quantization and evaluation workflow into a single co
 - Multi-GPU acceleration for both quantization and verification. KL and PPL run in parallel on 2+ GPUs
 - Supports optimized BPWs (2.1 bpw, 3.5 bpw etc.)
 - Measures KL divergence + PPL @ 200k tokens, recording data to CSV
+- Optional perf measurement (prefill and generation tokens/s across context lengths) with its own SQLite database
 - Generates a HuggingFace-ready `README.md` with your measurements using customizable templates
 - Embeds an SVG graph from the measurement CSV in the README
 - Optional catbench integration. Generates SVG kitten drawings at each BPW and assembles them into a grid
+- Optional HuggingFace upload, with metadata locks and a dry-run preview before any repos are created
 - Checkpoints and resumes intelligently
 
 ```
-model → [quantize → verify KL+PPL] per BPW → optimize → catbench → graph → README
+model → [quantize → verify KL+PPL] per BPW → optimize → evals → graph → README → upload
 ```
 
 ---
@@ -83,8 +93,23 @@ ezexl3 measure -m /path/to/base_model -b 2,3,4,5,6 -d 0,1
 # Generate README only (from existing CSV)
 ezexl3 readme -m /path/to/base_model -t fire
 
+# Upload to HuggingFace (dry-run by default)
+ezexl3 upload -m /path/to/base_model
+
 (but really everything is checkpointed so it usually doesn't hurt to just run the "repo" command every time)
 ```
+
+### Per-BPW Paint Flags
+The dashboard exposes four paint buttons that toggle quantization flags on individual BPW tokens. Click a button, then click a BPW in the parsed-token row to apply it:
+
+- `-hq` — high-quality boost, useful on low BPWs where the head needs the extra precision
+- `-hb 8` — 8-bit head, useful on high BPWs where the rest is small enough to spare the head
+- `-opt` — opt-in optimized fractional pipeline (only applies to fractional BPWs)
+- `-pm` — global MoE speedup, applies to all BPWs at once
+<p align="center">
+  <img src="docs/args2.png" width="45%" />
+</p>
+The same flags work from the CLI via `--quant-args`, but the dashboard is faster for mixing them across BPWs.
 
 ### Template System
 You can customize the generated README by providing a template name via `--template` or `-t`.
@@ -121,14 +146,30 @@ ezexl3 repo -m /path/to/base_model -b 2,3,4,5,6,8 -d 0,1 -t punk -cb
 ```
 
 - `-cb` alone runs 3 samples per BPW (default), `-cb 5` runs 5
-- Catbench runs as a batch pass after all per-BPW verification completes, using the multi-GPU queue
+- Catbench runs as a batch pass after KL/PPL/perf complete, using the multi-GPU queue
 - VRAM pre-flight check before each catbench load — skips gracefully if model won't fit, automatically uses multi-GPU for large models
 - Best valid SVG is selected from N samples for the grid
 - SVG extraction and grid assembly happen in a batch pass after all inference completes
 - Catbench results are checkpointed like everything else — rerunning skips completed samples
 - bf16 baseline included when VRAM allows
 
-###  Inference Evaluation with WebUI
+###  HuggingFace Upload
+The Upload tab (or `ezexl3 upload`) creates HuggingFace repos for your quants. Defaults to dry-run mode so you see exactly what repo names will be created before anything is published.
+
+```bash
+# Preview what would be created
+ezexl3 upload -m /path/to/base_model
+
+# Actually create and upload
+ezexl3 upload -m /path/to/base_model --no-dry-run
+```
+
+- Single mode (default): one standalone repo per BPW, named `MODEL-exl3-BPW`. Recommended.
+- Branched mode: one repo with each BPW as a separate branch. Note that HuggingFace's download counter does not count branches — branched repos show only the main branch's downloads. Standalone repos preserve your download numbers.
+- Metadata fields (Author, Model Name, Repo Link, Quantized By) lock during the README write phase so the values can't drift mid-pipeline.
+- Preflight check verifies your HF token before any repos are created.
+
+### Inference Evaluation with WebUI
 ezexl3 includes a lightweight chat web interface for quickly testing quantized models. Exllama native, based on chat.py and the generator.
 
 ```bash
@@ -182,5 +223,3 @@ For automated pipelines, use the `--no-prompt` (or `-np`) flag to skip interacti
 ```bash
 ezexl3 repo -m /path/to/model -b 4.0 --no-prompt
 ```
-
-Supports multi-GPU (`-d 0,1`), configurable cache size (`-cs 32768`), and cache quantization (`-cq 6,6`). Auto-detects prompt format from the model name. Useful for spot-checking quant quality at different BPW levels before uploading.

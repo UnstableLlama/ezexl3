@@ -46,25 +46,43 @@ def _write_saved_metadata(model_dir: str, meta: Dict) -> None:
 
 
 def _compute_defaults(model_dir: str) -> Dict[str, str]:
-    """Compute sensible default metadata from the model directory name."""
+    """Compute sensible default metadata from the model directory name.
+
+    HF convention: directories are named Author_Model (underscore replaces
+    the HF slash). e.g. Qwen_Qwen3.5-0.8B → author=Qwen, model=Qwen3.5-0.8B.
+    Falls back to splitting on first hyphen if no underscore is present.
+    """
     model_name = os.path.basename(os.path.abspath(model_dir))
-    parts = model_name.split("-", 1)
-    author = parts[0] if len(parts) > 1 else "AUTHOR"
-    model = parts[1] if len(parts) > 1 else model_name
+    if "_" in model_name:
+        parts = model_name.split("_", 1)
+        author = parts[0]
+        model = parts[1]
+    elif "-" in model_name:
+        parts = model_name.split("-", 1)
+        author = parts[0]
+        model = parts[1]
+    else:
+        author = "AUTHOR"
+        model = model_name
     user = get_hf_username()
     repolink = f"https://huggingface.co/{author}/{model}"
     return {"AUTHOR": author, "MODEL": model, "REPOLINK": repolink, "USER": user}
 
 
 def _wait_for_dashboard_metadata(model_dir: str, defaults: Dict[str, str]) -> Dict[str, str]:
-    """Write defaults with a waiting flag and poll until the dashboard confirms."""
+    """Write defaults with a waiting flag and poll until the dashboard confirms.
+
+    The dashboard signals "ready" by locking all four metadata fields; there
+    is no longer an explicit Resume button. The loop exits as soon as every
+    field is locked and non-empty.
+    """
     waiting_meta = dict(defaults)
     waiting_meta["_waiting"] = True
     _write_saved_metadata(model_dir, waiting_meta)
 
     print(f"\n<<EZEXL3:WAITING_METADATA:{model_dir}>>")
     print("⏳ Waiting for README metadata from dashboard...")
-    print("   Review the metadata fields, lock all four, and click 'Resume'")
+    print("   Review the metadata fields and lock all four to resume.")
     sys.stdout.flush()
 
     poll_count = 0
@@ -75,7 +93,11 @@ def _wait_for_dashboard_metadata(model_dir: str, defaults: Dict[str, str]) -> Di
             print("⏳ Still waiting for metadata...")
             sys.stdout.flush()
         saved = _read_saved_metadata(model_dir)
-        if saved and not saved.get("_waiting"):
+        if (
+            saved
+            and _all_fields_locked(saved)
+            and all((saved.get(k) or "").strip() for k in _META_KEYS)
+        ):
             print("📝 Metadata received from dashboard")
             result = {k: saved.get(k, defaults.get(k, "")) for k in _META_KEYS}
             result["QUANT_METHOD"] = "exl3"
@@ -93,9 +115,12 @@ def prompt_metadata(model_dir: str, bpws: List[str], interactive: bool = True) -
     """Collect README metadata from saved file, dashboard, or interactive prompts."""
     defaults = _compute_defaults(model_dir)
 
-    # Check for saved metadata — only auto-use if ALL fields are locked
+    # Check for saved metadata — only auto-use if ALL fields are locked.
+    # `_waiting` is left behind from the previous run's wait loop but carries
+    # no gating meaning now that the dashboard auto-resumes on lock; the
+    # ground truth is "all four fields locked and non-empty".
     saved = _read_saved_metadata(model_dir)
-    if (saved and not saved.get("_waiting")
+    if (saved
             and all(saved.get(k) for k in _META_KEYS)
             and _all_fields_locked(saved)):
         print(f"📝 Using saved README metadata from {_META_FILENAME}")
@@ -317,6 +342,12 @@ def run_readme(
 
     meta = prompt_metadata(model_dir, bpws, interactive=interactive)
 
+    # Signal to dashboard: README write is starting. The frontend freezes
+    # the metadata lock buttons until README_DONE is received, so the
+    # values can't change out from under the template render.
+    print("<<EZEXL3:README_WRITING>>")
+    sys.stdout.flush()
+
     formatted_labels: Dict[str, str] = {}
     first_bpw = None
 
@@ -438,3 +469,141 @@ def run_readme(
         f.write(template)
 
     print(f"✅ Generated {readme_path}")
+    # Signal to dashboard: README write finished. The frontend unfreezes
+    # the metadata lock buttons so the user can edit them again.
+    print("<<EZEXL3:README_DONE>>")
+    sys.stdout.flush()
+
+
+def _format_bpw(bpw: str) -> str:
+    """Format a BPW string to standard label like '4.00bpw'."""
+    try:
+        return f"{float(bpw):.2f}bpw"
+    except ValueError:
+        return bpw
+
+
+def _discover_bpws(model_dir: str) -> List[str]:
+    """Auto-discover BPW subdirectories in the model dir."""
+    bpws = []
+    if not os.path.isdir(model_dir):
+        return bpws
+    for item in os.listdir(model_dir):
+        path = os.path.join(model_dir, item)
+        if not os.path.isdir(path):
+            continue
+        if item.startswith("w-"):
+            continue
+        try:
+            float(item)
+            bpws.append(item)
+        except ValueError:
+            continue
+    bpws.sort(key=lambda x: float(x))
+    return bpws
+
+
+def run_readme_single(
+    model_dir: str,
+    bpws: Optional[List[str]] = None,
+    template_name: Optional[str] = None,
+    interactive: bool = True,
+    include_graph: bool = True,
+    include_measurements: bool = True,
+    include_catbench: bool = False,
+) -> None:
+    """Generate per-BPW READMEs for single-bitrate (one repo per BPW) mode.
+
+    Each BPW gets a README.md in its subdirectory with:
+    - Title appended with the BPW label
+    - Data table links pointing to sibling repos instead of branches
+    - Download command for direct repo access (no --revision)
+    """
+    model_dir = os.path.abspath(model_dir)
+
+    # Auto-discover BPWs if not provided
+    if not bpws:
+        bpws = _discover_bpws(model_dir)
+        if not bpws:
+            print("🔴 No BPWs specified and none auto-detected in model directory.")
+            return
+
+    # Generate the standard branched README first as a base
+    run_readme(
+        model_dir,
+        template_name=template_name,
+        interactive=interactive,
+        include_graph=include_graph,
+        include_measurements=include_measurements,
+        bpws_hint=bpws,
+        include_catbench=include_catbench,
+    )
+
+    base_readme = os.path.join(model_dir, "README.md")
+    if not os.path.exists(base_readme):
+        print("⚠️  Could not generate base README for single-bitrate mode")
+        return
+
+    with open(base_readme) as f:
+        base_content = f.read()
+
+    # Extract user/model from the base README's metadata
+    meta = _read_saved_metadata(model_dir)
+    if not meta:
+        defaults = _compute_defaults(model_dir)
+        meta = defaults
+    user = meta.get("USER", "USER")
+    model = meta.get("MODEL", os.path.basename(model_dir))
+
+    # The base README uses links like: USER/MODEL-exl3/tree/X.XXbpw
+    quant_repo_base = f"{user}/{model}-exl3"
+
+    print(f"\n📝 Generating single-bitrate READMEs...")
+
+    for bpw in bpws:
+        label = _format_bpw(bpw)
+        content = base_content
+
+        # 1. Append BPW to the <h1> title
+        content = re.sub(
+            r'(<h1>)(.*?)(</h1>)',
+            rf'\1\2 — {label}\3',
+            content,
+        )
+
+        # 2. Rewrite data table links:
+        #    FROM: href=".../USER/MODEL-exl3/tree/X.XXbpw"
+        #    TO:   href=".../USER/MODEL-exl3-X.XXbpw"
+        #    Current BPW row: remove <a> wrapper, show bold plain text
+        for other_bpw in bpws:
+            other_label = _format_bpw(other_bpw)
+            old_href = f"https://huggingface.co/{quant_repo_base}/tree/{other_label}"
+            new_href = f"https://huggingface.co/{user}/{model}-exl3-{other_label}"
+
+            if other_bpw == bpw:
+                content = re.sub(
+                    rf'<a class="link-style" href="{re.escape(old_href)}">{re.escape(other_label)}</a>',
+                    f"<b>{other_label}</b>",
+                    content,
+                )
+            else:
+                content = content.replace(old_href, new_href)
+
+        # 3. Rewrite download command
+        #    FROM: hf download USER/MODEL-exl3 --revision "X.XXbpw" --local-dir ./MODEL-exl3-X.XXbpw
+        #    TO:   hf download USER/MODEL-exl3-X.XXbpw --local-dir ./MODEL-exl3-X.XXbpw
+        content = re.sub(
+            rf'hf download {re.escape(quant_repo_base)} --revision "[^"]*" --local-dir \S+',
+            f"hf download {user}/{model}-exl3-{label} --local-dir ./{model}-exl3-{label}",
+            content,
+        )
+
+        # Write into BPW subdirectory
+        bpw_dir = os.path.join(model_dir, bpw)
+        os.makedirs(bpw_dir, exist_ok=True)
+        out_path = os.path.join(bpw_dir, "README.md")
+        with open(out_path, "w") as f:
+            f.write(content)
+        print(f"  ✅ {label}/README.md")
+
+    print(f"✅ Generated {len(bpws)} single-bitrate READMEs")

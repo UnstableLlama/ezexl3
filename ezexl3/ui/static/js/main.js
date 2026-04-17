@@ -39,6 +39,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("stop-btn").addEventListener("click", stopJob);
   document.getElementById("clear-btn").addEventListener("click", clearTerminal);
 
+  // Upload two-button actions
+  document.getElementById("create-repos-btn").addEventListener("click", () => runUploadAction("create"));
+  document.getElementById("upload-btn").addEventListener("click", () => runUploadAction("upload"));
+
   // Enter in form fields triggers run
   document.getElementById("form-fields").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey && e.target.matches("input, select")) {
@@ -69,8 +73,17 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Data panel horizontal splitter
   initDataSplitter();
 
+  // Evals tab BPW selector
+  initEvalsTab();
+
+  // Evals perf panel horizontal splitter
+  initEvalsSplitter();
+
   // Splitter drag
   initSplitter();
+
+  // Collapsible side panels
+  initCollapsiblePanels();
 
   // Select initial command
   selectCommand("repo");
@@ -92,6 +105,12 @@ function selectCommand(cmd) {
   const schema = COMMANDS[cmd];
   document.getElementById("tab-command-label").textContent = schema.label;
   document.getElementById("command-desc").textContent = schema.description;
+
+  // Toggle Run vs two-button mode for upload
+  const isTwoAction = !!(schema && schema.twoActions);
+  document.getElementById("run-btn").style.display = isTwoAction ? "none" : "";
+  document.getElementById("create-repos-btn").style.display = isTwoAction ? "" : "none";
+  document.getElementById("upload-btn").style.display = isTwoAction ? "" : "none";
 
   // Switch back to command tab when changing commands
   switchTab("command");
@@ -180,6 +199,22 @@ async function checkRunningJob() {
   } catch (e) {
     // ignore
   }
+}
+
+
+function initCollapsiblePanels() {
+  const saved = JSON.parse(localStorage.getItem("panelCollapsed") || "{}");
+  document.querySelectorAll(".panel-header").forEach(header => {
+    const panel = header.closest(".side-panel");
+    const key = header.dataset.panel;
+    if (saved[key]) panel.classList.add("panel-collapsed");
+    header.addEventListener("click", () => {
+      panel.classList.toggle("panel-collapsed");
+      const state = JSON.parse(localStorage.getItem("panelCollapsed") || "{}");
+      state[key] = panel.classList.contains("panel-collapsed");
+      localStorage.setItem("panelCollapsed", JSON.stringify(state));
+    });
+  });
 }
 
 

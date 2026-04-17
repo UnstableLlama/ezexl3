@@ -22,3 +22,4 @@ __disk_lru_cache__/
 dist/
 build/
 ...
+docs/plans/

@@ -687,6 +687,68 @@ class PromptFormat_minimax(PromptFormat):
         return "<think>", "</think>"
 
 
+class PromptFormat_gemma4(PromptFormat):
+    description = "Gemma4"
+
+    def default_system_prompt(self, think):
+        return ""
+
+    def format(self, system_prompt, messages, think):
+        context = ""
+        if system_prompt:
+            context = "<|turn>system\n"
+            if think:
+                context += "<|think|>"
+            context += system_prompt + "<turn|>\n"
+        for u, a in messages:
+            context += f"<|turn>user\n{u}<turn|>\n"
+            context += f"<|turn>model\n"
+            if a is not None:
+                context += f"{a}<turn|>\n"
+        return context
+
+    def add_bos(self):
+        return True
+
+    def stop_conditions(self, tokenizer):
+        return [
+            tokenizer.eos_token_id,
+            tokenizer.single_id("<eos>"),
+            tokenizer.single_id("<turn|>"),
+        ]
+
+    def thinktag(self):
+        return "<|channel>thought", "<channel|>"
+
+
+class PromptFormat_qwen35(PromptFormat):
+    description = "Qwen3.5 format, reasoning-aware ChatML"
+
+    def default_system_prompt(self, think):
+        return "You are a helpful AI assistant."
+
+    def format(self, system_prompt, messages, think):
+        context = f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
+        for u, a in messages:
+            context += f"<|im_start|>user\n{u}<|im_end|>\n"
+            context += f"<|im_start|>assistant\n"
+            if a is not None:
+                context += f"{a}<|im_end|>\n"
+            elif not think:
+                context += f"<think>\n\n</think>\n\n"
+        return context
+
+    def add_bos(self):
+        return False
+
+    def stop_conditions(self, tokenizer):
+        return [
+            tokenizer.eos_token_id,
+            tokenizer.single_id("<|im_end|>"),
+            "<|im_end|>",
+        ]
+
+
 prompt_formats = {
     "raw": PromptFormat_raw,
     "llama3": PromptFormat_llama3,
@@ -695,6 +757,7 @@ prompt_formats = {
     "mistral": PromptFormat_mistral,
     "mistral3": PromptFormat_mistral3,
     "gemma": PromptFormat_gemma,
+    "gemma4": PromptFormat_gemma4,
     "glm": PromptFormat_glm,
     "reka": PromptFormat_reka,
     "cohere": PromptFormat_cohere,
@@ -706,4 +769,5 @@ prompt_formats = {
     "seed": PromptFormat_seed,
     "apertus": PromptFormat_apertus,
     "minimax": PromptFormat_minimax,
+    "qwen35": PromptFormat_qwen35,
 }

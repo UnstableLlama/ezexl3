@@ -10,24 +10,20 @@ from ezexl3.quantize import _ensure_exl3_cal_data, _CAL_FILES, _CAL_BASE_URLS
 
 def _install_fake_exl3_module(tmpdir):
     """
-    Insert a fake exllamav3.conversion.calibration_data module into sys.modules
+    Insert a fake exllamav3.conversion module into sys.modules
     whose __file__ points to tmpdir.  Returns a cleanup function.
     """
-    fake_cd = types.ModuleType("exllamav3.conversion.calibration_data")
-    fake_cd.__file__ = os.path.join(tmpdir, "calibration_data.py")
-
     fake_conversion = types.ModuleType("exllamav3.conversion")
-    fake_conversion.calibration_data = fake_cd
+    fake_conversion.__file__ = os.path.join(tmpdir, "__init__.py")
 
     fake_exl3 = types.ModuleType("exllamav3")
     fake_exl3.conversion = fake_conversion
 
     originals = {}
-    for name in ("exllamav3", "exllamav3.conversion", "exllamav3.conversion.calibration_data"):
+    for name in ("exllamav3", "exllamav3.conversion"):
         originals[name] = sys.modules.get(name)
     sys.modules["exllamav3"] = fake_exl3
     sys.modules["exllamav3.conversion"] = fake_conversion
-    sys.modules["exllamav3.conversion.calibration_data"] = fake_cd
 
     def cleanup():
         for name, orig in originals.items():

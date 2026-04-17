@@ -210,7 +210,7 @@ class InterleavedPipelineTests(unittest.TestCase):
     def _base_patches(self):
         """Common patches for run_repo tests."""
         return {
-            "quant_run_one": patch("ezexl3.repo.quant_run_one", return_value=True),
+            "quant_run_one": patch("ezexl3.repo._run_quant_one_isolated", return_value=True),
             "run_measure_single_bpw": patch("ezexl3.repo.run_measure_single_bpw", return_value=0),
             "run_measure_stage": patch("ezexl3.repo.run_measure_stage", return_value=0),
             "_run_optimized_opt_stage": patch("ezexl3.repo._run_optimized_opt_stage"),
@@ -284,7 +284,12 @@ class InterleavedPipelineTests(unittest.TestCase):
         mocks["run_measure_single_bpw"].assert_not_called()
 
     def test_verify_true_halts_on_verification_failure(self):
-        """Pipeline halts if per-BPW verification fails."""
+        """Pipeline halts if the *first* per-BPW verification fails.
+
+        This is the canary: if the very first verify is broken, the user
+        almost certainly has a configuration/environment problem and the
+        run should stop so they can fix it.
+        """
         patches = self._base_patches()
         mocks = {k: p.start() for k, p in patches.items()}
         mocks["run_measure_single_bpw"].return_value = 1  # verify fails
@@ -310,6 +315,68 @@ class InterleavedPipelineTests(unittest.TestCase):
         self.assertEqual(mocks["quant_run_one"].call_count, 1)
         # Verification was called once and failed
         self.assertEqual(mocks["run_measure_single_bpw"].call_count, 1)
+
+    def test_verify_continues_after_first_success(self):
+        """If the first verify passes, later verify failures are non-fatal.
+
+        The user has already seen the pipeline work once, so a later flake
+        (e.g. transient VRAM pressure on a single BPW) should not trash the
+        entire multi-BPW run.
+        """
+        patches = self._base_patches()
+        mocks = {k: p.start() for k, p in patches.items()}
+        # First verify passes, second fails, third passes
+        mocks["run_measure_single_bpw"].side_effect = [0, 1, 0]
+        try:
+            rc = repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["2", "4", "6"],
+                devices=[0],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=True,
+            )
+        finally:
+            for p in patches.values():
+                p.stop()
+
+        # Run completes successfully despite the second verify failing
+        self.assertEqual(rc, 0)
+        # All three BPWs were quantized and verified
+        self.assertEqual(mocks["quant_run_one"].call_count, 3)
+        self.assertEqual(mocks["run_measure_single_bpw"].call_count, 3)
+
+    def test_verify_continues_after_first_checkpoint_skip(self):
+        """A checkpoint-skipped first verify (rc=0) still counts as 'first
+        passed', so a subsequent failure is non-fatal."""
+        patches = self._base_patches()
+        mocks = {k: p.start() for k, p in patches.items()}
+        # First BPW is already checkpointed (rc=0, no-op), second fails
+        mocks["run_measure_single_bpw"].side_effect = [0, 1]
+        try:
+            rc = repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["2", "4"],
+                devices=[0],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=True,
+            )
+        finally:
+            for p in patches.values():
+                p.stop()
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(mocks["quant_run_one"].call_count, 2)
+        self.assertEqual(mocks["run_measure_single_bpw"].call_count, 2)
 
     def test_verify_false_uses_legacy_pipeline(self):
         """With verify=False (--no-verify), uses batch quant then batch measure."""
@@ -354,14 +421,14 @@ class InterleavedPipelineTests(unittest.TestCase):
 
         self.assertTrue(mock_run_repo.call_args.kwargs["verify"])
 
-    def test_verify_with_optimized_bpws(self):
-        """Optimized (fractional) BPWs are quantized, optimized, then verified."""
+    def test_verify_with_fractional_bpws_no_opt(self):
+        """Fractional BPWs without -opt are quantized directly (no optimization)."""
         patches = self._base_patches()
         mocks = {k: p.start() for k, p in patches.items()}
         try:
             rc = repo.run_repo(
                 model_dir="/tmp/model",
-                bpws=["3.5"],  # fractional → needs integer 3,4 + optimized 3.5
+                bpws=["3.5"],
                 devices=[0, 1],
                 device_ratios=None,
                 quant_args=[],
@@ -376,9 +443,34 @@ class InterleavedPipelineTests(unittest.TestCase):
                 p.stop()
 
         self.assertEqual(rc, 0)
-        # Optimized stage was called
+        mocks["_run_optimized_opt_stage"].assert_not_called()
+        measured_bpws = [c.kwargs["bpw"] for c in mocks["run_measure_single_bpw"].call_args_list]
+        self.assertIn("3.5", measured_bpws)
+
+    def test_verify_with_optimized_bpws(self):
+        """Fractional BPWs with -opt are quantized, optimized, then verified."""
+        patches = self._base_patches()
+        mocks = {k: p.start() for k, p in patches.items()}
+        try:
+            rc = repo.run_repo(
+                model_dir="/tmp/model",
+                bpws=["3.5"],
+                devices=[0, 1],
+                device_ratios=None,
+                quant_args=[],
+                measure_args=[],
+                do_quant=True,
+                do_measure=True,
+                do_readme=False,
+                verify=True,
+                opt_bpws={"3.5"},
+            )
+        finally:
+            for p in patches.values():
+                p.stop()
+
+        self.assertEqual(rc, 0)
         mocks["_run_optimized_opt_stage"].assert_called_once()
-        # run_measure_single_bpw called for integer BPWs AND optimized 3.5
         measured_bpws = [c.kwargs["bpw"] for c in mocks["run_measure_single_bpw"].call_args_list]
         self.assertIn("3.5", measured_bpws)
 

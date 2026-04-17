@@ -26,11 +26,15 @@
     </button>
     <button class="nav-btn" data-cmd="measure">
       <span class="nav-icon">&#9636;</span> Measure
-      <span class="nav-sub">KL + PPL</span>
+      <span class="nav-sub">Evaluation</span>
     </button>
     <button class="nav-btn" data-cmd="readme">
       <span class="nav-icon">&#9998;</span> README
       <span class="nav-sub">Generate</span>
+    </button>
+    <button class="nav-btn" data-cmd="upload">
+      <span class="nav-icon">&#8679;</span> Upload
+      <span class="nav-sub">HuggingFace</span>
     </button>
     <div class="nav-divider"></div>
     <button class="nav-btn" data-cmd="chat">
@@ -64,7 +68,8 @@
           <button class="tab-btn active" data-tab="command">
             <span id="tab-command-label">Repo</span>
           </button>
-          <button class="tab-btn" data-tab="data">Data</button>
+          <button class="tab-btn" data-tab="data">KL / PPL</button>
+          <button class="tab-btn" data-tab="evals">Evals</button>
         </div>
         <p id="command-desc" class="tab-bar-desc">Quantize &rarr; Measure KL+PPL &rarr; README</p>
       </div>
@@ -73,16 +78,37 @@
       <div id="form-panel" class="tab-content active">
         <div id="form-body">
           <div id="form-fields"></div>
-          <div id="metadata-panel" class="metadata-panel" style="display:none">
-            <div class="metadata-title">README Metadata</div>
-            <div id="metadata-fields"></div>
-            <button id="metadata-confirm" class="action-btn primary metadata-confirm-btn" style="display:none">Resume</button>
+          <div id="right-panels">
+            <div id="metadata-panel" class="side-panel metadata-panel" style="display:none">
+              <div class="panel-header" data-panel="metadata">
+                <span class="panel-title">README Metadata</span>
+                <span class="panel-chevron">&#9662;</span>
+              </div>
+              <div class="panel-body-wrap">
+                <div class="panel-body">
+                  <div id="metadata-fields"></div>
+                </div>
+              </div>
+            </div>
+            <div id="evals-panel" class="side-panel evals-panel" style="display:none">
+              <div class="panel-header" data-panel="evals">
+                <span class="panel-title">Evals</span>
+                <span class="panel-chevron">&#9662;</span>
+              </div>
+              <div class="panel-body-wrap">
+                <div class="panel-body">
+                  <div id="evals-fields"></div>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-        <div id="form-actions">
-          <button id="run-btn" class="action-btn primary">Run</button>
-          <button id="stop-btn" class="action-btn danger" style="display:none">Stop</button>
-          <button id="clear-btn" class="action-btn secondary">Clear</button>
+          <div id="action-column">
+            <button id="run-btn" class="action-btn action-sq primary">Run</button>
+            <button id="create-repos-btn" class="action-btn action-sq primary" style="display:none">Create</button>
+            <button id="upload-btn" class="action-btn action-sq primary" style="display:none">Upload</button>
+            <button id="stop-btn" class="action-btn action-sq danger" style="display:none">Stop</button>
+            <button id="clear-btn" class="action-btn action-sq secondary">Clear</button>
+          </div>
         </div>
       </div>
 
@@ -109,6 +135,55 @@
             <div id="data-graph-placeholder" class="data-graph-placeholder">Graph will appear after 2+ measurements</div>
             <div id="data-graph"></div>
           </div>
+        </div>
+      </div>
+
+      <!-- Evals tab -->
+      <div id="evals-tab-panel" class="tab-content">
+        <div id="evals-tab-content">
+          <div id="evals-toolbar">
+            <div class="evals-toolbar-group">
+              <label for="evals-kind-select">Eval:</label>
+              <select id="evals-kind-select">
+                <option value="perf">Performance</option>
+                <option value="catbench">Catbench</option>
+              </select>
+            </div>
+            <div class="evals-toolbar-group" id="evals-bpw-group">
+              <label for="evals-bpw-select">BPW:</label>
+              <select id="evals-bpw-select">
+                <option value="">Select a BPW...</option>
+              </select>
+            </div>
+          </div>
+          <div id="evals-empty" class="evals-empty">No performance data yet. Run a perf eval (<code>-perf</code>) to begin.</div>
+          <div id="evals-body" style="display:none">
+            <div id="evals-tables">
+              <div class="evals-section">
+                <h3 class="evals-section-title">Prefill</h3>
+                <table class="evals-table">
+                  <thead>
+                    <tr><th>Length</th><th>Tokens/s</th></tr>
+                  </thead>
+                  <tbody id="evals-prefill-body"></tbody>
+                </table>
+              </div>
+              <div class="evals-section">
+                <h3 class="evals-section-title">Generation</h3>
+                <table class="evals-table">
+                  <thead>
+                    <tr><th>Context</th><th>Tokens/s</th></tr>
+                  </thead>
+                  <tbody id="evals-gen-body"></tbody>
+                </table>
+              </div>
+            </div>
+            <div id="evals-splitter" class="data-splitter"><div class="data-splitter-grip"></div></div>
+            <div id="evals-chart-wrap">
+              <div id="evals-chart"></div>
+            </div>
+          </div>
+          <div id="evals-catbench-grid" class="evals-catbench-grid" style="display:none"></div>
         </div>
       </div>
     </div>

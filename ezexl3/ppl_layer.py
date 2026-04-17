@@ -6,11 +6,13 @@
 # Default 100 rows of 2048 tokens = 204.8k tokens.
 
 import sys, os
+# Must be set before importing torch — otherwise the CUDA allocator is
+# already initialized and the option is silently ignored.
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 import argparse
 import math
 import torch
-
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 def get_test_tokens(tokenizer, rows, eval_len=2048, eval_stride=512):
     from datasets import load_dataset
@@ -66,7 +68,17 @@ def ppl(input_ids_, logits_):
 
 @torch.inference_mode()
 def main(args):
-    from exllamav3 import Config, Model, Tokenizer
+    # Defensive imports: some exllamav3 installs (e.g. partial/editable builds
+    # inside containers) end up resolving the package as a PEP-420 namespace
+    # package, so the top-level re-exports from __init__.py are not available
+    # ("ImportError: cannot import name 'Config' from 'exllamav3' (unknown
+    # location)"). Fall back to the explicit submodule paths in that case.
+    try:
+        from exllamav3 import Config, Model, Tokenizer
+    except ImportError:
+        from exllamav3.model.config import Config
+        from exllamav3.model.model import Model
+        from exllamav3.tokenizer import Tokenizer
     from exllamav3.loader import SafetensorsCollection, VariantSafetensorsCollection
     from exllamav3.util.memory import free_mem
     import time

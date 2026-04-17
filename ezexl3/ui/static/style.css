@@ -166,12 +166,16 @@ body {
 /* ── Upper panel (tabs + content) ─────────────────────────────── */
 #upper-panel {
   flex: 0 0 auto;
-  height: 55%;
+  height: 90%;
   min-height: 80px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: height 0.25s ease-out;
 }
+/* Disable the snap transition while the user is actively dragging the
+   splitter — otherwise every mousemove chases the tween and feels laggy. */
+body.splitter-active #upper-panel { transition: none; }
 
 /* Tab bar */
 #tab-bar {
@@ -317,6 +321,168 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
 }
 .data-pending { color: var(--text-dim); font-style: italic; }
 
+/* ── Evals tab ──────────────────────────────────────────────── */
+#evals-tab-panel { padding: 0; }
+#evals-tab-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+#evals-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 16px;
+}
+.evals-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#evals-toolbar label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+#evals-bpw-select,
+#evals-kind-select {
+  padding: 5px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+  min-width: 120px;
+}
+#evals-body {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+#evals-tables {
+  display: flex;
+  gap: 16px;
+  flex: 0 0 50%;
+  min-width: 180px;
+  overflow-y: auto;
+}
+.evals-section {
+  flex: 1;
+  min-width: 0;
+}
+#evals-chart-wrap {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #000;
+  display: flex;
+  align-items: center;
+}
+#evals-chart {
+  width: 100%;
+  line-height: 0;
+}
+#evals-chart svg {
+  width: 100%;
+  height: auto;
+}
+.evals-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin: 0 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.evals-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.evals-table thead th {
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg-primary);
+}
+.evals-table tbody td {
+  padding: 5px 10px;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border);
+  font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+  font-size: 12px;
+}
+.evals-table tbody tr:hover { background: var(--bg-hover); }
+.evals-empty {
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 24px 0;
+}
+.evals-empty code {
+  background: var(--bg-secondary);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+/* Catbench grid — auto-fill reflows on window resize and as tiles arrive. */
+.evals-catbench-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+  align-content: start;
+}
+.evals-catbench-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #fff;
+  overflow: hidden;
+}
+.evals-catbench-img {
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.evals-catbench-img img,
+.evals-catbench-img svg {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.evals-catbench-tile figcaption {
+  padding: 6px 8px 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+}
+
 #form-header { margin-bottom: 16px; }
 #form-header h2 {
   font-size: 20px;
@@ -408,6 +574,7 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   display: flex;
   flex-wrap: wrap;
   gap: 8px 20px;
+  max-width: 460px;
 }
 .toggle-item {
   display: flex;
@@ -458,39 +625,131 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   margin-bottom: 4px;
 }
 .form-label-row .form-label { margin-bottom: 0; }
-.header-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
+/* ── BPW Paint Mode Buttons ─────────────────────────────────────── */
+.bpw-paint-buttons {
+  display: inline-flex;
+  gap: 5px;
+  margin-left: 8px;
+  vertical-align: middle;
 }
-.header-toggle input[type="checkbox"] { display: none; }
-.header-toggle .toggle-slider {
-  width: 28px;
-  height: 16px;
-  border-radius: 8px;
-}
-.header-toggle .toggle-slider::after {
-  width: 10px;
-  height: 10px;
-  top: 2px;
-  left: 2px;
-}
-.header-toggle input:checked + .toggle-slider {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-.header-toggle input:checked + .toggle-slider::after {
-  transform: translateX(12px);
-  background: #fff;
-}
-.header-toggle-label {
+.bpw-paint-btn {
+  padding: 2px 8px;
   font-size: 11px;
-  color: var(--text-dim);
-  font-weight: 500;
+  font-weight: 600;
+  font-family: inherit;
+  border: 1.5px solid var(--paint-color, var(--border));
+  border-radius: 4px;
+  background: transparent;
+  color: var(--paint-color, var(--text-muted));
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  user-select: none;
+  line-height: 1.4;
 }
-.header-toggle input:checked ~ .header-toggle-label {
-  color: var(--accent);
+.bpw-paint-btn:hover {
+  background: color-mix(in srgb, var(--paint-color) 15%, transparent);
+}
+.bpw-paint-btn.active {
+  color: #fff;
+  border-color: var(--paint-color);
+}
+/* Stripe patterns on active buttons match their token patterns */
+.bpw-paint-btn.active[data-paint-flag="hq"] {
+  background:
+    repeating-linear-gradient(180deg,
+      var(--paint-color) 0px, var(--paint-color) 1px,
+      #000 1px, #000 6px);
+}
+.bpw-paint-btn.active[data-paint-flag="hb8"] {
+  background:
+    repeating-linear-gradient(90deg,
+      var(--paint-color) 0px, var(--paint-color) 1px,
+      #000 1px, #000 6px);
+}
+.bpw-paint-btn.active[data-paint-flag="opt"] {
+  background: transparent;
+  border-color: var(--paint-color);
+  outline: 3px solid var(--paint-color);
+  outline-offset: -1px;
+  color: var(--paint-color);
+}
+/* Global toggle button (e.g. -pm): inverts on click instead of paint mode */
+.bpw-paint-btn-global.active {
+  background: #fff;
+  color: #000;
+  border-color: #fff;
+}
+/* Token glow for active -pm is set inline by applyTokenColor in forms.js,
+   so it always survives rebuilds and stacks cleanly with -opt outlines
+   and -hq/-hb8 stripes. */
+
+/* ── BPW Token Display ─────────────────────────────────────────── */
+.bpw-token-wrap {
+  max-width: 460px;
+}
+.bpw-token-input {
+  width: 100%;
+  margin-bottom: 6px;
+}
+.bpw-token-display {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0;
+  min-height: 26px;
+  padding: 2px 0;
+}
+.bpw-token {
+  display: inline-block;
+  padding: 2px 6px;
+  font-size: 13px;
+  font-family: inherit;
+  font-weight: 500;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background-color 0.12s, color 0.12s;
+  user-select: none;
+  line-height: 1.5;
+  color: var(--text);
+  background: transparent;
+}
+.bpw-token:hover {
+  background: var(--bg-surface);
+}
+.bpw-token-flagged {
+  /* Colors set inline by JS — this class just adds the visual weight */
+  border-radius: 3px;
+}
+.bpw-token-flagged:hover {
+  filter: brightness(1.15);
+}
+.bpw-token-sep {
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 0 1px;
+  user-select: none;
+}
+.bpw-token-display.locked .bpw-token {
+  cursor: default;
+  pointer-events: none;
+}
+.bpw-paint-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* ── Form lock during run ──────────────────────────────────────── */
+.form-locked .form-input,
+.form-locked .form-select,
+.form-locked .browse-btn {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.form-locked .toggle-item,
+.form-locked .field-toggle {
+  opacity: 0.45;
+  pointer-events: none;
 }
 .field-toggle {
   display: flex;
@@ -525,32 +784,80 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   pointer-events: none;
 }
 
-/* Form body layout (side-by-side with metadata panel) */
+/* Form body layout */
 #form-body {
   display: flex;
-  gap: 20px;
+  gap: 16px;
 }
 #form-body > #form-fields { flex: 0 1 480px; min-width: 0; }
 
-/* ── Metadata panel ─────────────────────────────────────────────── */
-.metadata-panel {
-  flex: 0 0 260px;
+/* ── Collapsible side panels ──────────────────────────────────── */
+#right-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-self: flex-start;
+  position: sticky;
+  top: 0;
+}
+.side-panel {
+  width: 240px;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 14px 16px;
-  align-self: flex-start;
+  flex-shrink: 0;
 }
-.metadata-title {
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: var(--radius-lg);
+  transition: background 0.15s;
+}
+.panel-header:hover { background: var(--bg-hover); }
+.panel-title {
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--text-muted);
-  margin-bottom: 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border);
 }
+.panel-chevron {
+  font-size: 10px;
+  color: var(--text-dim);
+  transition: transform 0.25s ease;
+  line-height: 1;
+}
+.side-panel.panel-collapsed .panel-chevron {
+  transform: rotate(-90deg);
+}
+.panel-body-wrap {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.25s ease;
+}
+.side-panel.panel-collapsed .panel-body-wrap {
+  grid-template-rows: 0fr;
+}
+.panel-body {
+  overflow: hidden;
+  padding: 0 14px 12px;
+  min-height: 0;
+}
+.side-panel.panel-collapsed .panel-body {
+  padding: 0;
+}
+
+/* Evals panel — compact spacing */
+.evals-panel .form-row { margin-bottom: 6px; }
+.evals-panel .form-label-row { margin-bottom: 2px; }
+.side-panel .form-input,
+.side-panel .form-select { max-width: none; }
+
+/* ── Metadata panel ─────────────────────────────────────────────── */
 .meta-field { margin-bottom: 10px; }
 .meta-field:last-child { margin-bottom: 0; }
 .meta-field-row {
@@ -642,14 +949,25 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
   margin-top: 14px;
 }
 
-/* Form actions — flows below form content, scrolls with it */
-#form-actions {
+/* Action column — vertically stacked buttons on the right */
+#action-column {
   display: flex;
+  flex-direction: column;
   gap: 8px;
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
+  align-self: flex-start;
+  position: sticky;
+  top: 0;
+}
+.action-sq {
+  width: 72px;
+  height: 56px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--radius-lg);
 }
 
 .action-btn {

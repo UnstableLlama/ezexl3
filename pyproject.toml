@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ezexl3"
-version = "0.0.9"
+version = "0.1.0"
 description = "Single-command EXL3 quantization + measurement + reporting pipeline"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -31,3 +31,6 @@ ezexl3 = ["templates/*", "chat/static/*", "chat/static/js/*", "chat/static/lib/*
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+markers = [
+    "online: test requires network access (upstream drift checks, etc.)",
+]

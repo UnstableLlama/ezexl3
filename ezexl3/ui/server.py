@@ -7,15 +7,21 @@ import collections
 import ipaddress
 import json
 import os
+import re
 import shutil
 import signal
 import sys
 import tempfile
+import traceback
 import uuid
 import webbrowser
+
+# Strip ANSI escape sequences (cursor movement, colors, line clears)
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?\x07")
 from pathlib import Path
 
 from aiohttp import web
+from aiohttp.client_exceptions import ClientConnectionError
 
 STATIC_DIR = Path(__file__).parent / "static"
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -26,16 +32,26 @@ TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 # ---------------------------------------------------------------------------
 
 class Job:
-    __slots__ = ("id", "cmd", "process", "output", "status", "returncode", "_waiters")
+    __slots__ = (
+        "id", "cmd", "process", "output", "status", "returncode",
+        "_waiters", "total_appended",
+    )
 
     def __init__(self, job_id: str, cmd: list[str]):
         self.id = job_id
         self.cmd = cmd
         self.process: asyncio.subprocess.Process | None = None
         self.output: collections.deque[dict] = collections.deque(maxlen=50_000)
+        # Monotonic count of every event ever appended, so stream subscribers
+        # can track progress even when the deque rolls over.
+        self.total_appended: int = 0
         self.status: str = "starting"  # starting | running | stopped | done
         self.returncode: int | None = None
         self._waiters: list[asyncio.Event] = []
+
+    def append_event(self, event: dict) -> None:
+        self.output.append(event)
+        self.total_appended += 1
 
     def notify(self):
         for ev in self._waiters:
@@ -89,20 +105,32 @@ class JobManager:
 
     async def _read_stream(self, job: Job, stream, stream_type: str):
         while True:
-            line = await stream.readline()
-            if not line:
+            chunk = await stream.read(8192)
+            if not chunk:
                 break
-            text = line.decode("utf-8", errors="replace")
-            event = {"type": stream_type, "text": text}
-            job.output.append(event)
+            text = chunk.decode("utf-8", errors="replace")
+            # Strip ANSI escape sequences (cursor movement, colors, line clears)
+            # that our simple terminal can't handle
+            text = _ANSI_RE.sub("", text)
+            # Split on \n, preserve \r within lines for progress bar handling
+            lines = text.split("\n")
+            for i, line in enumerate(lines):
+                if not line and i == len(lines) - 1:
+                    break  # trailing empty after final \n
+                suffix = "\n" if i < len(lines) - 1 else ""
+                segment = line + suffix
+                # Skip lines that are only whitespace/newlines (tqdm padding)
+                if not segment.strip():
+                    continue
+                event = {"type": stream_type, "text": segment}
+                job.append_event(event)
             job.notify()
 
     async def _wait_exit(self, job: Job, proc: asyncio.subprocess.Process):
         code = await proc.wait()
         job.returncode = code
         job.status = "done"
-        event = {"type": "exit", "code": code}
-        job.output.append(event)
+        job.append_event({"type": "exit", "code": code})
         job.notify()
 
     async def stop(self, job_id: str):
@@ -165,6 +193,26 @@ async def handle_browse(request: web.Request) -> web.Response:
     })
 
 
+async def handle_pick_directory(request: web.Request) -> web.Response:
+    """Open the native OS directory picker dialog."""
+    import asyncio
+    from ezexl3.native_dialog import pick_directory
+
+    initial = request.query.get("initial", "")
+    loop = asyncio.get_event_loop()
+    try:
+        path = await asyncio.wait_for(
+            loop.run_in_executor(None, pick_directory, initial),
+            timeout=300,
+        )
+    except asyncio.TimeoutError:
+        return web.json_response({"path": None, "error": "Dialog timed out"})
+    except Exception as e:
+        return web.json_response({"path": None, "error": str(e)})
+
+    return web.json_response({"path": path})
+
+
 async def handle_gpus(request: web.Request) -> web.Response:
     gpus = []
     try:
@@ -203,7 +251,7 @@ async def handle_run(request: web.Request) -> web.Response:
     if not subcommand:
         return web.json_response({"error": "No command specified"}, status=400)
 
-    valid_commands = {"repo", "quantize", "quant", "measure", "readme"}
+    valid_commands = {"repo", "quantize", "quant", "measure", "readme", "upload"}
     if subcommand not in valid_commands:
         return web.json_response({"error": f"Invalid command: {subcommand}"}, status=400)
 
@@ -234,51 +282,61 @@ async def handle_run_stream(request: web.Request) -> web.Response:
         reason="OK",
         headers={
             "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-store",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
     )
     await response.prepare(request)
 
-    # Replay buffered output
-    cursor = 0
-    for event in list(job.output):
-        sse_data = f"data: {json.dumps(event)}\n\n"
-        await response.write(sse_data.encode("utf-8"))
-        cursor += 1
-
-    # Follow new output
+    # Follow new output. The whole body is wrapped so that a client
+    # disconnect at any point (initial replay, mid-stream, or final
+    # DONE/EOF) is swallowed quietly instead of logging a traceback.
     waiter = job.new_waiter()
     try:
+        # Track progress with a cursor that indexes into job.total_appended
+        # (the monotonic counter) so we stay correct even after the bounded
+        # deque rolls over. The first loop iteration replays everything
+        # currently buffered; subsequent iterations send only new events.
+        cursor = 0
+
+        def _pending_events() -> list[dict]:
+            """Return any events the client hasn't seen yet, in order."""
+            snapshot = list(job.output)
+            buffered_start = job.total_appended - len(snapshot)
+            if cursor >= job.total_appended:
+                return []
+            start = max(0, cursor - buffered_start)
+            return snapshot[start:]
+
         while True:
             waiter.clear()
-            # Send any new events since last cursor
-            current_len = len(job.output)
-            if cursor < current_len:
-                items = list(job.output)
-                for event in items[cursor:]:
+
+            pending = _pending_events()
+            if pending:
+                for event in pending:
                     sse_data = f"data: {json.dumps(event)}\n\n"
                     await response.write(sse_data.encode("utf-8"))
-                cursor = current_len
+                cursor = job.total_appended
 
-            # If job is done and we've sent everything, close
-            if job.status in ("done", "stopped") and cursor >= len(job.output):
+            # If the job is done and we've drained everything, close.
+            if job.status in ("done", "stopped") and cursor >= job.total_appended:
                 break
 
-            # Wait for new data
             try:
                 await asyncio.wait_for(waiter.wait(), timeout=30)
             except asyncio.TimeoutError:
-                # Send keepalive
+                # Send keepalive so intermediaries don't idle us out.
                 await response.write(b": keepalive\n\n")
-    except (ConnectionResetError, ConnectionAbortedError):
+
+        await response.write(b"data: [DONE]\n\n")
+        await response.write_eof()
+    except (ConnectionResetError, ConnectionAbortedError, ClientConnectionError, asyncio.CancelledError):
+        # Client went away — nothing to do.
         pass
     finally:
         job.remove_waiter(waiter)
 
-    await response.write(b"data: [DONE]\n\n")
-    await response.write_eof()
     return response
 
 
@@ -337,6 +395,27 @@ async def handle_data(request: web.Request) -> web.Response:
         return web.json_response({"rows": [], "error": str(e)})
 
 
+async def handle_perf_data(request: web.Request) -> web.Response:
+    """Return detailed per-context-length perf data from the perf DB."""
+    model_dir = request.query.get("model_dir", "").strip()
+    bpw = request.query.get("bpw", "").strip() or None
+    if not model_dir:
+        return web.json_response({"bpws": [], "data": {}})
+
+    try:
+        from ezexl3.perf_db import (
+            available_bpws,
+            default_perf_db_path,
+            read_perf_data,
+        )
+        perf_db = default_perf_db_path(model_dir)
+        bpws = await asyncio.to_thread(available_bpws, perf_db)
+        data = await asyncio.to_thread(read_perf_data, perf_db, bpw)
+        return web.json_response({"bpws": bpws, "data": data})
+    except Exception as e:
+        return web.json_response({"bpws": [], "data": {}, "error": str(e)})
+
+
 async def handle_graph(request: web.Request) -> web.Response:
     """Generate SVG graph from current DB state and return it."""
     model_dir = request.query.get("model_dir", "").strip()
@@ -358,7 +437,7 @@ async def handle_graph(request: web.Request) -> web.Response:
             return web.json_response({"error": "Need at least 2 completed measurements"}, status=404)
 
         # Export to temp CSV, generate SVG, return inline
-        model_name = os.path.basename(os.path.abspath(model_dir))
+        model_name = _resolve_model_name(model_dir)
         with tempfile.TemporaryDirectory() as tmp:
             csv_path = os.path.join(tmp, "data.csv")
             svg_path = os.path.join(tmp, "graph.svg")
@@ -386,6 +465,135 @@ def _bpw_key(label: str) -> float:
         return float("inf")
 
 
+def _resolve_model_name(model_dir: str) -> str:
+    """Get display name: locked MODEL from metadata, or underscore-stripped basename."""
+    meta_path = os.path.join(model_dir, ".ezexl3_readme_meta.json")
+    if os.path.exists(meta_path):
+        try:
+            meta = json.loads(Path(meta_path).read_text("utf-8"))
+            locked = meta.get("_locked") or {}
+            if locked.get("MODEL") and meta.get("MODEL", "").strip():
+                return meta["MODEL"]
+        except Exception:
+            pass
+    name = os.path.basename(os.path.abspath(model_dir))
+    if "_" in name:
+        name = name.split("_", 1)[1]
+    return name
+
+
+async def handle_perf_graph(request: web.Request) -> web.Response:
+    """Generate a perf chart SVG for the selected BPW and return it inline."""
+    model_dir = request.query.get("model_dir", "").strip()
+    bpw = request.query.get("bpw", "").strip()
+    if not model_dir or not bpw:
+        return web.json_response({"error": "model_dir and bpw required"}, status=400)
+
+    try:
+        from ezexl3.perf_db import default_perf_db_path
+        perf_db = default_perf_db_path(model_dir)
+        if not os.path.exists(perf_db):
+            return web.json_response({"error": "No perf data yet"}, status=404)
+
+        model_name = _resolve_model_name(model_dir)
+        title = f"{model_name} — {bpw} BPW"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            svg_path = os.path.join(tmp, "perf.svg")
+            from ezexl3.graph_svg import generate_perf_svg
+            await asyncio.to_thread(
+                generate_perf_svg, perf_db, bpw, svg_path, title,
+            )
+            svg_content = Path(svg_path).read_text(encoding="utf-8")
+
+        return web.Response(
+            text=svg_content,
+            content_type="image/svg+xml",
+            headers={"Cache-Control": "no-cache"},
+        )
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=404)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+_CATBENCH_NUMBERED_RE = re.compile(r"_\d+\.svg$")
+
+
+def _scan_catbench_dir(catbench_dir: str) -> list[dict]:
+    """List canonical catbench SVGs in *catbench_dir*, sorted by BPW.
+
+    Skips numbered variants ({prefix}_1.svg, …) so only one tile appears
+    per BPW. ``bf16`` sorts last. Filenames that don't match the expected
+    ``{bpw}bpw.svg`` or ``bf16.svg`` layout are ignored.
+    """
+    if not os.path.isdir(catbench_dir):
+        return []
+
+    items: list[tuple[float, dict]] = []
+    for fn in os.listdir(catbench_dir):
+        if not fn.endswith(".svg") or _CATBENCH_NUMBERED_RE.search(fn):
+            continue
+        if fn == "bf16.svg":
+            items.append((float("inf"), {"label": "BF16", "bpw": "bf16", "file": fn}))
+        elif fn.endswith("bpw.svg"):
+            try:
+                val = float(fn[:-len("bpw.svg")])
+            except ValueError:
+                continue
+            items.append((val, {"label": f"{val:.2f} bpw", "bpw": f"{val:.2f}", "file": fn}))
+
+    items.sort(key=lambda t: t[0])
+    return [item for _, item in items]
+
+
+async def handle_catbench_file(request: web.Request) -> web.Response:
+    """Serve catbench artifacts for a model dir.
+
+    Two modes (distinguished by ``file`` query param):
+
+    * ``?model_dir=X``            → JSON listing of canonical SVGs
+    * ``?model_dir=X&file=Y.svg`` → serve that SVG file inline
+
+    The file-serving branch normalizes the requested path and rejects
+    anything that escapes ``{model_dir}/catbench/``.
+    """
+    model_dir = request.query.get("model_dir", "").strip()
+    fname = request.query.get("file", "").strip()
+    if not model_dir:
+        return web.json_response({"error": "No model_dir"}, status=400)
+
+    catbench_dir = os.path.join(model_dir, "catbench")
+
+    # Listing mode
+    if not fname:
+        try:
+            items = await asyncio.to_thread(_scan_catbench_dir, catbench_dir)
+            return web.json_response({"items": items})
+        except Exception as e:
+            return web.json_response({"items": [], "error": str(e)}, status=500)
+
+    # File-serving mode — path must resolve inside catbench_dir
+    try:
+        catbench_real = Path(catbench_dir).resolve()
+        requested = (Path(catbench_dir) / fname).resolve()
+    except (OSError, ValueError):
+        return web.json_response({"error": "Invalid path"}, status=400)
+
+    try:
+        requested.relative_to(catbench_real)
+    except ValueError:
+        return web.json_response({"error": "Path escapes catbench dir"}, status=400)
+
+    if requested.suffix != ".svg" or not requested.is_file():
+        return web.json_response({"error": "Not found"}, status=404)
+
+    return web.FileResponse(
+        requested,
+        headers={"Content-Type": "image/svg+xml", "Cache-Control": "no-cache"},
+    )
+
+
 async def handle_metadata_get(request: web.Request) -> web.Response:
     """Return saved README metadata or computed defaults for a model directory."""
     model_dir = request.query.get("model_dir", "").strip()
@@ -410,35 +618,53 @@ async def handle_metadata_get(request: web.Request) -> web.Response:
 
 
 async def handle_metadata_set(request: web.Request) -> web.Response:
-    """Save README metadata to the model directory, clearing any waiting flag."""
+    """Save README metadata to the model directory, clearing any waiting flag.
+
+    Merges over any existing metadata: only keys present in the request are
+    updated, so a partial editor (e.g. the upload tab, which only shows
+    MODEL and USER) won't wipe AUTHOR/REPOLINK set elsewhere.
+    """
     data = await request.json()
     model_dir = data.get("model_dir", "").strip()
     if not model_dir:
         return web.json_response({"error": "No model_dir"}, status=400)
 
-    # Only clear _waiting when the dashboard explicitly confirms (Resume click)
+    # Reject paths that exist but aren't a directory (e.g. the user pasted
+    # /path/to/model/README.md instead of /path/to/model). makedirs below
+    # would raise FileExistsError in that case and crash the handler.
+    if os.path.exists(model_dir) and not os.path.isdir(model_dir):
+        return web.json_response(
+            {"error": f"model_dir is not a directory: {model_dir}"},
+            status=400,
+        )
+
+    # Legacy: clients used to POST _confirm=true when the user clicked a
+    # Resume button. That button was removed — the backend now auto-resumes
+    # when every field is locked — so this branch is effectively dead, but
+    # left in place so any stale client that still POSTs the flag behaves
+    # correctly.
     confirm = data.get("_confirm", False)
 
-    # Read existing state to preserve _waiting unless confirming
     meta_path = os.path.join(model_dir, ".ezexl3_readme_meta.json")
-    existing_waiting = False
-    if not confirm and os.path.exists(meta_path):
+    existing: dict = {}
+    if os.path.exists(meta_path):
         try:
             existing = json.loads(Path(meta_path).read_text("utf-8"))
-            existing_waiting = existing.get("_waiting", False)
         except Exception:
-            pass
+            existing = {}
 
-    meta = {
-        "AUTHOR": data.get("AUTHOR", ""),
-        "MODEL": data.get("MODEL", ""),
-        "REPOLINK": data.get("REPOLINK", ""),
-        "USER": data.get("USER", ""),
-        "_locked": data.get("_locked", {}),
-        "_waiting": existing_waiting if not confirm else False,
-    }
+    meta = dict(existing)
+    for key in ("AUTHOR", "MODEL", "REPOLINK", "USER"):
+        if key in data:
+            meta[key] = data[key]
 
-    meta_path = os.path.join(model_dir, ".ezexl3_readme_meta.json")
+    # Merge lock state — incoming wins, existing entries for other fields kept
+    existing_locked = existing.get("_locked") or {}
+    incoming_locked = data.get("_locked") or {}
+    meta["_locked"] = {**existing_locked, **incoming_locked}
+
+    meta["_waiting"] = False if confirm else existing.get("_waiting", False)
+
     os.makedirs(model_dir, exist_ok=True)
     Path(meta_path).write_text(json.dumps(meta, indent=2), "utf-8")
 
@@ -523,9 +749,28 @@ async def handle_config_set(request: web.Request) -> web.Response:
 @web.middleware
 async def _no_cache_static(request: web.Request, handler):
     resp = await handler(request)
+    # Do NOT touch headers on a response whose body has already started
+    # streaming (our SSE handler calls prepare() itself). Modifying headers
+    # after prepare() is undefined behavior in aiohttp.
+    if getattr(resp, "prepared", False):
+        return resp
     if "Cache-Control" not in resp.headers:
         resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+# ---------------------------------------------------------------------------
+# HuggingFace auth check
+# ---------------------------------------------------------------------------
+
+async def handle_hf_auth(request: web.Request) -> web.Response:
+    """Check if user is authenticated with HuggingFace."""
+    try:
+        from huggingface_hub import HfApi
+        info = await asyncio.to_thread(HfApi().whoami)
+        return web.json_response({"authenticated": True, "username": info.get("name", "")})
+    except Exception:
+        return web.json_response({"authenticated": False, "username": ""})
 
 
 # ---------------------------------------------------------------------------
@@ -546,13 +791,18 @@ def create_app() -> web.Application:
 
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/browse", handle_browse)
+    app.router.add_get("/api/pick_directory", handle_pick_directory)
     app.router.add_get("/api/gpus", handle_gpus)
+    app.router.add_get("/api/hf-auth", handle_hf_auth)
     app.router.add_get("/api/templates", handle_templates)
     app.router.add_post("/api/run", handle_run)
     app.router.add_get("/api/run/{job_id}/stream", handle_run_stream)
     app.router.add_post("/api/run/{job_id}/stop", handle_run_stop)
     app.router.add_get("/api/run/status", handle_run_status)
     app.router.add_get("/api/data", handle_data)
+    app.router.add_get("/api/perf-data", handle_perf_data)
+    app.router.add_get("/api/perf-graph", handle_perf_graph)
+    app.router.add_get("/api/catbench-file", handle_catbench_file)
     app.router.add_get("/api/graph", handle_graph)
     app.router.add_get("/api/metadata", handle_metadata_get)
     app.router.add_post("/api/metadata", handle_metadata_set)

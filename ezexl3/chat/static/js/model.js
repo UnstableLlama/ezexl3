@@ -65,6 +65,7 @@ async function initModelPanel(status) {
   document.getElementById('load-btn').onclick = loadModel;
   document.getElementById('unload-btn').onclick = unloadModel;
   document.getElementById('dashboard-btn').onclick = launchDashboard;
+  document.getElementById('browse-native-btn').onclick = pickDirectoryNative;
   updateDashboardButton();
   document.getElementById('browser-path-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') {
@@ -124,7 +125,7 @@ function setModelPanelUnloaded() {
   const badge = document.getElementById('model-panel-status');
   badge.textContent = 'No model';
   badge.className = 'panel-badge';
-  document.getElementById('load-btn').disabled = true;
+  updateLoadButton();  // reflect actual browse state, don't hardcode disabled
   document.getElementById('unload-btn').disabled = true;
   document.getElementById('model-loading').style.display = 'none';
   expandModelPanel();
@@ -141,6 +142,8 @@ async function browseTo(path) {
     const data = await res.json();
     if (data.error) {
       list.innerHTML = `<div class="browser-error">${escHtml(data.error)}</div>`;
+      browseIsModel = false;
+      updateLoadButton();
       return;
     }
     currentBrowsePath = data.current;
@@ -151,6 +154,8 @@ async function browseTo(path) {
     if (data.is_model) saveModelDir(data.current);
   } catch (e) {
     list.innerHTML = `<div class="browser-error">Failed to browse</div>`;
+    browseIsModel = false;
+    updateLoadButton();
   }
 }
 
@@ -193,6 +198,21 @@ function renderBrowserEntries(data) {
   } else {
     indicator.style.display = 'none';
   }
+}
+
+async function pickDirectoryNative() {
+  const initial = currentBrowsePath || '';
+  try {
+    const url = '/api/pick_directory' + (initial ? '?initial=' + encodeURIComponent(initial) : '');
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.path) {
+      await browseTo(data.path);
+      return;
+    }
+  } catch (_) {}
+  // Native dialog unavailable or cancelled — focus the path input as fallback.
+  document.getElementById('browser-path-input').focus();
 }
 
 function updateLoadButton() {
@@ -263,7 +283,8 @@ async function loadModel() {
   loadingEl.textContent = 'Loading model...';
 
   const gpuConfig = getGpuConfig();
-  const cacheSize = parseInt(document.getElementById('model-cache-size').value) || null;
+  const seqLength = parseInt(document.getElementById('model-seq-length').value) || null;
+  const cacheSize = seqLength ? seqLength * 2 : null;
   const cacheQuant = document.getElementById('model-cache-quant').value.trim() || null;
 
   try {

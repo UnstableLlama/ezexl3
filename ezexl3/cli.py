@@ -1,7 +1,7 @@
 import argparse
 import sys
 from dataclasses import dataclass
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Set
 from ezexl3 import __version__
 
 @dataclass
@@ -123,6 +123,29 @@ def _parse_layers(value: int) -> int:
         raise SystemExit("--layers must be one of: 1, 2, 3")
     return value
 
+
+def _parse_per_bpw_flag(
+    flag_val: Optional[List[str]], all_bpws: List[str]
+) -> Set[str]:
+    """Parse a per-BPW flag (like -hq or -hb8) into a set of BPW strings.
+
+    - None  → flag not provided → empty set
+    - []    → bare flag (no args) → applies to ALL BPWs
+    - ['4,6,8'] or ['4','6','8'] → specific BPWs
+    """
+    if flag_val is None:
+        return set()
+    if len(flag_val) == 0:
+        # Bare flag: normalize all_bpws to the same string form
+        return {_norm_bpw(b) for raw in all_bpws for b in raw.split(",")}
+    # Explicit BPW list: flatten comma-separated values
+    return {_norm_bpw(b) for raw in flag_val for b in raw.split(",")}
+
+
+def _norm_bpw(b: str) -> str:
+    """Normalize a BPW string for consistent comparison (strip whitespace)."""
+    return b.strip()
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="ezexl3",
@@ -151,7 +174,23 @@ def build_parser() -> argparse.ArgumentParser:
             default=None,
             help="Device ratios for quantization only. Example: -r 1,1 (optional)",
         )
-        p_sub.add_argument("-hq", action="store_true", help="Enable high-quality quantization (exllamav3 -hq)")
+        p_sub.add_argument("-hq", nargs="*", default=None,
+                           help="Enable high-quality quantization (exllamav3 -hq). "
+                                "Bare flag applies to all BPWs; with args applies to listed BPWs only. "
+                                "Example: -hq 4,6,8")
+        p_sub.add_argument("-hb8", nargs="*", default=None,
+                           help="Use 8-bit head quantization (exllamav3 -hb 8) instead of default 6. "
+                                "Bare flag applies to all BPWs; with args applies to listed BPWs only. "
+                                "Example: -hb8 6,8")
+        p_sub.add_argument("-opt", nargs="*", default=None,
+                           help="Use optimized quantization pipeline for fractional BPWs. "
+                                "Compares neighboring integer quants to find optimal mix. "
+                                "Only applies to fractional BPWs. "
+                                "Bare flag applies to all fractional BPWs; with args applies to listed only. "
+                                "Example: -opt 4.5,5.5")
+        p_sub.add_argument("-pm", action="store_true",
+                           help="Parallel modules: speeds up quantization of MoE models. "
+                                "Forwarded to exllamav3 multiConvert as -pm.")
         p_sub.add_argument("--no-cleanup", "-nc", action="store_true", help="Keep w-* working dirs and logs")
         p_sub.add_argument("--no-readme", action="store_true", help="Skip README stage")
         p_sub.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
@@ -160,10 +199,27 @@ def build_parser() -> argparse.ArgumentParser:
         p_sub.add_argument("--no-measurement", "-nm", action="store_true", help="Skip KL/PPL measurements (also disables README graph and KL/PPL table columns)")
         p_sub.add_argument("--template", "-t", help="README template name (e.g., 'fire', 'basic')")
         p_sub.add_argument("-l", "--layers", type=int, default=2, choices=[1, 2, 3], help="Layers used by optimized comparative measure stage (1-3, default: 2)")
-        p_sub.add_argument("-cb", "--catbench", type=int, default=0, nargs="?", const=3,
-                           help="Run SVG Catbench with N samples per model (default: 3 when flag present)")
         p_sub.add_argument("--no-verify", "-nv", action="store_true",
                            help="Skip per-BPW verification (batch all quants, then batch all measures)")
+        # Eval scripts (optional, a-la-carte)
+        p_sub.add_argument("--no-kl", action="store_true",
+                           help="Skip KL divergence measurement")
+        p_sub.add_argument("--no-ppl", action="store_true",
+                           help="Skip perplexity measurement")
+        p_sub.add_argument("-cb", "--catbench", type=int, default=0, nargs="?", const=3,
+                           help="Run SVG Catbench with N samples per model (default: 3 when flag present)")
+        p_sub.add_argument("-div", "--diversity", type=int, default=0, nargs="?", const=50,
+                           help="Run diversity eval with N samples (default: 50)")
+        p_sub.add_argument("-he", "--humaneval", type=int, default=0, nargs="?", const=200,
+                           help="Run HumanEval code gen eval with N samples/task (default: 200)")
+        p_sub.add_argument("-ifb", "--ifbench", type=int, default=0, nargs="?", const=16384,
+                           help="Run IFBench instruction following eval (default max_tokens: 16384)")
+        p_sub.add_argument("-lctx", "--longctx", type=int, default=0, nargs="?", const=1,
+                           help="Run long context understanding eval")
+        p_sub.add_argument("-mmlu", "--mmlu", type=int, default=0, nargs="?", const=5,
+                           help="Run MMLU knowledge benchmark with N fewshot examples (default: 5)")
+        p_sub.add_argument("-perf", "--perf", type=int, default=0, nargs="?", const=32768,
+                           help="Run inference performance benchmark (default max_length: 32768)")
 
     # --- repo (main command) ---
     repo = sub.add_parser("repo", help="Generate an EXL3 repo (quantize -> measure -> README)")
@@ -181,7 +237,19 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Template for output directory. Fields: {model}, {model_name}, {bpw}")
     q.add_argument("--w-template", default="{model}/w-{bpw}",
                    help="Template for working directory. Fields: {model}, {model_name}, {bpw}")
-    q.add_argument("-hq", action="store_true", help="Enable high-quality quantization (exllamav3 -hq)")
+    q.add_argument("-hq", nargs="*", default=None,
+                   help="Enable high-quality quantization (exllamav3 -hq). "
+                        "Bare flag applies to all BPWs; with args applies to listed BPWs only.")
+    q.add_argument("-hb8", nargs="*", default=None,
+                   help="Use 8-bit head quantization (exllamav3 -hb 8) instead of default 6. "
+                        "Bare flag applies to all BPWs; with args applies to listed BPWs only.")
+    q.add_argument("-opt", nargs="*", default=None,
+                   help="Use optimized quantization pipeline for fractional BPWs. "
+                        "Only applies to fractional BPWs. "
+                        "Bare flag applies to all fractional BPWs; with args applies to listed only.")
+    q.add_argument("-pm", action="store_true",
+                   help="Parallel modules: speeds up quantization of MoE models. "
+                        "Forwarded to exllamav3 multiConvert as -pm.")
     q.add_argument("--dry", action="store_true", help="Print what would run, but do not execute.")
     q.add_argument("--continue-on-error", action="store_true", help="Keep going after failures.")
     q.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
@@ -194,8 +262,25 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("-d", "--devices", default="0", help="CUDA devices for measurement. Example: -d 0,1")
     m.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
     m.add_argument("--no-cleanup", "-nc", action="store_true", help="Keep temporary shard CSVs and logs")
+    # Eval scripts (optional, a-la-carte)
+    m.add_argument("--no-kl", action="store_true",
+                   help="Skip KL divergence measurement")
+    m.add_argument("--no-ppl", action="store_true",
+                   help="Skip perplexity measurement")
     m.add_argument("-cb", "--catbench", type=int, default=0, nargs="?", const=3,
                    help="Run SVG Catbench with N samples per model (default: 3 when flag present)")
+    m.add_argument("-div", "--diversity", type=int, default=0, nargs="?", const=50,
+                   help="Run diversity eval with N samples (default: 50)")
+    m.add_argument("-he", "--humaneval", type=int, default=0, nargs="?", const=200,
+                   help="Run HumanEval code gen eval with N samples/task (default: 200)")
+    m.add_argument("-ifb", "--ifbench", type=int, default=0, nargs="?", const=16384,
+                   help="Run IFBench instruction following eval (default max_tokens: 16384)")
+    m.add_argument("-lctx", "--longctx", type=int, default=0, nargs="?", const=1,
+                   help="Run long context understanding eval")
+    m.add_argument("-mmlu", "--mmlu", type=int, default=0, nargs="?", const=5,
+                   help="Run MMLU knowledge benchmark with N fewshot examples (default: 5)")
+    m.add_argument("-perf", "--perf", type=int, default=0, nargs="?", const=32768,
+                   help="Run inference performance benchmark (default max_length: 32768)")
 
 
     # --- chat ---
@@ -215,10 +300,27 @@ def build_parser() -> argparse.ArgumentParser:
     # --- readme ---
     r = sub.add_parser("readme", help="README only (CSV -> README)")
     r.add_argument("-m", "--models", nargs="+", required=True, help="One or more model directories")
+    r.add_argument("-b", "--bpws", nargs="+", default=None, help="BPWs (required for single mode, auto-detected otherwise)")
+    r.add_argument("--mode", choices=["branched", "single"], default="single",
+                   help="single: per-BPW READMEs with cross-linked repos. branched: single README")
     r.add_argument("--no-prompt", "-np", action="store_true", help="Use defaults for README instead of prompting")
     r.add_argument("--no-graph", "-ng", action="store_true", help="Do not generate or embed the README SVG graph")
     r.add_argument("--no-measurement", "-nm", action="store_true", help="Remove KL/PPL columns from README and skip graph embedding")
     r.add_argument("--template", "-t", help="README template name (e.g., 'fire', 'basic')")
+
+    # --- upload ---
+    u = sub.add_parser("upload", help="Upload quantized models to HuggingFace")
+    u.add_argument("-m", "--models", nargs="+", required=True, help="One or more model directories")
+    u.add_argument("-b", "--bpws", nargs="+", required=True, help="BPWs to upload (space or comma separated)")
+    u.add_argument("--mode", choices=["branched", "single"], default="single",
+                   help="single: separate repo per BPW. branched: single repo with branches per BPW")
+    u.add_argument("--private", action="store_true", help="Create private HuggingFace repos")
+    u.add_argument("--small-only", action="store_true",
+                   help="Exclude large files (*.safetensors, *.bin, *.pt, *.ckpt)")
+    u.add_argument("--create-only", action="store_true",
+                   help="Only create repos/branches, do not upload files")
+    u.add_argument("-dr", "--dry-run", action="store_true",
+                   help="Preview the repos that would be created without contacting HuggingFace")
 
     # --- ui (dashboard) ---
     ui = sub.add_parser("ui", aliases=["dash", "dashboard"],
@@ -297,9 +399,44 @@ def main(argv: Optional[List[str]] = None) -> int:
     device_ratios_str = ",".join(device_ratios) if device_ratios else None
     layers = _parse_layers(getattr(args, "layers", 2)) if hasattr(args, "layers") else 2
 
-    # Inject -hq into quant_args when flag is set
-    if getattr(args, "hq", False) and "-hq" not in pt.quant_args:
-        pt.quant_args.append("-hq")
+    # -pm (parallel modules / MoE speedup) is forwarded as a real flag
+    # to multiConvert via the existing quant_args passthrough pipeline.
+    if getattr(args, "pm", False) and "-pm" not in pt.quant_args:
+        pt.quant_args = list(pt.quant_args) + ["-pm"]
+
+    # Build per-BPW flag sets from -hq, -hb8, and -opt
+    hq_bpws = _parse_per_bpw_flag(getattr(args, "hq", None), args.bpws)
+    hb8_bpws = _parse_per_bpw_flag(getattr(args, "hb8", None), args.bpws)
+    opt_bpws = _parse_per_bpw_flag(getattr(args, "opt", None), args.bpws)
+    # -opt only applies to fractional BPWs; silently drop any integers
+    opt_bpws = {b for b in opt_bpws if "." in b}
+
+    # When a fractional BPW is painted with -opt, the actual quantization
+    # happens on its integer neighbors (e.g. 4.5 → quantize 4 and 5, then
+    # combine). Propagate any -hq / -hb8 paints from the fractional onto
+    # those donor integers so the donors are built with the requested
+    # quality flag.
+    import math as _math
+    def _neighbors(frac: str) -> List[str]:
+        try:
+            v = float(frac)
+        except ValueError:
+            return []
+        return [str(int(_math.floor(v))), str(int(_math.ceil(v)))]
+    for frac in opt_bpws:
+        nbrs = _neighbors(frac)
+        if frac in hq_bpws:
+            hq_bpws.update(nbrs)
+        if frac in hb8_bpws:
+            hb8_bpws.update(nbrs)
+
+    # Collect enabled eval flags into a dict: {name: arg_value}
+    _EVAL_FLAG_NAMES = ["diversity", "humaneval", "ifbench", "longctx", "mmlu", "perf"]
+    enabled_evals = {}
+    for name in _EVAL_FLAG_NAMES:
+        val = getattr(args, name, 0) or 0
+        if val:
+            enabled_evals[name] = val
 
     if cmd == "repo":
         # Process each model, continuing on error
@@ -330,6 +467,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                     optimized_measure_layers=layers,
                     catbench_n=getattr(args, "catbench", 0) or 0,
                     verify=(not args.no_verify),
+                    evals=enabled_evals or None,
+                    skip_kl=getattr(args, "no_kl", False),
+                    skip_ppl=getattr(args, "no_ppl", False),
+                    hq_bpws=hq_bpws,
+                    hb8_bpws=hb8_bpws,
+                    opt_bpws=opt_bpws,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
@@ -349,7 +492,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if cmd in ("quant", "quantize"):
         from ezexl3.repo import _plan_repo_bpws, _run_optimized_opt_stage
 
-        bpw_plan = _plan_repo_bpws(args.bpws)
+        bpw_plan = _plan_repo_bpws(args.bpws, opt_bpws=opt_bpws)
         quant_bpws = bpw_plan["quant_integer_queue"]
         optimized_bpws = bpw_plan["requested_optimizeds"]
 
@@ -358,10 +501,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             print("The optimized quantization stage requires outputs at {model}/{bpw}.")
             return 1
 
-        auto_added = [b for b in quant_bpws if b not in bpw_plan["requested_integers"]]
+        all_requested = set(bpw_plan["requested_integers"] + bpw_plan.get("requested_optimizeds", []))
+        # Also exclude standard fractional BPWs (in quant queue but explicitly requested)
+        all_requested.update(b for raw in args.bpws for b in raw.split(",") if b.strip())
+        auto_added = [b for b in quant_bpws if b not in all_requested]
         if auto_added:
             print(
-                "ℹ️ Added required integer quants for optimized targets: "
+                "ℹ️ Added required integer quants for -opt targets: "
                 + ", ".join(auto_added)
             )
 
@@ -380,6 +526,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     dry_run=args.dry,
                     continue_on_error=args.continue_on_error,
                     optimized_measure_layers=layers,
+                    hq_bpws=hq_bpws,
+                    hb8_bpws=hb8_bpws,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
@@ -399,6 +547,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1 if failed_models else 0
 
     if cmd == "measure":
+        # Gate graph generation on MODEL-lock only when we have a UI to
+        # unblock us. Standalone CLI (stdin is a TTY) has no dashboard to
+        # lock the field, so we skip the wait and use the auto-detected
+        # name. The dashboard spawns measure with stdin piped/closed, so
+        # isatty() is False there and the gate runs as expected.
+        prompt_for_model = not sys.stdin.isatty()
         failed_models: List[str] = []
         for model_dir in args.models:
             print(f"\nMeasuring model: {model_dir}")
@@ -410,6 +564,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                     write_logs=(not args.no_logs),
                     measure_args=pt.measure_args,
                     catbench_n=getattr(args, "catbench", 0) or 0,
+                    evals=enabled_evals or None,
+                    skip_kl=getattr(args, "no_kl", False),
+                    skip_ppl=getattr(args, "no_ppl", False),
+                    prompt_for_model_name=prompt_for_model,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
@@ -419,16 +577,52 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1 if failed_models else 0
 
     if cmd == "readme":
-        from ezexl3.readme import run_readme
+        from ezexl3.readme import run_readme, run_readme_single
+        readme_bpws = args.bpws if hasattr(args, "bpws") and args.bpws else None
+        readme_mode = getattr(args, "mode", "branched")
         for model_dir in args.models:
-            run_readme(
-                model_dir,
-                template_name=args.template,
-                interactive=(not args.no_prompt),
-                include_graph=(not args.no_graph and not args.no_measurement),
-                include_measurements=(not args.no_measurement),
-            )
+            if readme_mode == "single":
+                run_readme_single(
+                    model_dir,
+                    bpws=readme_bpws,
+                    template_name=args.template,
+                    interactive=(not args.no_prompt),
+                    include_graph=(not args.no_graph and not args.no_measurement),
+                    include_measurements=(not args.no_measurement),
+                )
+            else:
+                run_readme(
+                    model_dir,
+                    template_name=args.template,
+                    interactive=(not args.no_prompt),
+                    include_graph=(not args.no_graph and not args.no_measurement),
+                    include_measurements=(not args.no_measurement),
+                    bpws_hint=readme_bpws,
+                )
         return 0
+
+    if cmd == "upload":
+        from ezexl3.upload import run_upload
+        failed_models: List[str] = []
+        for model_dir in args.models:
+            try:
+                rc = run_upload(
+                    model_dir=model_dir,
+                    bpws=args.bpws,
+                    mode=args.mode,
+                    private=args.private,
+                    small_only=args.small_only,
+                    create_only=args.create_only,
+                    dry_run=args.dry_run,
+                )
+                if rc != 0:
+                    failed_models.append(model_dir)
+            except Exception as e:
+                print(f"Error uploading {model_dir}: {e}")
+                import traceback
+                traceback.print_exc()
+                failed_models.append(model_dir)
+        return 1 if failed_models else 0
 
     print(f"Command '{args.cmd}' not implemented yet.")
     return 1

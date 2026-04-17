@@ -30,7 +30,10 @@
     </div>
     <div id="model-panel-body" class="section-body">
       <label class="sb-label">Model Directory</label>
-      <input type="text" id="browser-path-input" placeholder="Type a path and press Enter">
+      <div class="path-input-wrap">
+        <input type="text" id="browser-path-input" placeholder="Type a path and press Enter">
+        <button id="browse-native-btn" class="sb-btn browse-btn" type="button">Browse</button>
+      </div>
       <div id="browser-list"></div>
       <div id="browser-model-indicator" class="model-indicator" style="display:none"></div>
 
@@ -44,8 +47,8 @@
 
       <div class="model-config-row">
         <div class="model-config-field">
-          <label class="sb-label">Cache Size</label>
-          <input type="number" id="model-cache-size" value="32768" step="256">
+          <label class="sb-label">Sequence Length</label>
+          <input type="number" id="model-seq-length" value="32768" step="256" title="Max context length. Cache is allocated at 2x this value for generation headroom.">
         </div>
         <div class="model-config-field">
           <label class="sb-label">Cache Quant</label>
