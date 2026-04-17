@@ -273,7 +273,7 @@ async function streamJob(jobId) {
             }
           }
         } catch (e) {
-          // Skip malformed events
+          console.warn("SSE: malformed event payload", { payload, error: e });
         }
       }
     }
@@ -303,7 +303,7 @@ async function stopJob() {
     terminalStatus().textContent = "Stopped";
     terminalStatus().className = "terminal-status error";
   } catch (e) {
-    // ignore
+    console.warn("stopJob: stop request failed", { jobId: activeJobId, error: e });
   }
   if (abortController) {
     abortController.abort();
