@@ -8,7 +8,10 @@ from ezexl3.catbench import (
     _safetensors_size_gib,
     extract_svg,
     _run_matplotlib_code,
+    build_prompt_and_stops,
+    CATBENCH_PROMPT,
 )
+from ezexl3.chat.templates import infer_mode, infer_mode_from_path
 from ezexl3.readme import _build_catbench_grid, run_readme
 from ezexl3.repo import _catbench_file_prefix
 
@@ -211,6 +214,106 @@ class ReadmeCatbenchIntegrationTests(unittest.TestCase):
 
             readme = (model_dir / "README.md").read_text()
             self.assertNotIn("SVG Catbench", readme)
+
+
+class InferModeTests(unittest.TestCase):
+    def test_qwen35(self):
+        self.assertEqual(infer_mode("Qwen3.5-32B-Instruct"), "qwen35")
+        self.assertEqual(infer_mode("qwen3-5-7b"), "qwen35")
+
+    def test_qwen36_maps_to_qwen35(self):
+        # qwen3.6 uses the same reasoning-aware ChatML as qwen3.5
+        self.assertEqual(infer_mode("Qwen3.6-27B"), "qwen35")
+
+    def test_qwen36_dash_not_conflated_with_qwen35(self):
+        # "qwen3-6" is a different family; must not map to qwen35
+        self.assertNotEqual(infer_mode("qwen3-6-some-model"), "qwen35")
+
+    def test_gemma4_before_gemma(self):
+        self.assertEqual(infer_mode("gemma4-9b"), "gemma4")
+        self.assertEqual(infer_mode("gemma-2-9b"), "gemma")
+
+    def test_unknown_falls_back_to_chatml(self):
+        self.assertEqual(infer_mode("some-random-model-name"), "chatml")
+
+    def test_infer_from_path_bpw_subfolder(self):
+        # A BPW subfolder basename doesn't match hints, so we fall back
+        # to the parent directory's name.
+        path = "/models/Qwen3.6-27B-exl3/2.50bpw"
+        self.assertEqual(infer_mode_from_path(path), "qwen35")
+
+    def test_infer_from_path_base_dir(self):
+        path = "/models/Qwen3.6-27B-exl3"
+        self.assertEqual(infer_mode_from_path(path), "qwen35")
+
+
+class BuildPromptAndStopsTests(unittest.TestCase):
+    """Verify the catbench prompt gets wrapped in the chat template and
+    that stop conditions pick up the template's turn-boundary tokens."""
+
+    def _fake_qwen_tokenizer(self):
+        """Minimal tokenizer stub that records the text it was asked to
+        encode and reports <|im_end|> as a single-token id."""
+        tok = MagicMock()
+        tok.eos_token_id = 151643
+
+        def _encode(text, add_bos=False, encode_special_tokens=False):
+            tok.last_encoded = text
+            tok.last_add_bos = add_bos
+            tok.last_encode_special = encode_special_tokens
+            out = MagicMock()
+            out.shape = (1, len(text.split()))
+            return out
+
+        def _single_id(token):
+            return {"<|im_end|>": 151645}.get(token)
+
+        tok.encode.side_effect = _encode
+        tok.single_id.side_effect = _single_id
+        return tok
+
+    def _fake_config(self):
+        cfg = MagicMock()
+        cfg.eos_token_id_list = [151643, 151645]
+        return cfg
+
+    def test_qwen35_wraps_prompt_in_chatml_frame(self):
+        tok = self._fake_qwen_tokenizer()
+        cfg = self._fake_config()
+        _ids, stops, mode = build_prompt_and_stops("qwen35", tok, cfg)
+
+        self.assertEqual(mode, "qwen35")
+        # Prompt was framed as ChatML
+        self.assertIn("<|im_start|>user", tok.last_encoded)
+        self.assertIn(CATBENCH_PROMPT, tok.last_encoded)
+        self.assertIn("<|im_end|>", tok.last_encoded)
+        self.assertIn("<|im_start|>assistant", tok.last_encoded)
+        # qwen35 template emits the "no-think" preamble when think=False
+        self.assertIn("<think>", tok.last_encoded)
+        self.assertIn("</think>", tok.last_encoded)
+        # encode was called with encode_special_tokens=True
+        self.assertTrue(tok.last_encode_special)
+        # qwen35 doesn't prepend BOS
+        self.assertFalse(tok.last_add_bos)
+
+    def test_qwen35_stop_conditions_include_im_end(self):
+        tok = self._fake_qwen_tokenizer()
+        cfg = self._fake_config()
+        _ids, stops, _ = build_prompt_and_stops("qwen35", tok, cfg)
+        # Must include the <|im_end|> single-token id (151645), the literal
+        # string fallback, and the EOS id.
+        self.assertIn(151645, stops)
+        self.assertIn("<|im_end|>", stops)
+        self.assertIn(151643, stops)
+
+    def test_unknown_mode_falls_back_to_chatml(self):
+        tok = self._fake_qwen_tokenizer()
+        cfg = self._fake_config()
+        _ids, _stops, mode = build_prompt_and_stops("not-a-real-mode", tok, cfg)
+        # Resolved mode string is returned as-passed, but the frame must
+        # still be valid ChatML (the fallback path).
+        self.assertEqual(mode, "not-a-real-mode")
+        self.assertIn("<|im_start|>user", tok.last_encoded)
 
 
 if __name__ == "__main__":

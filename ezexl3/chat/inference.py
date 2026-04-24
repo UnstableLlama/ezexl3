@@ -15,7 +15,7 @@ from typing import AsyncGenerator, List, Optional
 
 import torch
 
-from .templates import prompt_formats
+from .templates import prompt_formats, infer_mode
 
 
 # ---------------------------------------------------------------------------
@@ -220,38 +220,7 @@ class ChatEngine:
 
     def _auto_detect_mode(self):
         """Try to pick a sensible default prompt format from model config."""
-        name_lower = self.model_name.lower()
-        # Simple heuristic matching
-        # Order matters: more-specific patterns must come before generic ones
-        # (e.g. "gemma4" before "gemma", "qwen3.5" before "qwen").
-        mode_hints = [
-            ("gemma4", "gemma4"),
-            ("gemma-4", "gemma4"),
-            ("gemma", "gemma"),
-            ("qwen3.5", "qwen35"),
-            ("qwen3-5", "qwen35"),
-            ("qwen", "chatml"),
-            ("llama", "llama3"),
-            ("phi", "phi"),
-            ("mistral", "mistral3"),
-            ("glm", "glm"),
-            ("cohere", "cohere"),
-            ("command", "commanda"),
-            ("exaone", "exaone"),
-            ("reka", "reka"),
-            ("dots", "dots"),
-            ("ernie", "ernie"),
-            ("smollm", "smollm3"),
-            ("seed", "seed"),
-            ("apertus", "apertus"),
-            ("minimax", "minimax"),
-        ]
-        for hint, mode in mode_hints:
-            if hint in name_lower:
-                self.settings.mode = mode
-                break
-        else:
-            self.settings.mode = "chatml"  # safe default
+        self.settings.mode = infer_mode(self.model_name)
 
         # Set default system prompt from the format
         pf_cls = prompt_formats.get(self.settings.mode, prompt_formats["chatml"])

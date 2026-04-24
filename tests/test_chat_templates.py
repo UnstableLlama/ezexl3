@@ -71,40 +71,28 @@ class TestAutoDetectCoverage(unittest.TestCase):
 
     def test_every_format_key_reachable_from_heuristic_or_explicit(self):
         """Every key in prompt_formats should be either:
-        - directly reachable from the auto-detect heuristic in inference.py, OR
+        - directly reachable from the auto-detect heuristic in templates.py, OR
         - 'raw' (intentionally not auto-detected).
 
-        This catches formats added to templates.py but forgotten in inference.py.
+        This catches formats added to prompt_formats but forgotten in _MODE_HINTS.
         """
-        import os
-        inference_path = os.path.join(
-            os.path.dirname(__file__), "..", "ezexl3", "chat", "inference.py",
-        )
-        with open(inference_path) as f:
-            full_source = f.read()
+        from ezexl3.chat.templates import _MODE_HINTS
 
-        # Extract just the _auto_detect_mode method body.
-        start = full_source.find("def _auto_detect_mode(")
-        assert start != -1, "Could not find _auto_detect_mode in inference.py"
-        # Find the next def at the same indentation level to bound the method.
-        next_def = full_source.find("\n    def ", start + 1)
-        source = full_source[start:next_def] if next_def != -1 else full_source[start:]
-
-        reachable_modes = set()
-        # Match both dict-style and tuple-style hint entries
-        for m in re.finditer(r'["\'](\w+)["\']', source):
-            reachable_modes.add(m.group(1))
-        # Also include the fallback
+        reachable_modes = {mode for _hint, mode in _MODE_HINTS}
+        # Also include the fallback used when no hint matches
         reachable_modes.add("chatml")
 
-        # Formats that are intentionally not auto-detected
-        exempt = {"raw"}
+        # Formats that are intentionally not auto-detected:
+        #   - "raw": model-agnostic chatlog simulator
+        #   - "mistral": legacy v1/v2 [INST] format, superseded by "mistral3";
+        #     the "mistral" hint string routes to mistral3 for all modern models.
+        exempt = {"raw", "mistral"}
 
         missing = set(prompt_formats.keys()) - reachable_modes - exempt
         self.assertEqual(
             missing, set(),
             f"Format keys registered in prompt_formats but unreachable from "
-            f"auto-detect heuristic (add to inference.py mode_hints): {missing}",
+            f"the auto-detect heuristic (add to _MODE_HINTS in templates.py): {missing}",
         )
 
 
