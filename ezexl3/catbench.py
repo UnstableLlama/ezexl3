@@ -13,6 +13,36 @@ import time
 CATBENCH_PROMPT = "Write a python script that draws a cute kitten using matplotlib."
 DEFAULT_MAX_NEW_TOKENS = 4096
 
+
+def build_prompt_and_stops(mode: str, tokenizer, config, user_name: str = "User", bot_name: str = "Assistant"):
+    """Frame CATBENCH_PROMPT in the given chat template and collect stop conditions.
+
+    Returns (input_ids, stop_conditions, resolved_mode).
+    """
+    from ezexl3.chat.templates import prompt_formats
+
+    pf_cls = prompt_formats.get(mode, prompt_formats["chatml"])
+    pf = pf_cls(user_name, bot_name)
+    system_prompt = pf.default_system_prompt(False)
+    frm_context = pf.format(system_prompt, [(CATBENCH_PROMPT, None)], False)
+
+    input_ids = tokenizer.encode(
+        frm_context,
+        add_bos=pf.add_bos(),
+        encode_special_tokens=True,
+    )
+
+    stops = [sc for sc in pf.stop_conditions(tokenizer) if sc is not None]
+    if getattr(config, "eos_token_id_list", None):
+        for s in config.eos_token_id_list:
+            if s is not None and s not in stops:
+                stops.append(s)
+    tok_eos = getattr(tokenizer, "eos_token_id", None)
+    if tok_eos is not None and tok_eos not in stops:
+        stops.append(tok_eos)
+
+    return input_ids, stops, mode
+
 # ---------------------------------------------------------------------------
 # VRAM pre-flight
 # ---------------------------------------------------------------------------
@@ -220,17 +250,15 @@ def run_catbench(args) -> list:
 
     print("CATBENCH_MODEL_LOADED", flush=True)
 
-    # Build prompt - use simple format since we just need code generation
-    prompt = CATBENCH_PROMPT
-    input_ids = tokenizer.encode(prompt, add_bos=True)
+    # Resolve prompt-format mode (explicit --mode wins, else infer from path).
+    from ezexl3.chat.templates import infer_mode_from_path
 
-    # Get stop conditions from config
-    stop_conditions = []
-    if hasattr(config, "eos_token_id_list") and config.eos_token_id_list:
-        stop_conditions = [s for s in config.eos_token_id_list if s]
-    if hasattr(tokenizer, "eos_token_id") and tokenizer.eos_token_id:
-        if tokenizer.eos_token_id not in stop_conditions:
-            stop_conditions.append(tokenizer.eos_token_id)
+    mode = getattr(args, "mode", None) or infer_mode_from_path(args.model_dir)
+    print(f" -- Prompt format: {mode}", flush=True)
+
+    input_ids, stop_conditions, _ = build_prompt_and_stops(
+        mode, tokenizer, config,
+    )
 
     print(f" -- Cache: {cache.max_num_tokens} tokens", flush=True)
     print(f" -- Stop conditions: {stop_conditions}", flush=True)
@@ -348,5 +376,7 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--output_dir", type=str, required=True, help="Output directory for SVGs")
     parser.add_argument("-l", "--label", type=str, required=True, help="BPW label for file naming")
     parser.add_argument("-maxr", "--max_new_tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS, help="Max tokens per response")
+    parser.add_argument("-pf", "--mode", type=str, default=None,
+                        help="Chat prompt format (e.g. qwen35, chatml, gemma4). Auto-detected from model dir if omitted.")
     _args = parser.parse_args()
     run_catbench(_args)

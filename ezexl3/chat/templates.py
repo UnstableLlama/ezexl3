@@ -771,3 +771,63 @@ prompt_formats = {
     "minimax": PromptFormat_minimax,
     "qwen35": PromptFormat_qwen35,
 }
+
+
+# Order matters: more-specific patterns must come before generic ones
+# (e.g. "gemma4" before "gemma", "qwen3.6"/"qwen3.5" before "qwen").
+_MODE_HINTS = [
+    ("gemma4", "gemma4"),
+    ("gemma-4", "gemma4"),
+    ("gemma", "gemma"),
+    ("qwen3.6", "qwen35"),
+    ("qwen3.5", "qwen35"),
+    ("qwen3-5", "qwen35"),
+    ("qwen", "chatml"),
+    ("llama", "llama3"),
+    ("phi", "phi"),
+    ("mistral", "mistral3"),
+    ("glm", "glm"),
+    ("cohere", "cohere"),
+    ("command", "commanda"),
+    ("exaone", "exaone"),
+    ("reka", "reka"),
+    ("dots", "dots"),
+    ("ernie", "ernie"),
+    ("smollm", "smollm3"),
+    ("seed", "seed"),
+    ("apertus", "apertus"),
+    ("minimax", "minimax"),
+]
+
+
+def infer_mode(name: str) -> str:
+    """Pick a prompt-format mode name from a model name / folder string.
+
+    Falls back to ``"chatml"`` for anything not matched.
+    """
+    lower = name.lower()
+    for hint, mode in _MODE_HINTS:
+        if hint in lower:
+            return mode
+    return "chatml"
+
+
+def infer_mode_from_path(path: str) -> str:
+    """Infer prompt-format mode from a model directory path.
+
+    Tries ``basename(path)`` first, then ``basename(dirname(path))`` so
+    quant-output subfolders like ``.../Qwen3.6-27B-exl3/2.50bpw`` still
+    resolve to the parent's mode.
+    """
+    import os as _os
+
+    abs_path = _os.path.abspath(path)
+    for name in (_os.path.basename(abs_path),
+                 _os.path.basename(_os.path.dirname(abs_path))):
+        if not name:
+            continue
+        lower = name.lower()
+        for hint, mode in _MODE_HINTS:
+            if hint in lower:
+                return mode
+    return "chatml"
