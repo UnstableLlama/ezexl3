@@ -261,9 +261,15 @@ def run_readme(
     include_measurements: bool = True,
     bpws_hint: Optional[List[str]] = None,
     include_catbench: bool = False,
+    write_per_bpw: bool = True,
 ) -> None:
     """
     Generate README.md for the model repository based on measurement CSV and template.
+
+    When ``write_per_bpw`` is True (the default), the same README is also
+    overwritten into each BPW subdirectory after the root copy is written.
+    ``run_readme_single`` passes ``False`` because it writes its own
+    rewritten per-BPW READMEs in a follow-up pass.
     """
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
     templates_dir = os.path.join(pkg_dir, "templates")
@@ -469,6 +475,24 @@ def run_readme(
         f.write(template)
 
     print(f"✅ Generated {readme_path}")
+
+    if write_per_bpw:
+        # Mirror the root README into every BPW subdirectory so the per-repo
+        # uploads always carry the latest README. Single-mode rewrites these
+        # again afterward; branched-mode just keeps these copies as-is.
+        copied = 0
+        for bpw_dir_name in _discover_bpws(model_dir):
+            bpw_dir = os.path.join(model_dir, bpw_dir_name)
+            try:
+                os.makedirs(bpw_dir, exist_ok=True)
+                with open(os.path.join(bpw_dir, "README.md"), "w") as f:
+                    f.write(template)
+                copied += 1
+            except OSError as e:
+                print(f"⚠️  Could not write {bpw_dir_name}/README.md: {e}")
+        if copied:
+            print(f"✅ Mirrored README into {copied} BPW subdirector{'y' if copied == 1 else 'ies'}")
+
     # Signal to dashboard: README write finished. The frontend unfreezes
     # the metadata lock buttons so the user can edit them again.
     print("<<EZEXL3:README_DONE>>")
@@ -528,7 +552,9 @@ def run_readme_single(
             print("🔴 No BPWs specified and none auto-detected in model directory.")
             return
 
-    # Generate the standard branched README first as a base
+    # Generate the standard branched README first as a base. Skip the
+    # auto per-BPW mirror — we rewrite each BPW's README below with
+    # single-mode link / title / download tweaks.
     run_readme(
         model_dir,
         template_name=template_name,
@@ -537,6 +563,7 @@ def run_readme_single(
         include_measurements=include_measurements,
         bpws_hint=bpws,
         include_catbench=include_catbench,
+        write_per_bpw=False,
     )
 
     base_readme = os.path.join(model_dir, "README.md")

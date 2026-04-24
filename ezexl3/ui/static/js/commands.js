@@ -94,6 +94,7 @@ const COMMANDS = {
       { name: "no_prompt", flag: "-np", type: "boolean", label: "Headless", help: "Use defaults for metadata" },
       { name: "no_graph", flag: "-ng", type: "boolean", label: "No Graph" },
       { name: "no_measurement", flag: "-nm", type: "boolean", label: "No Measurement", help: "Remove KL/PPL columns" },
+      { name: "catbench", flag: "-cb", type: "boolean", label: "Catbench", help: "Include the SVG Catbench grid in the README" },
     ],
   },
 
