@@ -307,6 +307,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--no-graph", "-ng", action="store_true", help="Do not generate or embed the README SVG graph")
     r.add_argument("--no-measurement", "-nm", action="store_true", help="Remove KL/PPL columns from README and skip graph embedding")
     r.add_argument("--template", "-t", help="README template name (e.g., 'fire', 'basic')")
+    r.add_argument("-cb", "--catbench", action="store_true",
+                   help="Include the SVG Catbench grid in the README (requires catbench/ to exist)")
 
     # --- upload ---
     u = sub.add_parser("upload", help="Upload quantized models to HuggingFace")
@@ -580,6 +582,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         from ezexl3.readme import run_readme, run_readme_single
         readme_bpws = args.bpws if hasattr(args, "bpws") and args.bpws else None
         readme_mode = getattr(args, "mode", "branched")
+        include_catbench = bool(getattr(args, "catbench", False))
         for model_dir in args.models:
             if readme_mode == "single":
                 run_readme_single(
@@ -589,6 +592,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     interactive=(not args.no_prompt),
                     include_graph=(not args.no_graph and not args.no_measurement),
                     include_measurements=(not args.no_measurement),
+                    include_catbench=include_catbench,
                 )
             else:
                 run_readme(
@@ -598,6 +602,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     include_graph=(not args.no_graph and not args.no_measurement),
                     include_measurements=(not args.no_measurement),
                     bpws_hint=readme_bpws,
+                    include_catbench=include_catbench,
                 )
         return 0
 

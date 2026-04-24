@@ -164,6 +164,17 @@ class CLICatbenchArgTests(unittest.TestCase):
         args = parser.parse_args(["measure", "-m", "/tmp/model", "-b", "2", "-cb"])
         self.assertEqual(args.catbench, 3)
 
+    def test_catbench_on_readme_subcommand(self):
+        from ezexl3.cli import build_parser
+        parser = build_parser()
+
+        # -cb on the readme command is a plain boolean (no sample count).
+        args = parser.parse_args(["readme", "-m", "/tmp/model"])
+        self.assertFalse(args.catbench)
+
+        args = parser.parse_args(["readme", "-m", "/tmp/model", "-cb"])
+        self.assertTrue(args.catbench)
+
 
 class ReadmeCatbenchIntegrationTests(unittest.TestCase):
     def test_readme_includes_catbench_section(self):
