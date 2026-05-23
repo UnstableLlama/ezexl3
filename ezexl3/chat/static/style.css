@@ -74,6 +74,8 @@ body { display: flex; overflow: hidden; }
 }
 .sb-textarea:focus, #sidebar input:focus { border-color: var(--accent); }
 .sb-textarea { resize: vertical; min-height: 60px; line-height: 1.4; }
+.sb-textarea.mono { font-family: var(--mono); font-size: 12px; }
+.sb-hint { font-size: 11px; color: var(--text-dim); line-height: 1.35; }
 #sidebar select {
   background: var(--bg-surface); border: 1px solid var(--border);
   border-radius: var(--radius-sm); padding: 6px 8px;
