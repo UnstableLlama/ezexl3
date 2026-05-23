@@ -251,11 +251,35 @@ async def handle_model_load(request: web.Request) -> web.Response:
             {"ok": False, "error": "No config.json found — not a valid model directory"},
             status=400,
         )
+    lora_dirs = data.get("lora_dirs") or []
+    if not isinstance(lora_dirs, list):
+        return web.json_response(
+            {"ok": False, "error": "lora_dirs must be a list of directories"},
+            status=400,
+        )
+    for lora_dir in lora_dirs:
+        if not isinstance(lora_dir, str) or not lora_dir.strip():
+            return web.json_response(
+                {"ok": False, "error": "Each LoRA directory must be a non-empty string"},
+                status=400,
+            )
+        lp = Path(lora_dir)
+        if not lp.is_dir():
+            return web.json_response(
+                {"ok": False, "error": f"LoRA directory not found: {lora_dir}"},
+                status=400,
+            )
+        if not (lp / "adapter_config.json").is_file():
+            return web.json_response(
+                {"ok": False, "error": f"LoRA adapter_config.json missing: {lora_dir}"},
+                status=400,
+            )
 
     try:
         await asyncio.to_thread(
             engine.load_model,
             model_dir=model_dir,
+            lora_dirs=lora_dirs,
             devices=data.get("devices"),
             device_ratios=data.get("device_ratios"),
             cache_size=data.get("cache_size"),

@@ -37,9 +37,13 @@ function populateUI(status) {
 
   // Model info
   if (status.loaded) {
+    const loraInfo = status.lora_count
+      ? `LoRAs: ${status.lora_count}<br>`
+      : '';
     document.getElementById('model-info').innerHTML =
       `<strong>${status.model_name}</strong><br>` +
       `Context: ${(status.context_length || 0).toLocaleString()} tokens<br>` +
+      loraInfo +
       `${status.model_dir || ''}`;
   } else {
     document.getElementById('model-info').innerHTML = '<em>No model loaded</em>';

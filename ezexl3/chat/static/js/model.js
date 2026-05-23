@@ -5,6 +5,14 @@ let currentBrowsePath = '';
 let browseIsModel = false;
 let gpuData = [];
 
+function parseLoraDirs() {
+  const raw = (document.getElementById('lora-dirs-input')?.value || '');
+  return raw
+    .split('\n')
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
 function updateDashboardButton() {
   const btn = document.getElementById('dashboard-btn');
   if (!btn) return;
@@ -293,6 +301,7 @@ async function loadModel() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model_dir: currentBrowsePath,
+        lora_dirs: parseLoraDirs(),
         devices: gpuConfig.devices,
         device_ratios: gpuConfig.device_ratios,
         cache_size: cacheSize,

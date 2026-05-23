@@ -115,6 +115,8 @@ class ChatEngine:
         self.cache = None
         self.tokenizer = None
         self.generator = None
+        self.loras: list = []
+        self.lora_dirs: list[str] = []
         self.context_length: int = 0
         self.model_name: str = os.path.basename(self.model_dir) if self.model_dir else ""
 
@@ -159,6 +161,7 @@ class ChatEngine:
             tokenizer=self.tokenizer,
             max_chunk_size=4096,
         )
+        self._load_loras()
 
         # Set default mode/system prompt based on model
         self._auto_detect_mode()
@@ -171,6 +174,8 @@ class ChatEngine:
         if self._is_generating:
             self.cancel()
         self.generator = None
+        self.loras = []
+        self.lora_dirs = []
         self.model = None
         self.cache = None
         self.tokenizer = None
@@ -187,6 +192,7 @@ class ChatEngine:
     def load_model(
         self,
         model_dir: str,
+        lora_dirs: list[str] | None = None,
         devices: list[int] | None = None,
         device_ratios: str | None = None,
         cache_size: int | None = None,
@@ -197,12 +203,26 @@ class ChatEngine:
             self.unload()
         self.model_dir = os.path.abspath(model_dir)
         self.model_name = os.path.basename(self.model_dir)
+        self.lora_dirs = [os.path.abspath(p) for p in (lora_dirs or [])]
         self._devices = devices or []
         self._device_ratios = device_ratios
         self._cache_size = cache_size or self.DEFAULT_CACHE_SIZE
         self._cache_quant = cache_quant or self.DEFAULT_CACHE_QUANT
         self.settings = ChatSettings()
         self.load()
+
+    def _load_loras(self):
+        if not self.lora_dirs:
+            return
+        try:
+            from exllamav3.model.lora import LoRA  # type: ignore
+        except Exception as e:
+            raise RuntimeError(
+                "LoRA support is unavailable in this exllamav3 install"
+            ) from e
+        self.loras = []
+        for lora_dir in self.lora_dirs:
+            self.loras.append(LoRA.from_directory(self.model, lora_dir))
 
     @staticmethod
     def detect_gpus() -> list[dict]:
@@ -451,6 +471,8 @@ class ChatEngine:
             "model_dir": self.model_dir or "",
             "context_length": self.context_length,
             "context_turns": len(self.context),
+            "lora_dirs": getattr(self, "lora_dirs", []),
+            "lora_count": len(getattr(self, "loras", [])),
             "available_modes": {
                 k: v.description for k, v in prompt_formats.items()
             },
