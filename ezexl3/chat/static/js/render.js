@@ -219,6 +219,10 @@ function renderActiveTree() {
       if (ctx) parts.push(ctx + cached);
       parts.push(`${t.new_tokens} gen · ${t.tps} t/s · ${t.elapsed}s`);
       if (t.prefill_tps) parts.push(`prefill ${t.prefill_tps} t/s`);
+      if (t.draft_accepted != null) {
+        const rate = Math.round(t.draft_acceptance_rate * 100);
+        parts.push(`draft ${rate}% (${t.draft_accepted}/${t.draft_accepted + t.draft_rejected})`);
+      }
       const tpsEl = document.createElement('div');
       tpsEl.className = 'msg-tps';
       tpsEl.textContent = parts.join(' · ');

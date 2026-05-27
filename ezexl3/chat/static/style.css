@@ -370,6 +370,42 @@ body { display: flex; overflow: hidden; }
   font-size: 10px; color: #f59e0b; margin-left: 6px;
 }
 
+/* ── Draft Model Panel ───────────────────────────────────────── */
+#draft-panel {
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+#draft-panel .section-header { cursor: pointer; }
+#draft-panel input[type="text"] {
+  font-family: var(--mono); font-size: 12px;
+}
+.draft-info {
+  font-size: 12px; font-family: var(--mono);
+  color: #4ade80; padding: 4px 0;
+}
+.draft-actions {
+  display: flex; gap: 8px; margin-top: 4px;
+}
+.draft-actions .sb-btn { flex: 1; text-align: center; }
+.draft-load-btn {
+  background: var(--accent) !important; color: #fff !important;
+  border-color: var(--accent) !important;
+}
+.draft-load-btn:hover {
+  background: var(--accent-hover) !important;
+}
+.draft-load-btn:disabled {
+  background: var(--bg-surface) !important;
+  color: var(--text-dim) !important;
+  border-color: var(--border) !important;
+  cursor: default;
+}
+.draft-status {
+  font-size: 12px; color: var(--text-dim); padding: 4px 0;
+}
+
 /* ── Messages ──────────────────────────────────────────────────── */
 .msg {
   display: grid;

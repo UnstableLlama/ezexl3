@@ -302,6 +302,7 @@ async function loadModel() {
       body: JSON.stringify({
         model_dir: currentBrowsePath,
         lora_dirs: parseLoraDirs(),
+        draft_model_dir: (document.getElementById('draft-model-dir-input')?.value || '').trim() || null,
         devices: gpuConfig.devices,
         device_ratios: gpuConfig.device_ratios,
         cache_size: cacheSize,
@@ -319,6 +320,8 @@ async function loadModel() {
       updateDashboardButton();
       showLoraPanel(true);
       syncLoraState(data.status);
+      showDraftPanel(true);
+      syncDraftState(data.status);
     } else {
       loadingEl.textContent = 'Error: ' + (data.error || 'Unknown error');
       loadBtn.disabled = !browseIsModel;
@@ -348,6 +351,7 @@ async function unloadModel() {
   updateChatEnabled();
   updateDashboardButton();
   showLoraPanel(false);
+  showDraftPanel(false);
   document.getElementById('header-model').textContent = '';
   document.getElementById('model-info').innerHTML = '<em>No model loaded</em>';
   await browseTo(currentBrowsePath || '');

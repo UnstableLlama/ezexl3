@@ -62,6 +62,8 @@ def create_app(engine: ChatEngine) -> web.Application:
     app.router.add_post("/api/model/load", handle_model_load)
     app.router.add_post("/api/model/unload", handle_model_unload)
     app.router.add_post("/api/loras/apply", handle_loras_apply)
+    app.router.add_post("/api/draft/load", handle_draft_load)
+    app.router.add_post("/api/draft/unload", handle_draft_unload)
     app.router.add_post("/api/ui/launch", handle_ui_launch)
     app.router.add_get("/api/config", handle_config_get)
     app.router.add_post("/api/config", handle_config_set)
@@ -278,12 +280,27 @@ async def handle_model_load(request: web.Request) -> web.Response:
 
     lora_weights = data.get("lora_weights") or [1.0] * len(lora_dirs)
 
+    draft_model_dir = (data.get("draft_model_dir") or "").strip() or None
+    if draft_model_dir:
+        dp = Path(draft_model_dir)
+        if not dp.is_dir():
+            return web.json_response(
+                {"ok": False, "error": f"Draft model directory not found: {draft_model_dir}"},
+                status=400,
+            )
+        if not (dp / "config.json").is_file():
+            return web.json_response(
+                {"ok": False, "error": "Draft model config.json missing — not a valid model directory"},
+                status=400,
+            )
+
     try:
         await asyncio.to_thread(
             engine.load_model,
             model_dir=model_dir,
             lora_dirs=lora_dirs,
             lora_weights=lora_weights,
+            draft_model_dir=draft_model_dir,
             devices=data.get("devices"),
             device_ratios=data.get("device_ratios"),
             cache_size=data.get("cache_size"),
@@ -353,6 +370,69 @@ async def handle_loras_apply(request: web.Request) -> web.Response:
             )
     try:
         await asyncio.to_thread(engine.update_loras, lora_configs)
+        return web.json_response({
+            "ok": True,
+            "status": engine.get_status(),
+        })
+    except Exception as e:
+        return web.json_response(
+            {"ok": False, "error": str(e)}, status=500,
+        )
+
+
+async def handle_draft_load(request: web.Request) -> web.Response:
+    engine: ChatEngine = request.app[_KEY_ENGINE]
+    if not engine.is_loaded:
+        return web.json_response(
+            {"ok": False, "error": "No model loaded"}, status=400,
+        )
+    if engine.is_generating:
+        return web.json_response(
+            {"ok": False, "error": "Cannot load draft model while generating"},
+            status=409,
+        )
+    data = await request.json()
+    draft_dir = (data.get("draft_model_dir") or "").strip()
+    if not draft_dir:
+        return web.json_response(
+            {"ok": False, "error": "draft_model_dir is required"}, status=400,
+        )
+    dp = Path(draft_dir)
+    if not dp.is_dir():
+        return web.json_response(
+            {"ok": False, "error": f"Draft model directory not found: {draft_dir}"},
+            status=400,
+        )
+    if not (dp / "config.json").is_file():
+        return web.json_response(
+            {"ok": False, "error": "Draft model config.json missing — not a valid model directory"},
+            status=400,
+        )
+    try:
+        await asyncio.to_thread(engine.load_draft, draft_dir)
+        return web.json_response({
+            "ok": True,
+            "status": engine.get_status(),
+        })
+    except Exception as e:
+        return web.json_response(
+            {"ok": False, "error": str(e)}, status=500,
+        )
+
+
+async def handle_draft_unload(request: web.Request) -> web.Response:
+    engine: ChatEngine = request.app[_KEY_ENGINE]
+    if not engine.is_loaded:
+        return web.json_response(
+            {"ok": False, "error": "No model loaded"}, status=400,
+        )
+    if engine.is_generating:
+        return web.json_response(
+            {"ok": False, "error": "Cannot unload draft model while generating"},
+            status=409,
+        )
+    try:
+        await asyncio.to_thread(engine.unload_draft)
         return web.json_response({
             "ok": True,
             "status": engine.get_status(),
