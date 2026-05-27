@@ -317,6 +317,8 @@ async function loadModel() {
       setModelPanelLoaded(data.status.model_name);
       updateChatEnabled();
       updateDashboardButton();
+      showLoraPanel(true);
+      syncLoraState(data.status);
     } else {
       loadingEl.textContent = 'Error: ' + (data.error || 'Unknown error');
       loadBtn.disabled = !browseIsModel;
@@ -345,6 +347,7 @@ async function unloadModel() {
   setModelPanelUnloaded();
   updateChatEnabled();
   updateDashboardButton();
+  showLoraPanel(false);
   document.getElementById('header-model').textContent = '';
   document.getElementById('model-info').innerHTML = '<em>No model loaded</em>';
   await browseTo(currentBrowsePath || '');

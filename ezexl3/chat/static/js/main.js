@@ -14,11 +14,17 @@
 
     // Always init model panel (handles both loaded and unloaded states)
     await initModelPanel(status);
+    initLoraPanel();
 
     // Always populate UI — initializes sliders, toggles, mode dropdown,
     // and model info regardless of whether a model is loaded yet.
     populateUI(status);
     updateChatEnabled();
+
+    if (status.loaded) {
+      showLoraPanel(true);
+      syncLoraState(status);
+    }
   } catch (err) {
     console.error('Chat init failed:', err);
     document.getElementById('empty-hint').textContent =

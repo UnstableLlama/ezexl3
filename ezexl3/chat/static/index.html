@@ -67,6 +67,27 @@
     </div>
   </div>
 
+  <!-- LoRA Management Panel (visible when model loaded) -->
+  <div id="lora-panel" style="display:none">
+    <div id="lora-panel-toggle" class="section-header">
+      <span>LoRA Adapters</span>
+      <span id="lora-panel-badge" class="panel-badge">0 active</span>
+      <span class="chevron">&#9660;</span>
+    </div>
+    <div id="lora-panel-body" class="section-body">
+      <div id="lora-list"></div>
+      <div class="lora-add-row">
+        <input type="text" id="lora-add-input" class="mono" placeholder="/path/to/lora/adapter">
+        <button id="lora-add-btn" class="sb-btn" type="button">+ Add</button>
+      </div>
+      <div class="sb-hint">Each LoRA dir must contain <code>adapter_config.json</code>. Use the weight slider to control strength (0% = inactive).</div>
+      <div class="lora-actions">
+        <button id="lora-apply-btn" class="sb-btn lora-apply-btn">Apply LoRAs</button>
+      </div>
+      <div id="lora-status" class="lora-status" style="display:none"></div>
+    </div>
+  </div>
+
   <h2>Settings</h2>
 
   <div class="sb-section">
@@ -210,6 +231,7 @@
 <script src="js/tree.js"></script>
 <script src="js/render.js"></script>
 <script src="js/settings.js"></script>
+<script src="js/lora.js"></script>
 <script src="js/model.js"></script>
 <script src="js/chat.js"></script>
 <script src="js/session.js"></script>

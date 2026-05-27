@@ -61,6 +61,7 @@ def create_app(engine: ChatEngine) -> web.Application:
     app.router.add_get("/api/pick_directory", handle_pick_directory)
     app.router.add_post("/api/model/load", handle_model_load)
     app.router.add_post("/api/model/unload", handle_model_unload)
+    app.router.add_post("/api/loras/apply", handle_loras_apply)
     app.router.add_post("/api/ui/launch", handle_ui_launch)
     app.router.add_get("/api/config", handle_config_get)
     app.router.add_post("/api/config", handle_config_set)
@@ -275,11 +276,14 @@ async def handle_model_load(request: web.Request) -> web.Response:
                 status=400,
             )
 
+    lora_weights = data.get("lora_weights") or [1.0] * len(lora_dirs)
+
     try:
         await asyncio.to_thread(
             engine.load_model,
             model_dir=model_dir,
             lora_dirs=lora_dirs,
+            lora_weights=lora_weights,
             devices=data.get("devices"),
             device_ratios=data.get("device_ratios"),
             cache_size=data.get("cache_size"),
@@ -300,6 +304,63 @@ async def handle_model_unload(request: web.Request) -> web.Response:
     engine: ChatEngine = request.app[_KEY_ENGINE]
     engine.unload()
     return web.json_response({"ok": True})
+
+
+async def handle_loras_apply(request: web.Request) -> web.Response:
+    engine: ChatEngine = request.app[_KEY_ENGINE]
+    if not engine.is_loaded:
+        return web.json_response(
+            {"ok": False, "error": "No model loaded"}, status=400,
+        )
+    if engine.is_generating:
+        return web.json_response(
+            {"ok": False, "error": "Cannot update LoRAs while generating"},
+            status=409,
+        )
+    data = await request.json()
+    lora_configs = data.get("loras", [])
+    if not isinstance(lora_configs, list):
+        return web.json_response(
+            {"ok": False, "error": "loras must be a list"}, status=400,
+        )
+    for cfg in lora_configs:
+        if not isinstance(cfg, dict):
+            return web.json_response(
+                {"ok": False, "error": "Each LoRA must be an object"},
+                status=400,
+            )
+        d = cfg.get("dir", "")
+        if not isinstance(d, str) or not d.strip():
+            return web.json_response(
+                {"ok": False, "error": "Each LoRA must have a non-empty 'dir'"},
+                status=400,
+            )
+        lp = Path(d)
+        if not lp.is_dir():
+            return web.json_response(
+                {"ok": False, "error": f"LoRA directory not found: {d}"},
+                status=400,
+            )
+        if not (lp / "adapter_config.json").is_file():
+            return web.json_response(
+                {"ok": False, "error": f"LoRA adapter_config.json missing: {d}"},
+                status=400,
+            )
+        w = cfg.get("weight", 1.0)
+        if not isinstance(w, (int, float)):
+            return web.json_response(
+                {"ok": False, "error": f"Invalid weight for {d}"}, status=400,
+            )
+    try:
+        await asyncio.to_thread(engine.update_loras, lora_configs)
+        return web.json_response({
+            "ok": True,
+            "status": engine.get_status(),
+        })
+    except Exception as e:
+        return web.json_response(
+            {"ok": False, "error": str(e)}, status=500,
+        )
 
 
 async def handle_ui_launch(request: web.Request) -> web.Response:
