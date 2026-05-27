@@ -40,10 +40,14 @@ function populateUI(status) {
     const loraInfo = status.lora_count
       ? `LoRAs: ${status.lora_count}<br>`
       : '';
+    const draftInfo = status.draft_model_loaded
+      ? `Draft: ${status.draft_model_name}<br>`
+      : '';
     document.getElementById('model-info').innerHTML =
       `<strong>${status.model_name}</strong><br>` +
       `Context: ${(status.context_length || 0).toLocaleString()} tokens<br>` +
       loraInfo +
+      draftInfo +
       `${status.model_dir || ''}`;
   } else {
     document.getElementById('model-info').innerHTML = '<em>No model loaded</em>';

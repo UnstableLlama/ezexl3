@@ -53,6 +53,33 @@ def _import_job():
         return Job
 
 
+def _import_config():
+    try:
+        from exllamav3 import Config  # type: ignore
+        return Config
+    except ImportError:
+        from exllamav3.model import Config  # type: ignore
+        return Config
+
+
+def _import_model():
+    try:
+        from exllamav3 import Model  # type: ignore
+        return Model
+    except ImportError:
+        from exllamav3.model import Model  # type: ignore
+        return Model
+
+
+def _import_cache():
+    try:
+        from exllamav3 import Cache  # type: ignore
+        return Cache
+    except ImportError:
+        from exllamav3.cache import Cache  # type: ignore
+        return Cache
+
+
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
@@ -118,6 +145,11 @@ class ChatEngine:
         self.loras: list = []
         self.lora_dirs: list[str] = []
         self.lora_weights: list[float] = []
+        self.draft_model = None
+        self.draft_cache = None
+        self.draft_config = None
+        self.draft_model_dir: str | None = None
+        self.draft_model_name: str = ""
         self.context_length: int = 0
         self.model_name: str = os.path.basename(self.model_dir) if self.model_dir else ""
 
@@ -137,7 +169,6 @@ class ChatEngine:
 
     def load(self):
         """Load model synchronously (called at startup)."""
-        Generator = _import_generator()
         model_init = _import_model_init()
 
         # Set visible devices before model_init touches CUDA
@@ -156,19 +187,33 @@ class ChatEngine:
         torch.set_grad_enabled(False)
         self.model, self.config, self.cache, self.tokenizer = model_init.init(args)
         self.context_length = self.cache.max_num_tokens
-        self.generator = Generator(
-            model=self.model,
-            cache=self.cache,
-            tokenizer=self.tokenizer,
-            max_chunk_size=4096,
-        )
+
+        if self.draft_model_dir:
+            self._load_draft_model()
+
+        self._create_generator()
         self._load_loras()
 
         # Set default mode/system prompt based on model
         self._auto_detect_mode()
         print(f"  Model loaded: {self.model_name}")
         print(f"  Context length: {self.context_length:,} tokens")
+        if self.draft_model:
+            print(f"  Draft model: {self.draft_model_name}")
         print(f"  Prompt mode: {self.settings.mode}")
+
+    def _create_generator(self):
+        Generator = _import_generator()
+        kwargs = dict(
+            model=self.model,
+            cache=self.cache,
+            tokenizer=self.tokenizer,
+            max_chunk_size=4096,
+        )
+        if self.draft_model is not None:
+            kwargs["draft_model"] = self.draft_model
+            kwargs["draft_cache"] = self.draft_cache
+        self.generator = Generator(**kwargs)
 
     def unload(self):
         """Unload the current model, freeing GPU memory."""
@@ -178,6 +223,11 @@ class ChatEngine:
         self.loras = []
         self.lora_dirs = []
         self.lora_weights = []
+        self.draft_model = None
+        self.draft_cache = None
+        self.draft_config = None
+        self.draft_model_dir = None
+        self.draft_model_name = ""
         self.model = None
         self.cache = None
         self.tokenizer = None
@@ -196,6 +246,7 @@ class ChatEngine:
         model_dir: str,
         lora_dirs: list[str] | None = None,
         lora_weights: list[float] | None = None,
+        draft_model_dir: str | None = None,
         devices: list[int] | None = None,
         device_ratios: str | None = None,
         cache_size: int | None = None,
@@ -208,6 +259,9 @@ class ChatEngine:
         self.model_name = os.path.basename(self.model_dir)
         self.lora_dirs = [os.path.abspath(p) for p in (lora_dirs or [])]
         self.lora_weights = list(lora_weights or [1.0] * len(self.lora_dirs))
+        if draft_model_dir:
+            self.draft_model_dir = os.path.abspath(draft_model_dir)
+            self.draft_model_name = os.path.basename(self.draft_model_dir)
         self._devices = devices or []
         self._device_ratios = device_ratios
         self._cache_size = cache_size or self.DEFAULT_CACHE_SIZE
@@ -272,6 +326,59 @@ class ChatEngine:
 
         active = sum(1 for l in self.loras if l is not None)
         print(f"  LoRAs updated: {active} active / {len(self.loras)} total")
+
+    def _load_draft_model(self):
+        Config = _import_config()
+        Model = _import_model()
+        Cache = _import_cache()
+
+        self.draft_config = Config.from_directory(self.draft_model_dir)
+        self.draft_model = Model.from_config(self.draft_config)
+        self.draft_cache = Cache(
+            self.draft_model,
+            max_num_tokens=self.cache.max_num_tokens,
+        )
+        self.draft_model.load()
+
+    def _unload_draft_model(self):
+        self.draft_model = None
+        self.draft_cache = None
+        self.draft_config = None
+        self.draft_model_dir = None
+        self.draft_model_name = ""
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def load_draft(self, draft_model_dir: str):
+        """Load a draft model onto an already-loaded model."""
+        if not self.is_loaded:
+            raise RuntimeError("No model loaded")
+        if self._is_generating:
+            raise RuntimeError("Cannot load draft model while generating")
+
+        if self.draft_model is not None:
+            self.unload_draft()
+
+        self.draft_model_dir = os.path.abspath(draft_model_dir)
+        self.draft_model_name = os.path.basename(self.draft_model_dir)
+        self._load_draft_model()
+        self._create_generator()
+        print(f"  Draft model loaded: {self.draft_model_name}")
+
+    def unload_draft(self):
+        """Unload the current draft model without touching the main model."""
+        if not self.is_loaded:
+            raise RuntimeError("No model loaded")
+        if self._is_generating:
+            raise RuntimeError("Cannot unload draft model while generating")
+        if self.draft_model is None:
+            return
+
+        self._unload_draft_model()
+        self._create_generator()
+        print("  Draft model unloaded")
 
     @staticmethod
     def detect_gpus() -> list[dict]:
@@ -459,7 +566,7 @@ class ChatEngine:
                 else 0
             )
 
-            yield {
+            tps_data = {
                 "type": "tps",
                 "new_tokens": new_tokens,
                 "prompt_tokens": prompt_tokens,
@@ -468,6 +575,14 @@ class ChatEngine:
                 "prefill_tps": round(prefill_tps, 2),
                 "elapsed": round(elapsed, 2),
             }
+            if r and r.get("accepted_draft_tokens", 0) > 0:
+                accepted = r["accepted_draft_tokens"]
+                rejected = r.get("rejected_draft_tokens", 0)
+                total = accepted + rejected
+                tps_data["draft_accepted"] = accepted
+                tps_data["draft_rejected"] = rejected
+                tps_data["draft_acceptance_rate"] = round(accepted / total, 3) if total > 0 else 0
+            yield tps_data
 
             yield {"type": "done", "eos_reason": eos_reason}
 
@@ -525,6 +640,9 @@ class ChatEngine:
             "lora_count": sum(
                 1 for l in getattr(self, "loras", []) if l is not None
             ),
+            "draft_model_dir": self.draft_model_dir or "",
+            "draft_model_name": self.draft_model_name,
+            "draft_model_loaded": self.draft_model is not None,
             "available_modes": {
                 k: v.description for k, v in prompt_formats.items()
             },

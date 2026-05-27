@@ -40,6 +40,10 @@
       <textarea id="lora-dirs-input" class="sb-textarea mono" rows="2" placeholder="/path/to/lora1&#10;/path/to/lora2"></textarea>
       <div class="sb-hint">One directory per line. Each should contain <code>adapter_config.json</code>.</div>
 
+      <label class="sb-label" style="margin-top:8px">Draft Model Dir (optional)</label>
+      <input type="text" id="draft-model-dir-input" class="mono" placeholder="/path/to/dflash-model">
+      <div class="sb-hint">DFlash draft model for speculative decoding.</div>
+
       <label class="sb-label" style="margin-top:12px">GPU</label>
       <label class="gpu-auto-label">
         <input type="checkbox" id="auto-gpu" checked> Auto (all GPUs)
@@ -85,6 +89,26 @@
         <button id="lora-apply-btn" class="sb-btn lora-apply-btn">Apply LoRAs</button>
       </div>
       <div id="lora-status" class="lora-status" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- Draft Model Panel (visible when model loaded) -->
+  <div id="draft-panel" style="display:none">
+    <div id="draft-panel-toggle" class="section-header">
+      <span>Draft Model</span>
+      <span id="draft-panel-badge" class="panel-badge">none</span>
+      <span class="chevron">&#9660;</span>
+    </div>
+    <div id="draft-panel-body" class="section-body">
+      <label class="sb-label">Draft Model Directory</label>
+      <input type="text" id="draft-dir-input" class="mono" placeholder="/path/to/dflash-model">
+      <div class="sb-hint">DFlash draft model for speculative decoding. Must contain <code>config.json</code>.</div>
+      <div id="draft-info" class="draft-info" style="display:none"></div>
+      <div class="draft-actions">
+        <button id="draft-load-btn" class="sb-btn draft-load-btn">Load</button>
+        <button id="draft-unload-btn" class="sb-btn danger" disabled>Unload</button>
+      </div>
+      <div id="draft-status" class="draft-status" style="display:none"></div>
     </div>
   </div>
 
@@ -226,12 +250,13 @@
 <!-- Hidden file input for session load -->
 <input type="file" id="file-input" accept=".json" style="display:none">
 
-<!-- ── Scripts (order matters: state → tree → render → settings → model → chat → session → main) ── -->
+<!-- ── Scripts (order matters: state → tree → render → settings → lora → draft → model → chat → session → main) ── -->
 <script src="js/state.js"></script>
 <script src="js/tree.js"></script>
 <script src="js/render.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/lora.js"></script>
+<script src="js/draft.js"></script>
 <script src="js/model.js"></script>
 <script src="js/chat.js"></script>
 <script src="js/session.js"></script>
