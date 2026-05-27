@@ -117,6 +117,7 @@ class ChatEngine:
         self.generator = None
         self.loras: list = []
         self.lora_dirs: list[str] = []
+        self.lora_weights: list[float] = []
         self.context_length: int = 0
         self.model_name: str = os.path.basename(self.model_dir) if self.model_dir else ""
 
@@ -176,6 +177,7 @@ class ChatEngine:
         self.generator = None
         self.loras = []
         self.lora_dirs = []
+        self.lora_weights = []
         self.model = None
         self.cache = None
         self.tokenizer = None
@@ -193,6 +195,7 @@ class ChatEngine:
         self,
         model_dir: str,
         lora_dirs: list[str] | None = None,
+        lora_weights: list[float] | None = None,
         devices: list[int] | None = None,
         device_ratios: str | None = None,
         cache_size: int | None = None,
@@ -204,6 +207,7 @@ class ChatEngine:
         self.model_dir = os.path.abspath(model_dir)
         self.model_name = os.path.basename(self.model_dir)
         self.lora_dirs = [os.path.abspath(p) for p in (lora_dirs or [])]
+        self.lora_weights = list(lora_weights or [1.0] * len(self.lora_dirs))
         self._devices = devices or []
         self._device_ratios = device_ratios
         self._cache_size = cache_size or self.DEFAULT_CACHE_SIZE
@@ -221,8 +225,53 @@ class ChatEngine:
                 "LoRA support is unavailable in this exllamav3 install"
             ) from e
         self.loras = []
-        for lora_dir in self.lora_dirs:
-            self.loras.append(LoRA.from_directory(self.model, lora_dir))
+        for i, lora_dir in enumerate(self.lora_dirs):
+            weight = self.lora_weights[i] if i < len(self.lora_weights) else 1.0
+            if weight <= 0:
+                self.loras.append(None)
+                continue
+            self.loras.append(
+                LoRA.from_directory(self.model, lora_dir, lora_scaling=weight)
+            )
+
+    def update_loras(
+        self,
+        lora_configs: list[dict],
+    ):
+        """
+        Dynamically update LoRAs on a loaded model without reloading.
+
+        Each entry: {"dir": "/path/to/lora", "weight": 0.5}
+        Weight of 0 means inactive. Requires model to be loaded.
+        """
+        if not self.is_loaded:
+            raise RuntimeError("No model loaded")
+        if self._is_generating:
+            raise RuntimeError("Cannot update LoRAs while generating")
+
+        from exllamav3.model.lora import LoRA  # type: ignore
+
+        for lora in self.loras:
+            if lora is not None:
+                lora.unload()
+        self.loras = []
+        self.lora_dirs = []
+        self.lora_weights = []
+
+        for cfg in lora_configs:
+            d = os.path.abspath(cfg["dir"])
+            w = float(cfg.get("weight", 1.0))
+            self.lora_dirs.append(d)
+            self.lora_weights.append(w)
+            if w <= 0:
+                self.loras.append(None)
+                continue
+            self.loras.append(
+                LoRA.from_directory(self.model, d, lora_scaling=w)
+            )
+
+        active = sum(1 for l in self.loras if l is not None)
+        print(f"  LoRAs updated: {active} active / {len(self.loras)} total")
 
     @staticmethod
     def detect_gpus() -> list[dict]:
@@ -472,7 +521,10 @@ class ChatEngine:
             "context_length": self.context_length,
             "context_turns": len(self.context),
             "lora_dirs": getattr(self, "lora_dirs", []),
-            "lora_count": len(getattr(self, "loras", [])),
+            "lora_weights": getattr(self, "lora_weights", []),
+            "lora_count": sum(
+                1 for l in getattr(self, "loras", []) if l is not None
+            ),
             "available_modes": {
                 k: v.description for k, v in prompt_formats.items()
             },
