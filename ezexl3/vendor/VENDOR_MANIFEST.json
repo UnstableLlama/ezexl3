@@ -22,5 +22,13 @@
   "eval_perf.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/perf.py",
     "sha256": "ffa7bbbc49692feaf75f6d0a37b3bde2f79f1d0accf1582d4db4d9f242288110"
+  },
+  "model_diff.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/model_diff.py",
+    "sha256": "eab86dae921597d4cd3ecb9b9d3cf4fc2a3716b9c7a2a591a623b5c9d9b58ba2"
+  },
+  "ppl.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/ppl.py",
+    "sha256": "3ef5bbaab7943f9b10113b163d2040cda6393d34c5bb73f764b7a119b3699a0c"
   }
 }
