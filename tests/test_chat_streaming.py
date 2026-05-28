@@ -128,6 +128,14 @@ def make_test_engine():
     engine.context = []
     engine._current_job = None
     engine._is_generating = False
+    engine.loras = []
+    engine.lora_dirs = []
+    engine.lora_weights = []
+    engine.draft_model = None
+    engine.draft_cache = None
+    engine.draft_config = None
+    engine.draft_model_dir = None
+    engine.draft_model_name = ""
     return engine
 
 
@@ -460,6 +468,14 @@ class TestNoModelStartup(AioHTTPTestCase):
         self.engine.context = []
         self.engine._current_job = None
         self.engine._is_generating = False
+        self.engine.loras = []
+        self.engine.lora_dirs = []
+        self.engine.lora_weights = []
+        self.engine.draft_model = None
+        self.engine.draft_cache = None
+        self.engine.draft_config = None
+        self.engine.draft_model_dir = None
+        self.engine.draft_model_name = ""
         return create_app(self.engine)
 
     async def test_status_shows_not_loaded(self):
@@ -542,6 +558,14 @@ class TestBrowseEndpoint(AioHTTPTestCase):
         self.engine.context = []
         self.engine._current_job = None
         self.engine._is_generating = False
+        self.engine.loras = []
+        self.engine.lora_dirs = []
+        self.engine.lora_weights = []
+        self.engine.draft_model = None
+        self.engine.draft_cache = None
+        self.engine.draft_config = None
+        self.engine.draft_model_dir = None
+        self.engine.draft_model_name = ""
         return create_app(self.engine)
 
     async def test_browse_default_path(self):

@@ -134,6 +134,9 @@ def run_cmd_capture(cmd: List[str]) -> str:
     """Run a command, stream stdout live, and also capture full output."""
     env = os.environ.copy()
     env["PYTHONSAFEPATH"] = "1"
+    # Set before the child interpreter imports torch; the vendored model_diff.py
+    # is byte-identical to upstream and no longer sets this itself.
+    env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
     assert proc.stdout is not None
     out_lines: List[str] = []

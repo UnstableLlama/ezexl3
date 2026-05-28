@@ -1,26 +1,34 @@
 {
   "eval_diversity.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/diversity.py",
-    "sha256": "fb6c78692a27b9135b8e54772cd5693a2a2045fe06efeb38b078493f5ea1e155"
+    "sha256": "180ca8e39dc90a3c8f9ffe5453b8680eaae678522fa78c7f40b88fc0a1389144"
   },
   "eval_humaneval.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/humaneval.py",
-    "sha256": "8472469d53f36922eafa6d648b6a33cfb4123bb52f3937c0526b2f8f93474a71"
+    "sha256": "78c705361ff92fd615363cf347c6f3d253eaa70fc024fde94909da703cb7af9d"
   },
   "eval_ifbench.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/ifbench.py",
-    "sha256": "2259c518d7caa06b2ca669ea0a7999d3c1f16cdfba5fcc8323776bb0c53c2a74"
+    "sha256": "b1b9f4356e880c88bc3d77179353783948e9a39bee5f21f0256b22c2a1e957d6"
   },
   "eval_longctx.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/longctx.py",
-    "sha256": "5ab6b102a88b540381cea3a91a7474de45b8b208425a09f4e5983084f36140bc"
+    "sha256": "1ede93538e4e0f4f4fb9b87a5400d6bd763e63011a1c22fef098d323f2a972ee"
   },
   "eval_mmlu.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/mmlu.py",
-    "sha256": "9a23b16062451d82aae243bc5c3d3409eea19985105f24664770bfbd275dd81b"
+    "sha256": "71ce602a144b5d82e2367a4920db5c0668dc629776d3be417d9615ec2509b568"
   },
   "eval_perf.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/perf.py",
-    "sha256": "ffa7bbbc49692feaf75f6d0a37b3bde2f79f1d0accf1582d4db4d9f242288110"
+    "sha256": "c14c30b5fd9b29da2546c922a8d6726364e062ed00fd7e6f607ba4f13edfb052"
+  },
+  "model_diff.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/model_diff.py",
+    "sha256": "eab86dae921597d4cd3ecb9b9d3cf4fc2a3716b9c7a2a591a623b5c9d9b58ba2"
+  },
+  "ppl.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/ppl.py",
+    "sha256": "3ef5bbaab7943f9b10113b163d2040cda6393d34c5bb73f764b7a119b3699a0c"
   }
 }

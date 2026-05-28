@@ -31,7 +31,10 @@ def _measure_prefill_with_heartbeat(args, model, cache, warmup=False):
     """
     chunk_size = args.chunk_size
     lengths = eval_perf.get_lengths(chunk_size if warmup else args.max_length)
+    if args.short_prefill:
+        lengths = list(range(lengths[0])) + lengths
 
+    is_recurrent = model.caps.get("recurrent_states", False)
     progress = 0
     results: dict[int, float] = {}
     max_progress = sum(lengths)
@@ -48,6 +51,7 @@ def _measure_prefill_with_heartbeat(args, model, cache, warmup=False):
                     (i, min(i + chunk_size, end))
                     for i in range(start, end, chunk_size)
                 ]
+                recurrent = [cache.get_test_state(start)] if is_recurrent else None
                 if not warmup:
                     sys.stdout.write(
                         f"PERF_HEARTBEAT prefill length={length} chunk=0/{len(chunks)}\n"
@@ -60,19 +64,9 @@ def _measure_prefill_with_heartbeat(args, model, cache, warmup=False):
                         "cache": cache,
                         "past_len": cstart,
                         "batch_shape": (1, max(length, 256)),
+                        "recurrent_states": recurrent,
                     }
-                    if "recurrent_states" in model.caps and cstart > 0:
-                        for v in eval_perf.faux_recurrent_states.values():
-                            v.position = cstart
-                        params.update({
-                            "recurrent_states": eval_perf.faux_recurrent_states
-                        })
                     model.prefill(eval_perf.cached_ids(cend - cstart), params)
-                    if (
-                        "recurrent_states" in params
-                        and eval_perf.faux_recurrent_states is None
-                    ):
-                        eval_perf.faux_recurrent_states = params["recurrent_states"]
                     if not warmup and ci + 1 < len(chunks):
                         elapsed = time.monotonic() - _t0
                         tokens = cend
@@ -84,6 +78,8 @@ def _measure_prefill_with_heartbeat(args, model, cache, warmup=False):
                         )
                         sys.stdout.flush()
                 eval_perf.cuda_sync_active()
+                if is_recurrent:
+                    recurrent[0].free()
 
             results[length] = length / (pre_time + t.interval)
             if not warmup:
@@ -107,12 +103,14 @@ def _measure_generate_with_heartbeat(args, model, cache, warmup=False):
     # Upstream shrinks past_len by 256 and pads batch_shape by 256 so the
     # 100-iteration forward past past_len fits in a cache sized at max_length.
     lengths = [0] + eval_perf.get_lengths(chunk_size if warmup else args.max_length - 256)
+    is_recurrent = model.caps.get("recurrent_states", False)
     progress = 0
     results: dict[int, float] = {}
     max_progress = len(lengths)
     hb_interval = 1.0
     with eval_perf.ProgressBar("Warmup" if warmup else "Generate", max_progress) as pb:
         for length in lengths:
+            recurrent = [cache.get_test_state(length)] if is_recurrent else None
             torch.cuda.synchronize()
             last_hb = 0.0
             if not warmup:
@@ -127,15 +125,10 @@ def _measure_generate_with_heartbeat(args, model, cache, warmup=False):
                     params = {
                         "attn_mode": "flash_attn",
                         "cache": cache,
-                        "past_len": length,
+                        "past_len": length + i,
                         "batch_shape": (1, max(length + 256, 256)),
+                        "recurrent_states": recurrent,
                     }
-                    if "recurrent_states" in model.caps and length > 0:
-                        for v in eval_perf.faux_recurrent_states.values():
-                            v.position = length
-                        params.update({
-                            "recurrent_states": eval_perf.faux_recurrent_states
-                        })
                     logits = model.forward(eval_perf.cached_ids(1), params)
                     sample = torch.argmax(logits)
                     sample = sample.cpu()  # force sync
@@ -152,6 +145,8 @@ def _measure_generate_with_heartbeat(args, model, cache, warmup=False):
                             )
                             sys.stdout.flush()
                             last_hb = now
+            if is_recurrent:
+                recurrent[0].free()
             results[length] = 100 / t.interval
             if not warmup:
                 print(
@@ -171,7 +166,11 @@ def main() -> None:
     eval_perf.measure_generate = _measure_generate_with_heartbeat
 
     parser = argparse.ArgumentParser()
-    eval_perf.model_init.add_args(parser, default_cache_size=32768)
+    eval_perf.model_init.add_args(
+        parser,
+        default_cache_size=32768,
+        default_autosplit_max_batch_size=1,
+    )
     parser.add_argument(
         "-max_length", "--max_length", type=int,
         help="Max context length to measure (default: 32768)", default=32768,
@@ -179,6 +178,18 @@ def main() -> None:
     parser.add_argument(
         "-chunk_size", "--chunk_size", type=int,
         help="Max chunk size (default: 4096)", default=4096,
+    )
+    parser.add_argument(
+        "-spf", "--skip_prefill", action="store_true",
+        help="Skip measuring prefill speed",
+    )
+    parser.add_argument(
+        "-swu", "--skip_warmup", action="store_true",
+        help="Skip warmup passes",
+    )
+    parser.add_argument(
+        "-short", "--short_prefill", action="store_true",
+        help="Test short-prefill/batch throughput",
     )
     args = parser.parse_args()
     eval_perf.main(args)

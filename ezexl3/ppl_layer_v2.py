@@ -1,9 +1,8 @@
-# ppl_layer.py - Integrated from Turboderp/exllamav3
+# ppl_layer_v2.py - Single-model layerwise PPL, derived from Turboderp/exllamav3
 # Source: https://github.com/turboderp-org/exllamav3/blob/master/eval/model_diff.py
-# Modified for integration into ezexl3
-
-# Measures PPL at high token count by running each layer sequentially.
-# Default 100 rows of 2048 tokens = 204.8k tokens.
+# Rebuilt for ezexl3: single model, PPL only, mirroring current upstream loop
+# mechanics (per-module stc.close + free_mem) and the compute_target_log_probs
+# helper. CLI and "Perplexity:" output match ppl_layer.py for A/B comparison.
 
 import sys, os
 # Must be set before importing torch — otherwise the CUDA allocator is
@@ -14,24 +13,25 @@ import argparse
 import math
 import torch
 
+
 def get_test_tokens(tokenizer, rows, eval_len=2048, eval_stride=2048):
     from datasets import load_dataset
     from exllamav3.util.progress import ProgressBar
-    
+
     print(" -- Tokenizing dataset...")
     dataset_text = "\n\n".join(
         load_dataset("wikitext", "wikitext-2-raw-v1", split="test")["text"]
     )
-    
+
     eval_tokens = tokenizer.encode(dataset_text)
     if not torch.is_tensor(eval_tokens):
         eval_tokens = torch.tensor(eval_tokens)
     if len(eval_tokens.shape) == 1:
         eval_tokens = eval_tokens.unsqueeze(0)
-    
+
     num_tokens = eval_tokens.shape[-1]
     seqs = []
-    
+
     with ProgressBar("Tokenizing", rows) as pb:
         for a in range(0, num_tokens - eval_len, eval_stride):
             b = a + eval_len
@@ -39,24 +39,23 @@ def get_test_tokens(tokenizer, rows, eval_len=2048, eval_stride=2048):
             pb.update(len(seqs))
             if len(seqs) >= rows:
                 break
-    
+
     if not seqs:
         raise ValueError(f"Dataset too short for eval_len={eval_len}. Only {num_tokens} tokens found.")
 
     return torch.cat(seqs, dim=0)
 
+
 def ppl(input_ids_, logits_, vocab_size_):
     from exllamav3.util.measures import compute_target_log_probs
     logprob_sum_ = 0.0
     logprob_count_ = 0
-    # Chunk over sequence length to save memory if needed
     chunksize = 10240
     b_ = 0
     while b_ < logits_.shape[0]:
         a_ = b_
         b_ = min(b_ + chunksize, logits_.shape[0])
         logits_f = logits_[a_:b_, :]
-        # Target IDs for the current chunk are shifted by 1
         target_ids = input_ids_[a_ + 1:b_ + 1].to(logits_.device)
         token_log_probs = compute_target_log_probs(logits_f, target_ids, vocab_size_)
         logprob_sum_ += token_log_probs.sum().item()
@@ -67,10 +66,9 @@ def ppl(input_ids_, logits_, vocab_size_):
 @torch.inference_mode()
 def main(args):
     # Defensive imports: some exllamav3 installs (e.g. partial/editable builds
-    # inside containers) end up resolving the package as a PEP-420 namespace
-    # package, so the top-level re-exports from __init__.py are not available
-    # ("ImportError: cannot import name 'Config' from 'exllamav3' (unknown
-    # location)"). Fall back to the explicit submodule paths in that case.
+    # inside containers) resolve the package as a PEP-420 namespace package, so
+    # the top-level re-exports from __init__.py are not available. Fall back to
+    # the explicit submodule paths in that case.
     try:
         from exllamav3 import Config, Model, Tokenizer
     except ImportError:
@@ -101,9 +99,7 @@ def main(args):
         overrides = {o["key"]: sources[o["source"]] for o in comp["overrides"]}
         collections = {}
         for o_key, o_dir in overrides.items():
-            if o_dir not in collections:
-                collections[o_dir] = []
-            collections[o_dir].append(o_key)
+            collections.setdefault(o_dir, []).append(o_key)
         if len(collections):
             vstc = VariantSafetensorsCollection(config.stc)
             for o_dir, o_keys in collections.items():
@@ -123,7 +119,7 @@ def main(args):
     logprob_sum = 0
     logprob_count = 0
 
-    # Inference
+    # Inference (layerwise: load → forward → unload one module at a time)
     for idx, module in enumerate(model.modules):
         logits_layer = module == model.modules[-1]
         layer_start = time.time()
@@ -146,21 +142,19 @@ def main(args):
             else:
                 rows = state.shape[0]
                 for j in range(rows):
-                    logits = state[j]
+                    logits = state[j][:-1, :]
                     input_ids = eval_ids[j]
-                    logits_for_ppl = logits[:-1, :]
-                    logprob_sum_, logprob_count_ = ppl(input_ids, logits_for_ppl, vocab_size)
+                    logprob_sum_, logprob_count_ = ppl(input_ids, logits, vocab_size)
                     logprob_sum += logprob_sum_
                     logprob_count += logprob_count_
 
-        # Unload module
+        # Unload module (mirror upstream model_diff: close + free per module)
         module.unload()
-        
+        config.stc.close()
+        free_mem()
+
         layer_time = time.time() - layer_start
         print(f" -- {module.key:40}   time: {layer_time:6.2f}s")
-
-    config.stc.close()
-    free_mem()
 
     # Final perplexity
     perplexity = math.exp(-logprob_sum / logprob_count)
@@ -169,11 +163,10 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("-m", "--model", type = str, help = "Model directory", required = True)
-    parser.add_argument("-r", "--rows", type = int, help = "Number of rows", default = 100)
-    parser.add_argument("-d", "--device", type = int, help = "CUDA device index", default = 0)
-    parser.add_argument("-or", "--override", type = str, help = "Model tensor override spec (YAML)", default = None)
-    parser.add_argument("-bsz", "--batch_size", type = int, help = "Batch size", default = 1)
-    # Removing unused args to keep it clean
+    parser.add_argument("-m", "--model", type=str, help="Model directory", required=True)
+    parser.add_argument("-r", "--rows", type=int, help="Number of rows", default=100)
+    parser.add_argument("-d", "--device", type=int, help="CUDA device index", default=0)
+    parser.add_argument("-or", "--override", type=str, help="Model tensor override spec (YAML)", default=None)
+    parser.add_argument("-bsz", "--batch_size", type=int, help="Batch size", default=1)
     _args = parser.parse_args()
     main(_args)
