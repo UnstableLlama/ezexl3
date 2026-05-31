@@ -281,7 +281,7 @@ class ChatEngine:
         self.loras = []
         for i, lora_dir in enumerate(self.lora_dirs):
             weight = self.lora_weights[i] if i < len(self.lora_weights) else 1.0
-            if weight <= 0:
+            if weight == 0:
                 self.loras.append(None)
                 continue
             self.loras.append(
@@ -317,7 +317,7 @@ class ChatEngine:
             w = float(cfg.get("weight", 1.0))
             self.lora_dirs.append(d)
             self.lora_weights.append(w)
-            if w <= 0:
+            if w == 0:
                 self.loras.append(None)
                 continue
             self.loras.append(
