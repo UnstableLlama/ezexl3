@@ -326,14 +326,14 @@ body { display: flex; overflow: hidden; }
 }
 .lora-weight-val {
   font-size: 11px; font-family: var(--mono);
-  color: var(--text-muted); min-width: 40px; text-align: right;
+  color: var(--text-muted); min-width: 48px; text-align: right;
   cursor: pointer; padding: 1px 4px; border-radius: 3px;
   border: 1px solid transparent;
 }
 .lora-weight-val:hover { border-color: var(--border-light); }
 .lora-weight-val-input {
   font-size: 11px; font-family: var(--mono);
-  width: 48px; text-align: right;
+  width: 56px; text-align: right;
   background: var(--bg-surface); color: var(--text-primary);
   border: 1px solid var(--accent); border-radius: 3px;
   padding: 1px 4px; outline: none;

@@ -40,7 +40,7 @@ function renderLoraList() {
   const list = document.getElementById('lora-list');
   list.innerHTML = '';
   loraEntries.forEach((entry, i) => {
-    const inactive = entry.weight <= 0;
+    const inactive = entry.weight === 0;
     const el = document.createElement('div');
     el.className = 'lora-entry' + (inactive ? ' inactive' : '');
 
@@ -53,7 +53,7 @@ function renderLoraList() {
         `<button class="lora-entry-remove" title="Remove" data-idx="${i}">&times;</button>` +
       `</div>` +
       `<div class="lora-weight-row">` +
-        `<input type="range" min="0" max="200" step="1" value="${pctVal}" data-idx="${i}">` +
+        `<input type="range" min="-200" max="200" step="1" value="${pctVal}" data-idx="${i}">` +
         `<span class="lora-weight-val" data-idx="${i}">${pctVal}%</span>` +
       `</div>`;
 
@@ -79,7 +79,7 @@ function renderLoraList() {
       loraEntries[idx].weight = pct / 100;
       loraDirty = true;
       updateLoraBadge();
-      slider.closest('.lora-entry').classList.toggle('inactive', pct <= 0);
+      slider.closest('.lora-entry').classList.toggle('inactive', pct === 0);
     };
     if (valSpan) {
       valSpan.onclick = () => {
@@ -96,14 +96,14 @@ function renderLoraList() {
           committed = true;
           let v = parseInt(input.value);
           if (isNaN(v)) v = parseInt(slider.value);
-          v = Math.max(0, Math.min(200, v));
+          v = Math.max(-200, Math.min(200, v));
           slider.value = v;
           valSpan.textContent = v + '%';
           input.replaceWith(valSpan);
           loraEntries[idx].weight = v / 100;
           loraDirty = true;
           updateLoraBadge();
-          slider.closest('.lora-entry').classList.toggle('inactive', v <= 0);
+          slider.closest('.lora-entry').classList.toggle('inactive', v === 0);
         };
         input.addEventListener('blur', commit);
         input.addEventListener('keydown', e => {
@@ -128,7 +128,7 @@ function addLoraFromInput() {
 
 function updateLoraBadge() {
   const badge = document.getElementById('lora-panel-badge');
-  const active = loraEntries.filter(e => e.weight > 0).length;
+  const active = loraEntries.filter(e => e.weight !== 0).length;
   const total = loraEntries.length;
   badge.textContent = active > 0 ? `${active} active` : (total > 0 ? '0 active' : 'none');
   badge.className = 'panel-badge' + (active > 0 ? ' loaded' : '');
