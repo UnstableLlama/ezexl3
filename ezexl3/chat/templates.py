@@ -721,6 +721,65 @@ class PromptFormat_gemma4(PromptFormat):
         return "<|channel>thought", "<channel|>"
 
 
+class PromptFormat_metharme(PromptFormat):
+    description = "Metharme (PygmalionAI Pygmalion-2 / Mythalion)"
+
+    def default_system_prompt(self, think):
+        return (
+            "Enter RP mode. You shall reply to the user while staying in character. "
+            "Your responses must be detailed, creative, immersive, and drive the scenario forward."
+        )
+
+    def format(self, system_prompt, messages, think):
+        context = ""
+        if system_prompt:
+            context += f"<|system|>{system_prompt}"
+        for u, a in messages:
+            context += f"<|user|>{u}<|model|>"
+            if a is not None:
+                context += a
+        return context
+
+    def add_bos(self):
+        return True
+
+    def stop_conditions(self, tokenizer):
+        return [
+            tokenizer.eos_token_id,
+            tokenizer.single_id("<|user|>"),
+            tokenizer.single_id("<|system|>"),
+            "<|user|>",
+            "<|system|>",
+        ]
+
+
+class PromptFormat_tekken(PromptFormat):
+    description = "Mistral V3 Tekken (NeMo / Pixtral, no spaces around [INST])"
+
+    def default_system_prompt(self, think):
+        return ""
+
+    def format(self, system_prompt, messages, think):
+        context = ""
+        first = True
+        for u, a in messages:
+            if first and system_prompt:
+                context += f"[INST]{system_prompt}\n\n{u}[/INST]"
+                first = False
+            else:
+                context += f"[INST]{u}[/INST]"
+                first = False
+            if a is not None:
+                context += f"{a}</s>"
+        return context
+
+    def add_bos(self):
+        return True
+
+    def stop_conditions(self, tokenizer):
+        return [tokenizer.eos_token_id]
+
+
 class PromptFormat_qwen35(PromptFormat):
     description = "Qwen3.5 format, reasoning-aware ChatML"
 
@@ -770,6 +829,8 @@ prompt_formats = {
     "apertus": PromptFormat_apertus,
     "minimax": PromptFormat_minimax,
     "qwen35": PromptFormat_qwen35,
+    "metharme": PromptFormat_metharme,
+    "tekken": PromptFormat_tekken,
 }
 
 
@@ -785,6 +846,12 @@ _MODE_HINTS = [
     ("qwen", "chatml"),
     ("llama", "llama3"),
     ("phi", "phi"),
+    ("metharme", "metharme"),
+    ("mythalion", "metharme"),
+    ("pygmalion", "metharme"),
+    ("nemo", "tekken"),
+    ("pixtral", "tekken"),
+    ("tekken", "tekken"),
     ("mistral", "mistral3"),
     ("glm", "glm"),
     ("cohere", "cohere"),
