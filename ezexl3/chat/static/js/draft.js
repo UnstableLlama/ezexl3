@@ -1,8 +1,15 @@
-// ── Draft Model Panel: DFlash speculative decoding ───────────────
+// ── Draft Model Panel: speculative decoding (DFlash / MTP auto-detected) ──
 
 let draftModelDir = '';
 let draftModelLoaded = false;
 let draftModelName = '';
+let draftKind = '';
+
+const DRAFT_KIND_LABELS = { mtp: 'MTP', dflash: 'DFlash', draft: 'Draft' };
+
+function draftKindLabel() {
+  return DRAFT_KIND_LABELS[draftKind] || '';
+}
 
 function initDraftPanel() {
   document.getElementById('draft-panel-toggle').onclick = toggleDraftPanel;
@@ -29,6 +36,7 @@ function syncDraftState(status) {
   draftModelLoaded = status.draft_model_loaded || false;
   draftModelDir = status.draft_model_dir || '';
   draftModelName = status.draft_model_name || '';
+  draftKind = status.draft_kind || '';
 
   if (draftModelDir) {
     document.getElementById('draft-dir-input').value = draftModelDir;
@@ -59,7 +67,8 @@ function updateDraftControls() {
     loadBtn.textContent = 'Replace';
     unloadBtn.disabled = false;
     info.style.display = '';
-    info.textContent = draftModelName;
+    const kind = draftKindLabel();
+    info.textContent = kind ? `${draftModelName} · ${kind}` : draftModelName;
   } else {
     loadBtn.textContent = 'Load';
     unloadBtn.disabled = true;
@@ -91,7 +100,8 @@ async function loadDraft() {
     if (data.ok) {
       syncDraftState(data.status);
       updateDraftModelInfo(data.status);
-      statusEl.textContent = 'Draft model loaded.';
+      const kind = draftKindLabel();
+      statusEl.textContent = kind ? `Draft model loaded (${kind}).` : 'Draft model loaded.';
       setTimeout(() => { statusEl.style.display = 'none'; }, 2000);
     } else {
       statusEl.textContent = 'Error: ' + (data.error || 'Unknown error');

@@ -150,6 +150,7 @@ class ChatEngine:
         self.draft_config = None
         self.draft_model_dir: str | None = None
         self.draft_model_name: str = ""
+        self.draft_kind: str = ""
         self.context_length: int = 0
         self.model_name: str = os.path.basename(self.model_dir) if self.model_dir else ""
 
@@ -199,7 +200,7 @@ class ChatEngine:
         print(f"  Model loaded: {self.model_name}")
         print(f"  Context length: {self.context_length:,} tokens")
         if self.draft_model:
-            print(f"  Draft model: {self.draft_model_name}")
+            print(f"  Draft model: {self.draft_model_name} [{self.draft_kind}]")
         print(f"  Prompt mode: {self.settings.mode}")
 
     def _create_generator(self):
@@ -228,6 +229,7 @@ class ChatEngine:
         self.draft_config = None
         self.draft_model_dir = None
         self.draft_model_name = ""
+        self.draft_kind = ""
         self.model = None
         self.cache = None
         self.tokenizer = None
@@ -327,13 +329,50 @@ class ChatEngine:
         active = sum(1 for l in self.loras if l is not None)
         print(f"  LoRAs updated: {active} active / {len(self.loras)} total")
 
+    def _detect_draft_kind(self, draft_dir: str) -> str:
+        """
+        Classify the draft model directory:
+
+          "mtp"    — same directory as the main model: use its built-in MTP
+                     head (Qwen3.5/3.6 multi-token prediction component)
+          "dflash" — separate dir with a DFlashDraftModel architecture
+          "draft"  — any other model dir (plain speculative decoding)
+
+        Mirrors exllamav3's model_init logic, where MTP drafting is selected
+        by pointing the draft model at the main model's own directory.
+        """
+        if self.model_dir and Path(draft_dir).resolve() == Path(self.model_dir).resolve():
+            return "mtp"
+        try:
+            with open(os.path.join(draft_dir, "config.json"), encoding="utf8") as f:
+                archs = json.load(f).get("architectures") or []
+            arch = archs[0] if archs else ""
+        except Exception:
+            arch = ""
+        return "dflash" if arch == "DFlashDraftModel" else "draft"
+
     def _load_draft_model(self):
         Config = _import_config()
         Model = _import_model()
         Cache = _import_cache()
 
-        self.draft_config = Config.from_directory(self.draft_model_dir)
-        self.draft_model = Model.from_config(self.draft_config)
+        self.draft_kind = self._detect_draft_kind(self.draft_model_dir)
+        if self.draft_kind == "mtp":
+            # MTP weights live inside the main model's checkpoint, so the
+            # draft shares the main config and loads the "mtp" component.
+            if "mtp" not in getattr(self.config, "model_classes", {}):
+                self.draft_kind = ""
+                raise RuntimeError(
+                    f"{self.model_name} does not expose an MTP draft component. "
+                    "MTP drafting needs a model with MTP weights (e.g. Qwen3.5) "
+                    "and an exllamav3 build with MTP support."
+                )
+            self.draft_config = self.config
+            self.draft_model = Model.from_config(self.draft_config, component="mtp")
+            self.draft_model_name = f"{self.model_name} (MTP)"
+        else:
+            self.draft_config = Config.from_directory(self.draft_model_dir)
+            self.draft_model = Model.from_config(self.draft_config)
         self.draft_cache = Cache(
             self.draft_model,
             max_num_tokens=self.cache.max_num_tokens,
@@ -346,6 +385,7 @@ class ChatEngine:
         self.draft_config = None
         self.draft_model_dir = None
         self.draft_model_name = ""
+        self.draft_kind = ""
         import gc
         gc.collect()
         if torch.cuda.is_available():
@@ -365,7 +405,7 @@ class ChatEngine:
         self.draft_model_name = os.path.basename(self.draft_model_dir)
         self._load_draft_model()
         self._create_generator()
-        print(f"  Draft model loaded: {self.draft_model_name}")
+        print(f"  Draft model loaded: {self.draft_model_name} [{self.draft_kind}]")
 
     def unload_draft(self):
         """Unload the current draft model without touching the main model."""
@@ -643,6 +683,7 @@ class ChatEngine:
             "draft_model_dir": self.draft_model_dir or "",
             "draft_model_name": self.draft_model_name,
             "draft_model_loaded": self.draft_model is not None,
+            "draft_kind": getattr(self, "draft_kind", ""),
             "available_modes": {
                 k: v.description for k, v in prompt_formats.items()
             },
@@ -684,4 +725,9 @@ def _build_model_args(
     if cache_quant:
         argv += ["-cq", cache_quant]
 
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    # exllamav3 dev reads args.mtp in init() even when draft model args
+    # aren't requested; older builds ignore the extra attribute.
+    if not hasattr(args, "mtp"):
+        args.mtp = False
+    return args

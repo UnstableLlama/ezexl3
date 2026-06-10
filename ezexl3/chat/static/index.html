@@ -41,8 +41,8 @@
       <div class="sb-hint">One directory per line. Each should contain <code>adapter_config.json</code>.</div>
 
       <label class="sb-label" style="margin-top:8px">Draft Model Dir (optional)</label>
-      <input type="text" id="draft-model-dir-input" class="mono" placeholder="/path/to/dflash-model">
-      <div class="sb-hint">DFlash draft model for speculative decoding.</div>
+      <input type="text" id="draft-model-dir-input" class="mono" placeholder="/path/to/draft-model">
+      <div class="sb-hint">Draft model for speculative decoding — DFlash or MTP auto-detected. For MTP, use the main model directory.</div>
 
       <label class="sb-label" style="margin-top:12px">GPU</label>
       <label class="gpu-auto-label">
@@ -101,8 +101,8 @@
     </div>
     <div id="draft-panel-body" class="section-body">
       <label class="sb-label">Draft Model Directory</label>
-      <input type="text" id="draft-dir-input" class="mono" placeholder="/path/to/dflash-model">
-      <div class="sb-hint">DFlash draft model for speculative decoding. Must contain <code>config.json</code>.</div>
+      <input type="text" id="draft-dir-input" class="mono" placeholder="/path/to/draft-model">
+      <div class="sb-hint">Draft model for speculative decoding — DFlash or MTP auto-detected. For MTP, use the main model directory. Must contain <code>config.json</code>.</div>
       <div id="draft-info" class="draft-info" style="display:none"></div>
       <div class="draft-actions">
         <button id="draft-load-btn" class="sb-btn draft-load-btn">Load</button>
