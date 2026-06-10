@@ -281,6 +281,12 @@ async def handle_model_load(request: web.Request) -> web.Response:
     lora_weights = data.get("lora_weights") or [1.0] * len(lora_dirs)
 
     draft_model_dir = (data.get("draft_model_dir") or "").strip() or None
+    use_mtp = bool(data.get("use_mtp"))
+    if use_mtp and draft_model_dir:
+        return web.json_response(
+            {"ok": False, "error": "Specify either a draft model directory or MTP drafting, not both"},
+            status=400,
+        )
     if draft_model_dir:
         dp = Path(draft_model_dir)
         if not dp.is_dir():
@@ -301,6 +307,7 @@ async def handle_model_load(request: web.Request) -> web.Response:
             lora_dirs=lora_dirs,
             lora_weights=lora_weights,
             draft_model_dir=draft_model_dir,
+            use_mtp=use_mtp,
             devices=data.get("devices"),
             device_ratios=data.get("device_ratios"),
             cache_size=data.get("cache_size"),
@@ -392,24 +399,31 @@ async def handle_draft_load(request: web.Request) -> web.Response:
             status=409,
         )
     data = await request.json()
+    mtp = bool(data.get("mtp"))
     draft_dir = (data.get("draft_model_dir") or "").strip()
-    if not draft_dir:
+    if mtp and draft_dir:
         return web.json_response(
-            {"ok": False, "error": "draft_model_dir is required"}, status=400,
-        )
-    dp = Path(draft_dir)
-    if not dp.is_dir():
-        return web.json_response(
-            {"ok": False, "error": f"Draft model directory not found: {draft_dir}"},
+            {"ok": False, "error": "Specify either a draft model directory or MTP drafting, not both"},
             status=400,
         )
-    if not (dp / "config.json").is_file():
-        return web.json_response(
-            {"ok": False, "error": "Draft model config.json missing — not a valid model directory"},
-            status=400,
-        )
+    if not mtp:
+        if not draft_dir:
+            return web.json_response(
+                {"ok": False, "error": "draft_model_dir is required"}, status=400,
+            )
+        dp = Path(draft_dir)
+        if not dp.is_dir():
+            return web.json_response(
+                {"ok": False, "error": f"Draft model directory not found: {draft_dir}"},
+                status=400,
+            )
+        if not (dp / "config.json").is_file():
+            return web.json_response(
+                {"ok": False, "error": "Draft model config.json missing — not a valid model directory"},
+                status=400,
+            )
     try:
-        await asyncio.to_thread(engine.load_draft, draft_dir)
+        await asyncio.to_thread(engine.load_draft, draft_dir or None, mtp)
         return web.json_response({
             "ok": True,
             "status": engine.get_status(),

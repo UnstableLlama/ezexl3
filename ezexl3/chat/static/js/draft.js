@@ -1,8 +1,9 @@
-// ── Draft Model Panel: DFlash speculative decoding ───────────────
+// ── Draft Model Panel: speculative decoding (DFlash draft dir or MTP) ──
 
 let draftModelDir = '';
 let draftModelLoaded = false;
 let draftModelName = '';
+let draftMtp = false;
 
 function initDraftPanel() {
   document.getElementById('draft-panel-toggle').onclick = toggleDraftPanel;
@@ -10,6 +11,9 @@ function initDraftPanel() {
   document.getElementById('draft-unload-btn').onclick = unloadDraft;
   document.getElementById('draft-dir-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); loadDraft(); }
+  });
+  document.getElementById('draft-mtp-checkbox').addEventListener('change', e => {
+    document.getElementById('draft-dir-input').disabled = e.target.checked;
   });
 }
 
@@ -29,10 +33,13 @@ function syncDraftState(status) {
   draftModelLoaded = status.draft_model_loaded || false;
   draftModelDir = status.draft_model_dir || '';
   draftModelName = status.draft_model_name || '';
+  draftMtp = status.draft_mtp || false;
 
-  if (draftModelDir) {
+  if (draftModelDir && !draftMtp) {
     document.getElementById('draft-dir-input').value = draftModelDir;
   }
+  document.getElementById('draft-mtp-checkbox').checked = draftMtp;
+  document.getElementById('draft-dir-input').disabled = draftMtp;
 
   updateDraftBadge();
   updateDraftControls();
@@ -66,13 +73,14 @@ function updateDraftControls() {
     info.style.display = 'none';
   }
   loadBtn.disabled = false;
-  dirInput.disabled = false;
+  dirInput.disabled = draftMtp;
 }
 
 async function loadDraft() {
   const dirInput = document.getElementById('draft-dir-input');
   const dir = dirInput.value.trim();
-  if (!dir) return;
+  const mtp = document.getElementById('draft-mtp-checkbox').checked;
+  if (!dir && !mtp) return;
 
   const loadBtn = document.getElementById('draft-load-btn');
   const statusEl = document.getElementById('draft-status');
@@ -85,7 +93,7 @@ async function loadDraft() {
     const res = await fetch('/api/draft/load', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ draft_model_dir: dir }),
+      body: JSON.stringify(mtp ? { mtp: true } : { draft_model_dir: dir }),
     });
     const data = await res.json();
     if (data.ok) {

@@ -81,6 +81,9 @@ async function initModelPanel(status) {
       browseTo(e.target.value.trim());
     }
   });
+  document.getElementById('use-mtp-checkbox').addEventListener('change', e => {
+    document.getElementById('draft-model-dir-input').disabled = e.target.checked;
+  });
 
   if (status.loaded) {
     setModelPanelLoaded(status.model_name);
@@ -294,6 +297,7 @@ async function loadModel() {
   const seqLength = parseInt(document.getElementById('model-seq-length').value) || null;
   const cacheSize = seqLength ? seqLength * 2 : null;
   const cacheQuant = document.getElementById('model-cache-quant').value.trim() || null;
+  const useMtp = document.getElementById('use-mtp-checkbox')?.checked || false;
 
   try {
     const res = await fetch('/api/model/load', {
@@ -302,7 +306,9 @@ async function loadModel() {
       body: JSON.stringify({
         model_dir: currentBrowsePath,
         lora_dirs: parseLoraDirs(),
-        draft_model_dir: (document.getElementById('draft-model-dir-input')?.value || '').trim() || null,
+        draft_model_dir: useMtp ? null
+          : (document.getElementById('draft-model-dir-input')?.value || '').trim() || null,
+        use_mtp: useMtp,
         devices: gpuConfig.devices,
         device_ratios: gpuConfig.device_ratios,
         cache_size: cacheSize,

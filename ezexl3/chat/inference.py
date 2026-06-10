@@ -150,6 +150,7 @@ class ChatEngine:
         self.draft_config = None
         self.draft_model_dir: str | None = None
         self.draft_model_name: str = ""
+        self.use_mtp: bool = False
         self.context_length: int = 0
         self.model_name: str = os.path.basename(self.model_dir) if self.model_dir else ""
 
@@ -188,7 +189,7 @@ class ChatEngine:
         self.model, self.config, self.cache, self.tokenizer = model_init.init(args)
         self.context_length = self.cache.max_num_tokens
 
-        if self.draft_model_dir:
+        if self.draft_model_dir or self.use_mtp:
             self._load_draft_model()
 
         self._create_generator()
@@ -228,6 +229,7 @@ class ChatEngine:
         self.draft_config = None
         self.draft_model_dir = None
         self.draft_model_name = ""
+        self.use_mtp = False
         self.model = None
         self.cache = None
         self.tokenizer = None
@@ -247,18 +249,22 @@ class ChatEngine:
         lora_dirs: list[str] | None = None,
         lora_weights: list[float] | None = None,
         draft_model_dir: str | None = None,
+        use_mtp: bool = False,
         devices: list[int] | None = None,
         device_ratios: str | None = None,
         cache_size: int | None = None,
         cache_quant: str | None = None,
     ):
         """Load a model (callable from the UI after startup)."""
+        if use_mtp and draft_model_dir:
+            raise ValueError("Cannot specify both a draft model directory and MTP drafting")
         if self.is_loaded:
             self.unload()
         self.model_dir = os.path.abspath(model_dir)
         self.model_name = os.path.basename(self.model_dir)
         self.lora_dirs = [os.path.abspath(p) for p in (lora_dirs or [])]
         self.lora_weights = list(lora_weights or [1.0] * len(self.lora_dirs))
+        self.use_mtp = use_mtp
         if draft_model_dir:
             self.draft_model_dir = os.path.abspath(draft_model_dir)
             self.draft_model_name = os.path.basename(self.draft_model_dir)
@@ -332,8 +338,24 @@ class ChatEngine:
         Model = _import_model()
         Cache = _import_cache()
 
-        self.draft_config = Config.from_directory(self.draft_model_dir)
-        self.draft_model = Model.from_config(self.draft_config)
+        if self.use_mtp:
+            # Standard exllamav3 --mtp behavior: the MTP head lives inside
+            # the main model's checkpoint, loaded as its "mtp" component
+            # with the main config (exllamav3 dev, Qwen3.5/3.6).
+            if "mtp" not in getattr(self.config, "model_classes", {}):
+                self.use_mtp = False
+                raise RuntimeError(
+                    f"{self.model_name} does not expose an MTP draft component. "
+                    "MTP drafting needs a model with MTP weights (e.g. Qwen3.5) "
+                    "and an exllamav3 build with MTP support."
+                )
+            self.draft_model_dir = self.model_dir
+            self.draft_config = self.config
+            self.draft_model = Model.from_config(self.draft_config, component="mtp")
+            self.draft_model_name = f"{self.model_name} (MTP)"
+        else:
+            self.draft_config = Config.from_directory(self.draft_model_dir)
+            self.draft_model = Model.from_config(self.draft_config)
         self.draft_cache = Cache(
             self.draft_model,
             max_num_tokens=self.cache.max_num_tokens,
@@ -346,23 +368,30 @@ class ChatEngine:
         self.draft_config = None
         self.draft_model_dir = None
         self.draft_model_name = ""
+        self.use_mtp = False
         import gc
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    def load_draft(self, draft_model_dir: str):
-        """Load a draft model onto an already-loaded model."""
+    def load_draft(self, draft_model_dir: str | None = None, mtp: bool = False):
+        """Load a draft model (or the main model's MTP head) onto an already-loaded model."""
         if not self.is_loaded:
             raise RuntimeError("No model loaded")
         if self._is_generating:
             raise RuntimeError("Cannot load draft model while generating")
+        if mtp and draft_model_dir:
+            raise RuntimeError("Cannot specify both a draft model directory and MTP drafting")
+        if not mtp and not draft_model_dir:
+            raise RuntimeError("draft_model_dir is required unless MTP drafting is enabled")
 
         if self.draft_model is not None:
             self.unload_draft()
 
-        self.draft_model_dir = os.path.abspath(draft_model_dir)
-        self.draft_model_name = os.path.basename(self.draft_model_dir)
+        self.use_mtp = mtp
+        if draft_model_dir:
+            self.draft_model_dir = os.path.abspath(draft_model_dir)
+            self.draft_model_name = os.path.basename(self.draft_model_dir)
         self._load_draft_model()
         self._create_generator()
         print(f"  Draft model loaded: {self.draft_model_name}")
@@ -643,6 +672,7 @@ class ChatEngine:
             "draft_model_dir": self.draft_model_dir or "",
             "draft_model_name": self.draft_model_name,
             "draft_model_loaded": self.draft_model is not None,
+            "draft_mtp": getattr(self, "use_mtp", False),
             "available_modes": {
                 k: v.description for k, v in prompt_formats.items()
             },
@@ -684,4 +714,9 @@ def _build_model_args(
     if cache_quant:
         argv += ["-cq", cache_quant]
 
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    # exllamav3 dev reads args.mtp in init() even when draft model args
+    # aren't requested; older builds ignore the extra attribute.
+    if not hasattr(args, "mtp"):
+        args.mtp = False
+    return args
