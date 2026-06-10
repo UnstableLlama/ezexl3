@@ -1,19 +1,21 @@
 """
-Tests for draft model kind auto-detection (DFlash vs MTP vs plain draft).
+Tests for MTP draft support in the chat engine.
 
-The chat UI has a single "draft model" field. The engine classifies the
-path the user gives it:
+MTP drafting follows standard exllamav3 behavior (the --mtp flag): the
+MTP head lives inside the main model's checkpoint and is loaded as the
+model's "mtp" component sharing the main config. It is an explicit
+toggle, mutually exclusive with the draft model directory (DFlash or
+any regular draft model).
 
-  - same directory as the main model  -> "mtp" (built-in MTP head,
-    loaded as the model's "mtp" component, exllamav3-dev style)
-  - separate dir whose config.json declares DFlashDraftModel -> "dflash"
-  - any other model dir -> "draft" (plain speculative decoding)
+Also covers the args namespace shim: exllamav3 dev's model_init.init()
+reads args.mtp unconditionally, which crashed every chat model load
+("'Namespace' object has no attribute 'mtp'") when the namespace was
+built without draft model args.
 
 Mocks torch and exllamav3 so no GPU or model download is required.
 """
 
 import argparse
-import json
 import os
 import sys
 import tempfile
@@ -38,7 +40,7 @@ from ezexl3.chat.inference import ChatEngine  # noqa: E402
 
 
 def make_engine(model_dir=None):
-    """Bare ChatEngine with just the attributes detection/loading needs."""
+    """Bare ChatEngine with just the attributes draft loading needs."""
     engine = ChatEngine.__new__(ChatEngine)
     engine.model_dir = model_dir
     engine.model_name = os.path.basename(model_dir) if model_dir else ""
@@ -51,55 +53,11 @@ def make_engine(model_dir=None):
     engine.draft_config = None
     engine.draft_model_dir = None
     engine.draft_model_name = ""
-    engine.draft_kind = ""
+    engine.use_mtp = False
     return engine
 
 
-def write_config(directory, arch):
-    with open(os.path.join(directory, "config.json"), "w", encoding="utf8") as f:
-        json.dump({"architectures": [arch]}, f)
-
-
-class TestDetectDraftKind(unittest.TestCase):
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.model_dir = os.path.join(self.tmp.name, "main-model")
-        self.draft_dir = os.path.join(self.tmp.name, "draft-model")
-        os.makedirs(self.model_dir)
-        os.makedirs(self.draft_dir)
-        self.engine = make_engine(self.model_dir)
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def test_same_dir_is_mtp(self):
-        self.assertEqual(self.engine._detect_draft_kind(self.model_dir), "mtp")
-
-    def test_same_dir_unnormalized_path_is_mtp(self):
-        aliased = os.path.join(self.model_dir, ".", "..", "main-model")
-        self.assertEqual(self.engine._detect_draft_kind(aliased), "mtp")
-
-    def test_dflash_arch_is_dflash(self):
-        write_config(self.draft_dir, "DFlashDraftModel")
-        self.assertEqual(self.engine._detect_draft_kind(self.draft_dir), "dflash")
-
-    def test_other_arch_is_plain_draft(self):
-        write_config(self.draft_dir, "Qwen3ForCausalLM")
-        self.assertEqual(self.engine._detect_draft_kind(self.draft_dir), "draft")
-
-    def test_missing_config_is_plain_draft(self):
-        # Server validates config.json exists before this runs; the
-        # classifier itself just falls back to the generic path.
-        self.assertEqual(self.engine._detect_draft_kind(self.draft_dir), "draft")
-
-    def test_dflash_config_in_main_dir_still_mtp(self):
-        # Same-directory check wins over architecture inspection
-        write_config(self.model_dir, "DFlashDraftModel")
-        self.assertEqual(self.engine._detect_draft_kind(self.model_dir), "mtp")
-
-
-class TestLoadDraftModelByKind(unittest.TestCase):
+class TestLoadDraftModel(unittest.TestCase):
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -127,12 +85,12 @@ class TestLoadDraftModelByKind(unittest.TestCase):
 
     def test_mtp_loads_mtp_component_of_main_config(self):
         self.engine.config.model_classes = {"text": object, "mtp": object}
-        self.engine.draft_model_dir = self.model_dir
+        self.engine.use_mtp = True
         self.engine._load_draft_model()
 
-        self.assertEqual(self.engine.draft_kind, "mtp")
         # Shares the main model's config, never re-reads the directory
         self.assertIs(self.engine.draft_config, self.engine.config)
+        self.assertEqual(self.engine.draft_model_dir, self.model_dir)
         self.MockConfig.from_directory.assert_not_called()
         self.MockModel.from_config.assert_called_once_with(
             self.engine.config, component="mtp"
@@ -142,52 +100,65 @@ class TestLoadDraftModelByKind(unittest.TestCase):
 
     def test_mtp_without_mtp_component_raises(self):
         self.engine.config.model_classes = {"text": object}
-        self.engine.draft_model_dir = self.model_dir
+        self.engine.use_mtp = True
         with self.assertRaises(RuntimeError) as ctx:
             self.engine._load_draft_model()
         self.assertIn("MTP", str(ctx.exception))
-        self.assertEqual(self.engine.draft_kind, "")
+        self.assertFalse(self.engine.use_mtp)
 
     def test_mtp_on_old_exllamav3_config_raises(self):
         # Older exllamav3 Config objects have no model_classes attribute
         self.engine.config = argparse.Namespace()
-        self.engine.draft_model_dir = self.model_dir
+        self.engine.use_mtp = True
         with self.assertRaises(RuntimeError):
             self.engine._load_draft_model()
 
-    def test_dflash_loads_from_its_own_directory(self):
-        write_config(self.draft_dir, "DFlashDraftModel")
+    def test_dir_draft_loads_from_its_own_directory(self):
         self.engine.draft_model_dir = self.draft_dir
         self.engine.draft_model_name = "draft-model"
         self.engine._load_draft_model()
 
-        self.assertEqual(self.engine.draft_kind, "dflash")
         self.MockConfig.from_directory.assert_called_once_with(self.draft_dir)
         self.MockModel.from_config.assert_called_once_with(
             self.MockConfig.from_directory.return_value
         )
         self.assertEqual(self.engine.draft_model_name, "draft-model")
 
-    def test_plain_draft_loads_from_its_own_directory(self):
-        write_config(self.draft_dir, "LlamaForCausalLM")
-        self.engine.draft_model_dir = self.draft_dir
-        self.engine._load_draft_model()
-
-        self.assertEqual(self.engine.draft_kind, "draft")
-        self.MockConfig.from_directory.assert_called_once_with(self.draft_dir)
-
-    def test_unload_resets_kind(self):
-        write_config(self.draft_dir, "DFlashDraftModel")
-        self.engine.draft_model_dir = self.draft_dir
+    def test_unload_resets_mtp(self):
+        self.engine.config.model_classes = {"mtp": object}
+        self.engine.use_mtp = True
         self.engine._load_draft_model()
         self.engine._unload_draft_model()
-        self.assertEqual(self.engine.draft_kind, "")
+        self.assertFalse(self.engine.use_mtp)
         self.assertIsNone(self.engine.draft_model)
+        self.assertIsNone(self.engine.draft_model_dir)
 
 
-class TestStatusExposesDraftKind(unittest.TestCase):
+class TestLoadDraftValidation(unittest.TestCase):
 
-    def test_get_status_includes_draft_kind(self):
+    def setUp(self):
+        self.engine = make_engine("/fake/model")
+        self.engine.generator = MagicMock()  # is_loaded
+        self.engine._is_generating = False
+
+    def test_load_draft_rejects_both_dir_and_mtp(self):
+        with self.assertRaises(RuntimeError):
+            self.engine.load_draft("/some/draft", mtp=True)
+
+    def test_load_draft_rejects_neither(self):
+        with self.assertRaises(RuntimeError):
+            self.engine.load_draft()
+
+    def test_load_model_rejects_both_dir_and_mtp(self):
+        engine = ChatEngine.__new__(ChatEngine)
+        engine.generator = None  # not loaded
+        with self.assertRaises(ValueError):
+            engine.load_model("/m", draft_model_dir="/d", use_mtp=True)
+
+
+class TestStatusExposesMtp(unittest.TestCase):
+
+    def test_get_status_includes_draft_mtp(self):
         engine = make_engine("/fake/model")
         engine.generator = None
         engine._is_generating = False
@@ -196,15 +167,17 @@ class TestStatusExposesDraftKind(unittest.TestCase):
         engine.lora_dirs = []
         engine.lora_weights = []
         engine.loras = []
-        engine.draft_kind = "mtp"
+        engine.use_mtp = True
         status = engine.get_status()
-        self.assertEqual(status["draft_kind"], "mtp")
+        self.assertIs(status["draft_mtp"], True)
 
 
 class TestBuildModelArgsMtpShim(unittest.TestCase):
 
     def test_args_namespace_gets_mtp_default(self):
-        """exllamav3 dev's init() reads args.mtp unconditionally."""
+        """exllamav3 dev's init() reads args.mtp unconditionally; without
+        this default every model load fails with
+        "'Namespace' object has no attribute 'mtp'"."""
 
         class FakeModelInit:
             @staticmethod

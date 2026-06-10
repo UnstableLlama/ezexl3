@@ -46,7 +46,7 @@ Launches a lightweight chat web interface for testing quantized models. Browse t
 
 Supports multi-GPU (`-d 0,1`), configurable sequence length (cache is sized 2x behind the scenes), and cache quantization (`-cq 6,6`). Auto-detects prompt format from the model name. Useful for spot-checking quant quality at different BPW levels before uploading.
 
-Speculative decoding is available through the draft model field: point it at a DFlash draft model, a smaller regular model, or the main model's own directory to use its built-in MTP head (Qwen3.5+, requires an exllamav3 build with MTP support) — the type is auto-detected.
+Speculative decoding is available through the draft model field (DFlash or any smaller draft model), or via the MTP checkbox for models with a built-in MTP head (Qwen3.5+, requires an exllamav3 build with MTP support) — equivalent to exllamav3's `--mtp` flag.
 
 <p align="center">
   <img src="docs/chat.png" width="65%" />
