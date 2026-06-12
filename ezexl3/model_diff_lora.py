@@ -205,6 +205,15 @@ def main(args):
     device = torch.device(f"cuda:{args.device}")
     print(f" -- Using device: {device}")
 
+    # Inter-layer states for all rows (x2 variants) are the main VRAM cost at
+    # large model sizes; optionally park them on another GPU or in system RAM
+    # and move each batch to the compute device on demand.
+    storage_device = None
+    if args.storage_device is not None:
+        sd = args.storage_device.strip().lower()
+        storage_device = torch.device("cpu") if sd == "cpu" else torch.device(f"cuda:{int(sd)}")
+        print(f" -- Storing inter-layer states on: {storage_device}")
+
     config = Config.from_directory(args.model)
     config.override_dynamic_seq_len(2048)
     tokenizer = Tokenizer.from_config(config)
@@ -284,12 +293,7 @@ def main(args):
                 m.lora_a_tensors.pop("lora", None)
                 m.lora_b_tensors.pop("lora", None)
 
-            # Drop logits on last iteration
-            if not logits_layer:
-                states_a[b] = state_a
-                states_b[b] = state_b
-
-            # Measure error
+            # Measure error (on the compute device, before states move out)
             if not logits_layer:
                 rows = state_a.shape[0]
                 for j in range(rows):
@@ -303,6 +307,14 @@ def main(args):
                     md = ((sa.max().item()) / torch.linalg.norm(sb, 'fro').mean()).item()
                     max_diff = max(max_diff, md)
                     del sa, sb
+
+            # Drop logits on last iteration
+            if not logits_layer:
+                if storage_device is not None:
+                    state_a = state_a.to(storage_device)
+                    state_b = state_b.to(storage_device)
+                states_a[b] = state_a
+                states_b[b] = state_b
 
             # Perplexity, KL-div
             if logits_layer:
@@ -402,6 +414,9 @@ if __name__ == "__main__":
     parser.add_argument("-r", "--rows", type=int, help="Number of rows", default=100)
     parser.add_argument("-tkm", "--topk_max", type=int, default=5, help="Max top-K interval to test")
     parser.add_argument("-d", "--device", type=int, help="CUDA device index", default=0)
+    parser.add_argument("-sd", "--storage_device", type=str, default=None,
+                        help="Where to keep inter-layer states between modules: a CUDA index (e.g. 1) or 'cpu'. "
+                             "Default: keep them on the compute device")
     parser.add_argument("-bsz", "--batch_size", type=int, help="Batch size", default=1)
     parser.add_argument("-gp", "--gen_prompt", action="store_true", help="Prepend chat template generation prompt to every row")
     _args = parser.parse_args()
