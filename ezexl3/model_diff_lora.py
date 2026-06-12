@@ -81,6 +81,20 @@ def load_lora_map(model, lora_dir, lora_weight):
     except ImportError:
         from exllamav3.modules.linear import Linear
 
+    # LoRA application landed in exllamav3 after the tensor storage dicts, so
+    # an older install can accept attached tensors yet never apply them,
+    # silently measuring base-vs-base. Fail fast on such builds.
+    import inspect
+    try:
+        if "lora" not in inspect.getsource(Linear.forward):
+            raise RuntimeError(
+                "Installed exllamav3's Linear.forward has no LoRA path, so attached "
+                "adapter tensors would be ignored. Upgrade exllamav3 to a build that "
+                "includes exllamav3/model/lora.py support."
+            )
+    except (OSError, TypeError):
+        pass
+
     config_path = os.path.join(lora_dir, "adapter_config.json")
     with open(config_path, encoding="utf8") as f:
         config = json.load(f)
@@ -175,6 +189,22 @@ def load_lora_map(model, lora_dir, lora_weight):
         f" -- LoRA: {len(lora_map)} target modules "
         f"(r={lora_r}, alpha={lora_alpha:.0f}, scaling={lora_scaling:.4f})"
     )
+
+    # Report where the adapter actually has mass. ||A@B||_F is computed as
+    # sqrt(tr((A^T A)(B B^T))) to avoid materializing the full delta; modules
+    # the trainer left untouched (PEFT inits lora_B to zero) show up as zero
+    # and produce no measurable layer diff, which is expected, not a bug.
+    norms = {}
+    for k, (a, b) in lora_map.items():
+        ga = a.float().T @ a.float()
+        gb = b.float() @ b.float().T
+        norms[k] = (ga * gb).sum().clamp_min(0).sqrt().item()
+    active = {k: n for k, n in norms.items() if n > 1e-6}
+    print(f" -- LoRA: {len(active)} of {len(lora_map)} modules have non-negligible ||dW||:")
+    for k, n in sorted(active.items(), key=lambda kv: -kv[1])[:20]:
+        print(f"      {k:60} ||dW||: {n:.6f}")
+    if len(active) > 20:
+        print(f"      ... and {len(active) - 20} more")
     if skipped_keys:
         print(f" -- LoRA: skipped {len(skipped_keys)} unmatched keys")
     if incomplete:
