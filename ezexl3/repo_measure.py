@@ -273,7 +273,7 @@ def _worker_measure(
                     model_diff_script,
                     "-ma", base_dir,
                     "-mb", model_dir,
-                    "-r", "10",
+                    "-r", "100",
                     "-d", str(device),
                 ]
                 kl_out = run_measure_subprocess_fn(kl_cmd, device, results, f"{label} KL", log_f)
