@@ -153,7 +153,7 @@ def run_model_diff(
     base_dir: str,
     other_dir: str,
     device: int,
-    r: int = 10,
+    r: int = 100,
 ) -> float:
     """
     Runs internal model_diff.py and returns KL divergence.
@@ -252,7 +252,7 @@ def run_measure(
                 base_dir,
                 model_dir,
                 device=device,
-                r=10,
+                r=100,
             )
             ppl_100 = run_ppl_layer(model_dir, device=device, r=ppl_rows)
             size_gib = file_size_gib(model_dir)

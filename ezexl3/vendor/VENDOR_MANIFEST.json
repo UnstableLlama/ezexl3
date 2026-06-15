@@ -21,14 +21,14 @@
   },
   "eval_perf.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/perf.py",
-    "sha256": "c14c30b5fd9b29da2546c922a8d6726364e062ed00fd7e6f607ba4f13edfb052"
+    "sha256": "7d4a5ca0ac36370312807fee12ebd9d520b53a60dcd1877f2adbe7ab2b8e513b"
   },
   "model_diff.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/model_diff.py",
-    "sha256": "eab86dae921597d4cd3ecb9b9d3cf4fc2a3716b9c7a2a591a623b5c9d9b58ba2"
+    "sha256": "e1df0f13aa1bed72788440e3d6d55eaa9ed671cf4cba004316a012de4445140a"
   },
   "ppl.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/ppl.py",
-    "sha256": "3ef5bbaab7943f9b10113b163d2040cda6393d34c5bb73f764b7a119b3699a0c"
+    "sha256": "4975da65c59fc46130a5a19664ba1b09e5a8e55c06ea5d7204fc16906fc1fd9b"
   }
 }
