@@ -24,15 +24,18 @@
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/mmlu.py"
   },
   "eval_perf.py": {
-    "sha256": "7d4a5ca0ac36370312807fee12ebd9d520b53a60dcd1877f2adbe7ab2b8e513b",
-    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/perf.py"
+    "sha256": "130111ccbbfcf188ada8a68c9f9440c5a2b6fdb0a0f64a467d2f04bd4bc2a093",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/dev/eval/perf.py",
+    "note": "dev-for-v1.0.0: temporary dev pin; revert to master after v1.0.0"
   },
   "model_diff.py": {
-    "sha256": "e1df0f13aa1bed72788440e3d6d55eaa9ed671cf4cba004316a012de4445140a",
-    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/model_diff.py"
+    "sha256": "c8ec4f345fb59932e040300f86d4488d2ca4a8b6a4447c69308c1da8d2c905cf",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/dev/eval/model_diff.py",
+    "note": "dev-for-v1.0.0: temporary dev pin; revert to master after v1.0.0"
   },
   "ppl.py": {
-    "sha256": "4975da65c59fc46130a5a19664ba1b09e5a8e55c06ea5d7204fc16906fc1fd9b",
-    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/ppl.py"
+    "sha256": "d28c5e0d81e9505a2d4fdbb03a8af33d11e7d33865fda3e04bab85df28bdf007",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/dev/eval/ppl.py",
+    "note": "dev-for-v1.0.0: temporary dev pin; revert to master after v1.0.0"
   }
 }

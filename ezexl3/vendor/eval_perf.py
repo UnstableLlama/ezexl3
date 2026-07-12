@@ -1,6 +1,7 @@
 # perf.py - Vendored from turboderp-org/exllamav3
-# Source: https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/perf.py
+# Source: https://raw.githubusercontent.com/turboderp-org/exllamav3/dev/eval/perf.py
 # Vendored for pip-installable distribution (eval/ is not included in exllamav3 wheel)
+# NOTE: temporarily tracking dev (not master) for exllamav3 v1.0.0 prep; revert to master once v1.0.0 merges to master.
 
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -130,14 +131,16 @@ def main(args):
     if not args.skip_prefill:
         # Test prefill
         if not args.skip_warmup:
-            measure_prefill(args, model, cache, warmup = True)
+            for _ in range(1):
+                measure_prefill(args, model, cache, warmup = True)
         print(f"{col_yellow}Prefill:{col_default}")
         prefill_results = measure_prefill(args, model, cache)
         print()
 
     # Test generation
     if not args.skip_warmup:
-        measure_generate(args, model, cache, warmup = True)
+        for _ in range(1):
+            measure_generate(args, model, cache, warmup = True)
     print(f"{col_yellow}Generation{col_default}")
     generate_results = measure_generate(args, model, cache)
     print()

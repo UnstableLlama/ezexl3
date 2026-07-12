@@ -82,8 +82,14 @@ async function initModelPanel(status) {
     }
   });
   document.getElementById('use-mtp-checkbox').addEventListener('change', e => {
-    document.getElementById('draft-model-dir-input').disabled = e.target.checked;
+    if (e.target.checked) document.getElementById('use-ngram-checkbox').checked = false;
+    updateLoadDraftInputs();
   });
+  document.getElementById('use-ngram-checkbox').addEventListener('change', e => {
+    if (e.target.checked) document.getElementById('use-mtp-checkbox').checked = false;
+    updateLoadDraftInputs();
+  });
+  updateLoadDraftInputs();
 
   if (status.loaded) {
     setModelPanelLoaded(status.model_name);
@@ -98,6 +104,15 @@ async function initModelPanel(status) {
     } catch (_) {}
     await browseTo(startPath);
   }
+}
+
+// Draft options in the load panel are mutually exclusive: a draft model
+// dir, MTP, or n-gram drafting (checkboxes behave like radio buttons).
+function updateLoadDraftInputs() {
+  const mtp = document.getElementById('use-mtp-checkbox').checked;
+  const ngram = document.getElementById('use-ngram-checkbox').checked;
+  document.getElementById('draft-model-dir-input').disabled = mtp || ngram;
+  document.getElementById('use-ngram-min').disabled = !ngram;
 }
 
 // ── Panel toggle ────────────────────────────────────────────────
@@ -298,6 +313,9 @@ async function loadModel() {
   const cacheSize = seqLength ? seqLength * 2 : null;
   const cacheQuant = document.getElementById('model-cache-quant').value.trim() || null;
   const useMtp = document.getElementById('use-mtp-checkbox')?.checked || false;
+  const useNgram = document.getElementById('use-ngram-checkbox')?.checked || false;
+  const ngramMin = useNgram
+    ? (parseInt(document.getElementById('use-ngram-min')?.value) || 3) : 0;
 
   try {
     const res = await fetch('/api/model/load', {
@@ -306,9 +324,10 @@ async function loadModel() {
       body: JSON.stringify({
         model_dir: currentBrowsePath,
         lora_dirs: parseLoraDirs(),
-        draft_model_dir: useMtp ? null
+        draft_model_dir: (useMtp || useNgram) ? null
           : (document.getElementById('draft-model-dir-input')?.value || '').trim() || null,
         use_mtp: useMtp,
+        ngram_min: ngramMin,
         devices: gpuConfig.devices,
         device_ratios: gpuConfig.device_ratios,
         cache_size: cacheSize,

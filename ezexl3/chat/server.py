@@ -282,9 +282,20 @@ async def handle_model_load(request: web.Request) -> web.Response:
 
     draft_model_dir = (data.get("draft_model_dir") or "").strip() or None
     use_mtp = bool(data.get("use_mtp"))
+    ngram_min = data.get("ngram_min") or 0
+    if not isinstance(ngram_min, int) or isinstance(ngram_min, bool) or ngram_min < 0:
+        return web.json_response(
+            {"ok": False, "error": "ngram_min must be a non-negative integer"},
+            status=400,
+        )
     if use_mtp and draft_model_dir:
         return web.json_response(
             {"ok": False, "error": "Specify either a draft model directory or MTP drafting, not both"},
+            status=400,
+        )
+    if ngram_min and (use_mtp or draft_model_dir):
+        return web.json_response(
+            {"ok": False, "error": "Specify only one of: draft model directory, MTP drafting, or n-gram drafting"},
             status=400,
         )
     if draft_model_dir:
@@ -308,6 +319,7 @@ async def handle_model_load(request: web.Request) -> web.Response:
             lora_weights=lora_weights,
             draft_model_dir=draft_model_dir,
             use_mtp=use_mtp,
+            ngram_min=ngram_min,
             devices=data.get("devices"),
             device_ratios=data.get("device_ratios"),
             cache_size=data.get("cache_size"),
@@ -400,13 +412,19 @@ async def handle_draft_load(request: web.Request) -> web.Response:
         )
     data = await request.json()
     mtp = bool(data.get("mtp"))
-    draft_dir = (data.get("draft_model_dir") or "").strip()
-    if mtp and draft_dir:
+    ngram_min = data.get("ngram_min") or 0
+    if not isinstance(ngram_min, int) or isinstance(ngram_min, bool) or ngram_min < 0:
         return web.json_response(
-            {"ok": False, "error": "Specify either a draft model directory or MTP drafting, not both"},
+            {"ok": False, "error": "ngram_min must be a non-negative integer"},
             status=400,
         )
-    if not mtp:
+    draft_dir = (data.get("draft_model_dir") or "").strip()
+    if sum([bool(mtp), bool(draft_dir), bool(ngram_min)]) > 1:
+        return web.json_response(
+            {"ok": False, "error": "Specify only one of: draft model directory, MTP drafting, or n-gram drafting"},
+            status=400,
+        )
+    if not mtp and not ngram_min:
         if not draft_dir:
             return web.json_response(
                 {"ok": False, "error": "draft_model_dir is required"}, status=400,
@@ -423,7 +441,7 @@ async def handle_draft_load(request: web.Request) -> web.Response:
                 status=400,
             )
     try:
-        await asyncio.to_thread(engine.load_draft, draft_dir or None, mtp)
+        await asyncio.to_thread(engine.load_draft, draft_dir or None, mtp, ngram_min)
         return web.json_response({
             "ok": True,
             "status": engine.get_status(),

@@ -46,6 +46,10 @@
       <label class="gpu-auto-label">
         <input type="checkbox" id="use-mtp-checkbox"> MTP drafting (model's built-in MTP head)
       </label>
+      <label class="gpu-auto-label">
+        <input type="checkbox" id="use-ngram-checkbox"> N-gram drafting (no draft model)
+        <input type="number" id="use-ngram-min" value="3" min="1" step="1" style="width:52px;margin-left:6px" title="Minimum n-gram match length" disabled>
+      </label>
 
       <label class="sb-label" style="margin-top:12px">GPU</label>
       <label class="gpu-auto-label">
@@ -108,6 +112,10 @@
       <div class="sb-hint">Draft model for speculative decoding (e.g. DFlash). Must contain <code>config.json</code>.</div>
       <label class="gpu-auto-label">
         <input type="checkbox" id="draft-mtp-checkbox"> MTP drafting (model's built-in MTP head)
+      </label>
+      <label class="gpu-auto-label">
+        <input type="checkbox" id="draft-ngram-checkbox"> N-gram drafting (no draft model)
+        <input type="number" id="draft-ngram-min" value="3" min="1" step="1" style="width:52px;margin-left:6px" title="Minimum n-gram match length" disabled>
       </label>
       <div id="draft-info" class="draft-info" style="display:none"></div>
       <div class="draft-actions">

@@ -16,6 +16,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with model-name auto-detection (gpt-oss / gpt_oss / gptoss).
 
 ### Changed
+- **Vendored eval scripts pinned to dev for exllamav3 v1.0.0 prep**:
+  `model_diff.py`, `ppl.py`, and `eval_perf.py` re-vendored from upstream
+  **dev** (was master) to track the v1.0.0 staging branch. `model_diff.py`
+  gains cache-quant simulation and sweep modes (`-cq`, `-cca`, `-cqs`,
+  `-cqsf`), `-l/--length`, `-nr/--no_reconstruct`, and `main()` now returns
+  the KL divergence; `ppl.py` gains MXFP4/gpt-oss dequant handling and
+  `-hf_d/--hf_device`; `eval_perf.py` picks up an inert warmup-loop wrapper.
+  `VENDOR_MANIFEST.json` source URLs and hashes updated to dev, with a
+  `note` marking these as a temporary pin — revert to master once v1.0.0
+  merges. The remaining five vendored scripts are byte-identical on dev.
 - **KL divergence orientation**: model A is now the quant and model B the
   base, so the reported KL(A, B) is KL(quant ‖ base) — per turboderp's
   guidance. Previously the direction was reversed. KL values measured

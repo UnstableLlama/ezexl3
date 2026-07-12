@@ -151,6 +151,7 @@ class ChatEngine:
         self.draft_model_dir: str | None = None
         self.draft_model_name: str = ""
         self.use_mtp: bool = False
+        self.ngram_min: int = 0
         self.context_length: int = 0
         self.model_name: str = os.path.basename(self.model_dir) if self.model_dir else ""
 
@@ -185,8 +186,20 @@ class ChatEngine:
             self._cache_quant,
         )
 
+        # Recurrent (hybrid linear-attn) models like Qwen3.5 size their
+        # recurrent-state history at cache creation (Cache max_history);
+        # speculative decoding needs history >= draft length. min_draft_len
+        # covers any draft source — draft model dir, MTP head, or n-gram —
+        # at the generator's default draft length of 4. Older exllamav3
+        # builds lack the parameter, so only pass it when supported.
+        init_kwargs = {}
+        if self.draft_model_dir or self.use_mtp or self.ngram_min:
+            import inspect
+            if "min_draft_len" in inspect.signature(model_init.init).parameters:
+                init_kwargs["min_draft_len"] = 4
+
         torch.set_grad_enabled(False)
-        self.model, self.config, self.cache, self.tokenizer = model_init.init(args)
+        self.model, self.config, self.cache, self.tokenizer = model_init.init(args, **init_kwargs)
         self.context_length = self.cache.max_num_tokens
 
         if self.draft_model_dir or self.use_mtp:
@@ -214,6 +227,11 @@ class ChatEngine:
         if self.draft_model is not None:
             kwargs["draft_model"] = self.draft_model
             kwargs["draft_cache"] = self.draft_cache
+        elif self.ngram_min:
+            # Draft-model-free speculative decoding: match the last N+
+            # generated tokens against prior context (exllamav3 SAM ngram).
+            # Mutually exclusive with a draft model (Generator asserts).
+            kwargs["ngram_match_min"] = self.ngram_min
         self.generator = Generator(**kwargs)
 
     def unload(self):
@@ -230,6 +248,7 @@ class ChatEngine:
         self.draft_model_dir = None
         self.draft_model_name = ""
         self.use_mtp = False
+        self.ngram_min = 0
         self.model = None
         self.cache = None
         self.tokenizer = None
@@ -250,6 +269,7 @@ class ChatEngine:
         lora_weights: list[float] | None = None,
         draft_model_dir: str | None = None,
         use_mtp: bool = False,
+        ngram_min: int = 0,
         devices: list[int] | None = None,
         device_ratios: str | None = None,
         cache_size: int | None = None,
@@ -258,6 +278,8 @@ class ChatEngine:
         """Load a model (callable from the UI after startup)."""
         if use_mtp and draft_model_dir:
             raise ValueError("Cannot specify both a draft model directory and MTP drafting")
+        if ngram_min and (use_mtp or draft_model_dir):
+            raise ValueError("Cannot combine n-gram drafting with a draft model or MTP drafting")
         if self.is_loaded:
             self.unload()
         self.model_dir = os.path.abspath(model_dir)
@@ -265,6 +287,7 @@ class ChatEngine:
         self.lora_dirs = [os.path.abspath(p) for p in (lora_dirs or [])]
         self.lora_weights = list(lora_weights or [1.0] * len(self.lora_dirs))
         self.use_mtp = use_mtp
+        self.ngram_min = int(ngram_min or 0)
         if draft_model_dir:
             self.draft_model_dir = os.path.abspath(draft_model_dir)
             self.draft_model_name = os.path.basename(self.draft_model_dir)
@@ -374,19 +397,50 @@ class ChatEngine:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    def load_draft(self, draft_model_dir: str | None = None, mtp: bool = False):
-        """Load a draft model (or the main model's MTP head) onto an already-loaded model."""
+    def load_draft(
+        self,
+        draft_model_dir: str | None = None,
+        mtp: bool = False,
+        ngram_min: int = 0,
+    ):
+        """Enable a draft source (model dir, MTP head, or n-gram) on an already-loaded model."""
         if not self.is_loaded:
             raise RuntimeError("No model loaded")
         if self._is_generating:
             raise RuntimeError("Cannot load draft model while generating")
-        if mtp and draft_model_dir:
-            raise RuntimeError("Cannot specify both a draft model directory and MTP drafting")
-        if not mtp and not draft_model_dir:
-            raise RuntimeError("draft_model_dir is required unless MTP drafting is enabled")
+        selected = sum([bool(draft_model_dir), bool(mtp), bool(ngram_min)])
+        if selected > 1:
+            raise RuntimeError(
+                "Specify only one of: draft model directory, MTP drafting, or n-gram drafting"
+            )
+        if selected == 0:
+            raise RuntimeError(
+                "draft_model_dir is required unless MTP or n-gram drafting is enabled"
+            )
+
+        # Recurrent models can only draft if the cache was created with
+        # history slots (see load()); enabling drafting post-load on a
+        # cache without headroom corrupts recurrent state allocation.
+        caps = getattr(self.model, "caps", None)
+        if isinstance(caps, dict) and caps.get("recurrent_states"):
+            if getattr(self.cache, "max_history", 0) < 4:
+                raise RuntimeError(
+                    "This model uses recurrent states, so speculative decoding "
+                    "must be enabled at load time (the cache needs draft "
+                    "headroom). Reload the model with the draft option selected."
+                )
 
         if self.draft_model is not None:
             self.unload_draft()
+        self.ngram_min = 0
+
+        if ngram_min:
+            # No extra weights to load — just recreate the generator with
+            # ngram drafting enabled.
+            self.ngram_min = int(ngram_min)
+            self._create_generator()
+            print(f"  N-gram drafting enabled (min match {self.ngram_min})")
+            return
 
         self.use_mtp = mtp
         if draft_model_dir:
@@ -397,17 +451,19 @@ class ChatEngine:
         print(f"  Draft model loaded: {self.draft_model_name}")
 
     def unload_draft(self):
-        """Unload the current draft model without touching the main model."""
+        """Disable the current draft source without touching the main model."""
         if not self.is_loaded:
             raise RuntimeError("No model loaded")
         if self._is_generating:
             raise RuntimeError("Cannot unload draft model while generating")
-        if self.draft_model is None:
+        if self.draft_model is None and not self.ngram_min:
             return
 
+        had_ngram = self.ngram_min > 0
         self._unload_draft_model()
+        self.ngram_min = 0
         self._create_generator()
-        print("  Draft model unloaded")
+        print("  N-gram drafting disabled" if had_ngram else "  Draft model unloaded")
 
     @staticmethod
     def detect_gpus() -> list[dict]:
@@ -673,6 +729,7 @@ class ChatEngine:
             "draft_model_name": self.draft_model_name,
             "draft_model_loaded": self.draft_model is not None,
             "draft_mtp": getattr(self, "use_mtp", False),
+            "ngram_min": getattr(self, "ngram_min", 0),
             "available_modes": {
                 k: v.description for k, v in prompt_formats.items()
             },
