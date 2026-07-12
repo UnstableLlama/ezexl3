@@ -297,6 +297,21 @@ def build_parser() -> argparse.ArgumentParser:
     ch.add_argument("-cq", "--cache-quant", type=str, default=None,
                     help="Cache quantization bits: kv_bits or k_bits,v_bits (default: 6,6)")
 
+    # --- mtp (MTP-tensor-only quantization) ---
+    mt = sub.add_parser(
+        "mtp",
+        help="Quantize just the MTP tensors from a base model (adds MTP support to legacy quants)",
+    )
+    mt.add_argument("-m", "--models", nargs="+", required=True,
+                    help="One or more base model directories (original HF checkpoint with MTP head)")
+    mt.add_argument("-mb", "--mtp-bits", type=int, default=4,
+                    help="MTP tensor bitrate (16 = unquantized, default: 4)")
+    mt.add_argument("-o", "--out-file", default=None,
+                    help="Output .safetensors file (default: <model>/mtp-quant/mtp_<bits>bpw.safetensors). "
+                         "Single model only.")
+    mt.add_argument("-d", "--device", type=int, default=0,
+                    help="CUDA device index used for quantization (default: 0)")
+
     # --- readme ---
     r = sub.add_parser("readme", help="README only (CSV -> README)")
     r.add_argument("-m", "--models", nargs="+", required=True, help="One or more model directories")
@@ -393,6 +408,29 @@ def main(argv: Optional[List[str]] = None) -> int:
             open_browser=not args.no_browser,
         )
         return 0
+
+    if cmd == "mtp":
+        from ezexl3.mtp import run_mtp
+        if args.out_file and len(args.models) > 1:
+            raise SystemExit("-o/--out-file only makes sense with a single model")
+        failed_models: List[str] = []
+        for model_dir in args.models:
+            print(f"\nConverting MTP tensors: {model_dir}")
+            try:
+                rc = run_mtp(
+                    model_dir=model_dir,
+                    mtp_bits=args.mtp_bits,
+                    out_file=args.out_file,
+                    device=args.device,
+                )
+                if rc != 0:
+                    failed_models.append(model_dir)
+            except Exception as e:
+                print(f"Error converting MTP for {model_dir}: {e}")
+                import traceback
+                traceback.print_exc()
+                failed_models.append(model_dir)
+        return 1 if failed_models else 0
 
     from ezexl3.repo import run_repo, run_quant_stage, run_measure_stage
 

@@ -1,34 +1,38 @@
 {
+  "convert_mtp.py": {
+    "sha256": "334eea29ce8352a614f104ed2d193b86ab42bdf12f6f9366aadc7dbbdc49053f",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/dev/util/convert_mtp.py"
+  },
   "eval_diversity.py": {
-    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/diversity.py",
-    "sha256": "180ca8e39dc90a3c8f9ffe5453b8680eaae678522fa78c7f40b88fc0a1389144"
+    "sha256": "180ca8e39dc90a3c8f9ffe5453b8680eaae678522fa78c7f40b88fc0a1389144",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/diversity.py"
   },
   "eval_humaneval.py": {
-    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/humaneval.py",
-    "sha256": "78c705361ff92fd615363cf347c6f3d253eaa70fc024fde94909da703cb7af9d"
+    "sha256": "78c705361ff92fd615363cf347c6f3d253eaa70fc024fde94909da703cb7af9d",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/humaneval.py"
   },
   "eval_ifbench.py": {
-    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/ifbench.py",
-    "sha256": "b1b9f4356e880c88bc3d77179353783948e9a39bee5f21f0256b22c2a1e957d6"
+    "sha256": "b1b9f4356e880c88bc3d77179353783948e9a39bee5f21f0256b22c2a1e957d6",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/ifbench.py"
   },
   "eval_longctx.py": {
-    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/longctx.py",
-    "sha256": "1ede93538e4e0f4f4fb9b87a5400d6bd763e63011a1c22fef098d323f2a972ee"
+    "sha256": "1ede93538e4e0f4f4fb9b87a5400d6bd763e63011a1c22fef098d323f2a972ee",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/longctx.py"
   },
   "eval_mmlu.py": {
-    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/mmlu.py",
-    "sha256": "71ce602a144b5d82e2367a4920db5c0668dc629776d3be417d9615ec2509b568"
+    "sha256": "71ce602a144b5d82e2367a4920db5c0668dc629776d3be417d9615ec2509b568",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/mmlu.py"
   },
   "eval_perf.py": {
-    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/perf.py",
-    "sha256": "7d4a5ca0ac36370312807fee12ebd9d520b53a60dcd1877f2adbe7ab2b8e513b"
+    "sha256": "7d4a5ca0ac36370312807fee12ebd9d520b53a60dcd1877f2adbe7ab2b8e513b",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/perf.py"
   },
   "model_diff.py": {
-    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/model_diff.py",
-    "sha256": "e1df0f13aa1bed72788440e3d6d55eaa9ed671cf4cba004316a012de4445140a"
+    "sha256": "e1df0f13aa1bed72788440e3d6d55eaa9ed671cf4cba004316a012de4445140a",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/model_diff.py"
   },
   "ppl.py": {
-    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/ppl.py",
-    "sha256": "4975da65c59fc46130a5a19664ba1b09e5a8e55c06ea5d7204fc16906fc1fd9b"
+    "sha256": "4975da65c59fc46130a5a19664ba1b09e5a8e55c06ea5d7204fc16906fc1fd9b",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/ppl.py"
   }
 }

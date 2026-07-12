@@ -63,6 +63,18 @@ const COMMANDS = {
     ],
   },
 
+  mtp: {
+    label: "MTP",
+    subtitle: "MTP Tensors",
+    description: "Quantize just the MTP tensors — add speculative decoding to legacy quants",
+    fields: [
+      { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "Original HF checkpoint containing the MTP head (Qwen3.5+)" },
+      { name: "mtp_bits", flag: "-mb", type: "number", default: "4", label: "MTP Bits", help: "Bitrate for the MTP tensors (16 = unquantized)" },
+      { name: "out_file", flag: "-o", type: "text", label: "Output File", placeholder: "(default: <model>/mtp-quant/mtp_<bits>bpw.safetensors)", help: "Output .safetensors — copy it alongside a legacy quant's .safetensors files" },
+      { name: "device", flag: "-d", type: "number", default: "0", label: "CUDA Device", help: "Single GPU index used for quantization" },
+    ],
+  },
+
   measure: {
     label: "Measure",
     subtitle: "Measure Only",
