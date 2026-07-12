@@ -268,11 +268,12 @@ def _worker_measure(
 
         try:
             if phase == "kl":
+                # A = quant, B = base: reported KL(A, B) is KL(quant || base)
                 kl_cmd = [
                     executable,
                     model_diff_script,
-                    "-ma", base_dir,
-                    "-mb", model_dir,
+                    "-ma", model_dir,
+                    "-mb", base_dir,
                     "-r", "100",
                     "-d", str(device),
                 ]

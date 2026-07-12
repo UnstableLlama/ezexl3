@@ -4,6 +4,25 @@ All notable changes to ezexl3 are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **MTP tensor quantization** (`ezexl3 mtp` + dashboard MTP tab): wraps
+  exllamav3's new `util/convert_mtp.py` (dev branch). Quantizes just the
+  MTP tensors from a base checkpoint into a standalone `.safetensors`
+  file that can be dropped alongside a legacy quant's weights to enable
+  MTP speculative decoding. Skips if the output file already exists.
+- **chat: GPT-OSS (harmony) prompt format** ported from exllamav3 dev,
+  with model-name auto-detection (gpt-oss / gpt_oss / gptoss).
+
+### Changed
+- **KL divergence orientation**: model A is now the quant and model B the
+  base, so the reported KL(A, B) is KL(quant ‖ base) — per turboderp's
+  guidance. Previously the direction was reversed. KL values measured
+  before this change are not directly comparable (KL is asymmetric);
+  delete the affected rows from the measurement DB and re-run `measure`
+  if you need consistent numbers within one model's table.
+
 ## [0.1.0] - 2026-04-16
 
 First tagged release. `ezexl3` wraps the exllamav3 quantize + measure +

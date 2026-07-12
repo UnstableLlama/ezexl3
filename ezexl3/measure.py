@@ -157,12 +157,15 @@ def run_model_diff(
 ) -> float:
     """
     Runs internal model_diff.py and returns KL divergence.
+
+    Orientation: model A is the quant, model B is the base, so the reported
+    KL(A, B) is KL(quant || base) — per upstream (turboderp) guidance.
     """
     cmd = [
         sys.executable,
         _MODEL_DIFF_SCRIPT,
-        "-ma", base_dir,
-        "-mb", other_dir,
+        "-ma", other_dir,
+        "-mb", base_dir,
         "-r", str(r),
         "-d", str(device),
     ]
