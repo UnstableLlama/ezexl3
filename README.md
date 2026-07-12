@@ -95,6 +95,9 @@ ezexl3 measure -m /path/to/base_model -b 2,3,4,5,6 -d 0,1
 # Generate README only (from existing CSV)
 ezexl3 readme -m /path/to/base_model -t fire
 
+# Quantize just the MTP tensors (adds speculative decoding to legacy quants)
+ezexl3 mtp -m /path/to/base_model -mb 4 -d 0
+
 # Upload to HuggingFace (dry-run by default)
 ezexl3 upload -m /path/to/base_model
 
