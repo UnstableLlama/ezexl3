@@ -239,7 +239,7 @@
       <input type="text" id="ratings-dir" class="mono" placeholder="(default)">
     </div>
     <div class="sb-hint" id="ratings-info"></div>
-    <div class="sb-hint">&#x1F44D;/&#x1F44E; on replies &rarr; KTO rows; &#x1F44D;&times;&#x1F44E; among regens and &#x2696; &rarr; DPO pairs. Trainer-ready JSONL.</div>
+    <div class="sb-hint">Mode toggle is in the top bar. KTO: &#x1F44D;/&#x1F44E; a reply &rarr; labeled row. DPO: each send generates two candidates &mdash; pick the better &rarr; pair. Trainer-ready JSONL.</div>
   </div>
 
   <h2>Model</h2>
@@ -253,6 +253,10 @@
   <div id="header">
     <button id="toggle-sidebar" title="Toggle settings">&#9776;</button>
     <span id="header-title">ezexl3 chat</span>
+    <div id="rating-mode-toggle" title="Preference-data capture mode">
+      <button data-mode="kto" class="active" title="KTO: &#x1F44D;/&#x1F44E; a reply writes one labeled row">KTO</button>
+      <button data-mode="dpo" title="DPO: each send generates two candidates; pick the better one to record a pair">DPO</button>
+    </div>
     <span id="header-model"></span>
   </div>
   <div id="chat-area">

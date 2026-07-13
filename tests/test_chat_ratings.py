@@ -1,11 +1,13 @@
 """
 Tests for chat preference-rating capture (KTO / DPO data collection).
 
-The chat UI writes thumbs ratings and sibling preferences into JSONL
-datasets shaped exactly like the rows UnstableLlama/exllamav3's
-training/qlora_train_pref.py reads with its default keys
-(--prompt-key prompt, --completion-key completion, --label-key label,
---chosen-key chosen, --rejected-key rejected).
+The chat UI captures in one of two modes: KTO (👍/👎 writes independent
+labeled rows) or DPO (each send generates two candidates; picking the
+better one writes a single chosen/rejected pair). Rows are JSONL shaped
+exactly like what UnstableLlama/exllamav3's training/qlora_train_pref.py
+reads with its default keys (--prompt-key prompt, --completion-key
+completion, --label-key label, --chosen-key chosen, --rejected-key
+rejected).
 
 Mocks torch and exllamav3 so no GPU or model download is required.
 """
@@ -111,46 +113,45 @@ class TestRatingsStore(unittest.TestCase):
         self.assertEqual(row["model"], "FakeModel")
         self.assertIn("ts", row)
 
-    def test_auto_pairs_cross_product_and_resync(self):
+    def test_pair_row_is_trainer_format(self):
         store, root = make_store()
-        group = [
-            {"node_id": "a", "content": "good1", "label": True},
-            {"node_id": "b", "content": "good2", "label": True},
-            {"node_id": "c", "content": "bad1", "label": False},
-            {"node_id": "d", "content": "meh", "label": None},
-        ]
-        store.sync_dpo_auto("t", PROMPT, group, "m")
-        pairs = store.state("t")["dpo"]
-        self.assertEqual(len(pairs), 2)  # 2 goods x 1 bad; unrated excluded
-        self.assertEqual({(p["chosen"], p["rejected"]) for p in pairs},
-                         {("a", "c"), ("b", "c")})
-        row = json.loads((root / "t.dpo.jsonl").read_text().splitlines()[0])
+        store.rate_dpo_pair("t", PROMPT, {"node_id": "a", "content": "better"},
+                            {"node_id": "b", "content": "worse"}, "FakeModel")
+        row = json.loads((root / "t.dpo.jsonl").read_text())
+        # Exact default keys qlora_train_pref.py reads
         self.assertEqual(row["prompt"], PROMPT)
-        self.assertEqual(row["chosen"], "good1")
-        self.assertEqual(row["rejected"], "bad1")
-        self.assertEqual(row["source"], "auto")
+        self.assertEqual(row["chosen"], "better")
+        self.assertEqual(row["rejected"], "worse")
+        # Provenance rides along
+        self.assertEqual(row["chosen_node_id"], "a")
+        self.assertEqual(row["rejected_node_id"], "b")
+        self.assertEqual(row["source"], "duel")
+        self.assertEqual(row["model"], "FakeModel")
+        self.assertIn("ts", row)
 
-        # Flip "a" to bad and resync: its pairs must vanish, not linger
-        group[0]["label"] = False
-        store.sync_dpo_auto("t", PROMPT, group, "m")
-        pairs = store.state("t")["dpo"]
-        self.assertEqual({(p["chosen"], p["rejected"]) for p in pairs},
-                         {("b", "c"), ("b", "a")})
-
-    def test_manual_pairs_survive_auto_resync(self):
-        store, _ = make_store()
-        store.rate_dpo_manual("t", PROMPT, {"node_id": "x", "content": "X"},
-                              [{"node_id": "y", "content": "Y"}], "m")
-        store.sync_dpo_auto("t", PROMPT, [
-            {"node_id": "x", "content": "X", "label": None},
-            {"node_id": "y", "content": "Y", "label": None},
-        ], "m")
+    def test_pair_upsert_is_keyed_by_unordered_duo(self):
+        store, root = make_store()
+        store.rate_dpo_pair("t", PROMPT, {"node_id": "a", "content": "A"},
+                            {"node_id": "b", "content": "B"}, "m")
+        # Changing your mind swaps the pair in place, no contradictory rows
+        store.rate_dpo_pair("t", PROMPT, {"node_id": "b", "content": "B"},
+                            {"node_id": "a", "content": "A"}, "m")
         pairs = store.state("t")["dpo"]
         self.assertEqual(len(pairs), 1)
-        self.assertEqual(pairs[0]["source"], "manual")
-        # Toggle-off removes all manual pairs where x is chosen
-        store.rate_dpo_manual("t", PROMPT, {"node_id": "x"}, [], "m",
-                              remove=True)
+        self.assertEqual(pairs[0]["chosen"], "b")
+        rows = (root / "t.dpo.jsonl").read_text().splitlines()
+        self.assertEqual(len(rows), 1)
+        # A different duo is a separate row
+        store.rate_dpo_pair("t", PROMPT, {"node_id": "c", "content": "C"},
+                            {"node_id": "d", "content": "D"}, "m")
+        self.assertEqual(len(store.state("t")["dpo"]), 2)
+
+    def test_pair_remove(self):
+        store, _ = make_store()
+        store.rate_dpo_pair("t", PROMPT, {"node_id": "a", "content": "A"},
+                            {"node_id": "b", "content": "B"}, "m")
+        store.rate_dpo_pair("t", PROMPT, {"node_id": "a", "content": ""},
+                            {"node_id": "b", "content": ""}, "m", remove=True)
         self.assertEqual(store.state("t")["dpo"], [])
 
     def test_foreign_lines_preserved(self):
@@ -183,8 +184,8 @@ class TestRatingsStore(unittest.TestCase):
     def test_list_datasets(self):
         store, root = make_store()
         store.rate_kto("alpha", "n", PROMPT, "c", True, "m")
-        store.rate_dpo_manual("beta", PROMPT, {"node_id": "x", "content": "X"},
-                              [{"node_id": "y", "content": "Y"}], "m")
+        store.rate_dpo_pair("beta", PROMPT, {"node_id": "x", "content": "X"},
+                            {"node_id": "y", "content": "Y"}, "m")
         self.assertEqual(store.list_datasets(), ["alpha", "beta"])
 
 
@@ -215,40 +216,47 @@ class TestRatingRoutes(AioHTTPTestCase):
         self.addCleanup(self._cfg_patch.stop)
         return create_app(self.engine)
 
-    async def test_rate_kto_with_auto_pairs(self):
-        body = {
-            "dataset": "t",
-            "prompt": PROMPT,
-            "kto": {"node_id": "a", "completion": "good", "label": True},
-            "group": [
-                {"node_id": "a", "content": "good", "label": True},
-                {"node_id": "b", "content": "bad", "label": False},
-            ],
-        }
-        resp = await self.client.request("POST", "/api/rate", json=body)
-        self.assertEqual(resp.status, 200)
+    async def test_rate_kto_writes_no_pairs(self):
+        # KTO mode: 👍 and 👎 on sibling branches stay independent rows —
+        # nothing is auto-paired.
+        for node, label in (("a", True), ("b", False)):
+            resp = await self.client.request("POST", "/api/rate", json={
+                "dataset": "t",
+                "prompt": PROMPT,
+                "kto": {"node_id": node, "completion": node * 2, "label": label},
+            })
+            self.assertEqual(resp.status, 200)
         data = await resp.json()
-        self.assertEqual(data["kto"], {"a": True})
-        self.assertEqual(len(data["dpo"]), 1)
-        self.assertEqual(data["dpo"][0]["chosen"], "a")
-        # Server stamps the loaded model's name on rows
+        self.assertEqual(data["kto"], {"a": True, "b": False})
+        self.assertEqual(data["dpo"], [])
+        # Server stamps the loaded model's directory on rows (full path —
+        # the basename alone is ambiguous for .../Model-Name/4 layouts).
         row = json.loads(
-            (Path(self.tmpdir) / "t.kto.jsonl").read_text())
-        self.assertEqual(row["model"], "FakeModel-0.5B")
+            (Path(self.tmpdir) / "t.kto.jsonl").read_text().splitlines()[0])
+        self.assertEqual(row["model"], "/fake/FakeModel-0.5B")
 
-    async def test_rate_manual_pair(self):
+    async def test_rate_duel_pair(self):
         body = {
             "dataset": "t",
             "prompt": PROMPT,
-            "manual": {
+            "pair": {
                 "chosen": {"node_id": "a", "content": "better"},
-                "rejected": [{"node_id": "b", "content": "worse"}],
+                "rejected": {"node_id": "b", "content": "worse"},
             },
         }
         resp = await self.client.request("POST", "/api/rate", json=body)
         self.assertEqual(resp.status, 200)
         data = await resp.json()
-        self.assertEqual(data["dpo"][0]["source"], "manual")
+        self.assertEqual(data["dpo"], [
+            {"chosen": "a", "rejected": "b", "source": "duel"},
+        ])
+        # remove withdraws the pair (content not needed)
+        body["pair"] = {"chosen": {"node_id": "a"},
+                        "rejected": {"node_id": "b"}, "remove": True}
+        resp = await self.client.request("POST", "/api/rate", json=body)
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(data["dpo"], [])
 
     async def test_rate_rejects_bad_input(self):
         cases = [
@@ -262,6 +270,11 @@ class TestRatingRoutes(AioHTTPTestCase):
             {"dataset": "t", "prompt": PROMPT},  # nothing to record
             {"dataset": "t", "prompt": PROMPT,
              "kto": {"node_id": "a", "completion": "x", "label": "yes"}},
+            {"dataset": "t", "prompt": PROMPT,   # pair without rejected id
+             "pair": {"chosen": {"node_id": "a", "content": "x"}}},
+            {"dataset": "t", "prompt": PROMPT,   # pair without content
+             "pair": {"chosen": {"node_id": "a"},
+                      "rejected": {"node_id": "b"}}},
         ]
         for body in cases:
             resp = await self.client.request("POST", "/api/rate", json=body)
@@ -295,18 +308,27 @@ class TestUiWiring(unittest.TestCase):
         html = (REPO_ROOT / "ezexl3/chat/static/index.html").read_text()
         self.assertIn('id="ratings-dataset"', html)
         self.assertIn('id="ratings-dir"', html)
+        self.assertIn('id="rating-mode-toggle"', html)
+        self.assertIn('data-mode="kto"', html)
+        self.assertIn('data-mode="dpo"', html)
         self.assertIn('js/ratings.js', html)
 
-    def test_render_wires_rating_buttons(self):
+    def test_render_wires_rating_controls(self):
         js = (REPO_ROOT / "ezexl3/chat/static/js/render.js").read_text()
         self.assertIn("rateNode", js)
-        self.assertIn("preferNode", js)
+        self.assertIn("renderDuelChoice", js)
+        self.assertIn("resolveDuel", js)
 
     def test_ratings_js_defines_api(self):
         js = (REPO_ROOT / "ezexl3/chat/static/js/ratings.js").read_text()
-        for name in ("rateNode", "preferNode", "refreshRatings",
-                     "buildPromptTurns", "siblingGroup"):
+        for name in ("rateNode", "resolveDuel", "setRatingsMode",
+                     "refreshRatings", "buildPromptTurns", "removePairFor"):
             self.assertIn(name, js)
+
+    def test_chat_js_runs_duels_in_dpo_mode(self):
+        js = (REPO_ROOT / "ezexl3/chat/static/js/chat.js").read_text()
+        self.assertIn("runDuel", js)
+        self.assertIn("ratingsMode === 'dpo'", js)
 
 
 if __name__ == "__main__":

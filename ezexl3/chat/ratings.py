@@ -1,5 +1,10 @@
 # Preference-rating store for the chat UI (KTO / DPO data collection).
 #
+# The UI captures in one of two modes (header toggle):
+#   KTO — 👍/👎 on a reply writes one independent labeled row.
+#   DPO — each send/regen produces two candidates; picking the better one
+#         writes one chosen/rejected pair.
+#
 # Rows are appended to plain JSONL files in the exact column format that
 # UnstableLlama/exllamav3's training/qlora_train_pref.py reads with its
 # default keys, so a collected dataset trains with zero conversion:
@@ -127,74 +132,33 @@ class RatingsStore:
                 })
             self._write(path, rows)
 
-    def sync_dpo_auto(self, dataset: str, prompt: list,
-                      group: list[dict], model: str) -> None:
-        """Rebuild auto-generated DPO pairs for one sibling group.
+    def rate_dpo_pair(self, dataset: str, prompt: list, chosen: dict,
+                      rejected: dict, model: str,
+                      remove: bool = False) -> None:
+        """Upsert (or with remove=True, delete) the DPO pair for one duo.
 
-        *group* is [{node_id, content, label}] for every assistant sibling
-        (label True/False/None). All existing source=="auto" pairs whose
-        chosen AND rejected ids fall inside the group are replaced by the
-        cross product of thumbed-up × thumbed-down siblings. Manual pairs
-        are never touched.
+        The pair is keyed by the UNORDERED {chosen, rejected} node-id duo,
+        so re-picking the other candidate of a duel replaces the old row
+        instead of leaving two contradictory pairs on disk.
         """
-        ids = {g["node_id"] for g in group}
-        goods = [g for g in group if g.get("label") is True]
-        bads = [g for g in group if g.get("label") is False]
         path = self._path(dataset, "dpo")
+        duo = {chosen["node_id"], rejected["node_id"]}
         with _LOCK:
             rows = [r for r in self._read(path)
                     if isinstance(r, str)
-                    or r.get("source") != "auto"
-                    or r.get("chosen_node_id") not in ids
-                    or r.get("rejected_node_id") not in ids]
-            for g in goods:
-                for b in bads:
-                    rows.append({
-                        "prompt": prompt,
-                        "chosen": g["content"],
-                        "rejected": b["content"],
-                        "chosen_node_id": g["node_id"],
-                        "rejected_node_id": b["node_id"],
-                        "source": "auto",
-                        "model": model,
-                        "ts": _now(),
-                    })
-            self._write(path, rows)
-
-    def rate_dpo_manual(self, dataset: str, prompt: list, chosen: dict,
-                        rejected: list[dict], model: str,
-                        remove: bool = False) -> None:
-        """Add (or with remove=True, delete) manual pairs chosen-vs-each-rejected.
-
-        remove drops ALL manual pairs where this node is the chosen side —
-        the ⚖ toggle-off case.
-        """
-        path = self._path(dataset, "dpo")
-        cid = chosen["node_id"]
-        with _LOCK:
-            if remove:
-                rows = [r for r in self._read(path)
-                        if isinstance(r, str)
-                        or r.get("source") != "manual"
-                        or r.get("chosen_node_id") != cid]
-            else:
-                rej_ids = {r["node_id"] for r in rejected}
-                rows = [r for r in self._read(path)
-                        if isinstance(r, str)
-                        or r.get("source") != "manual"
-                        or r.get("chosen_node_id") != cid
-                        or r.get("rejected_node_id") not in rej_ids]
-                for rj in rejected:
-                    rows.append({
-                        "prompt": prompt,
-                        "chosen": chosen["content"],
-                        "rejected": rj["content"],
-                        "chosen_node_id": cid,
-                        "rejected_node_id": rj["node_id"],
-                        "source": "manual",
-                        "model": model,
-                        "ts": _now(),
-                    })
+                    or {r.get("chosen_node_id"),
+                        r.get("rejected_node_id")} != duo]
+            if not remove:
+                rows.append({
+                    "prompt": prompt,
+                    "chosen": chosen["content"],
+                    "rejected": rejected["content"],
+                    "chosen_node_id": chosen["node_id"],
+                    "rejected_node_id": rejected["node_id"],
+                    "source": "duel",
+                    "model": model,
+                    "ts": _now(),
+                })
             self._write(path, rows)
 
     # ── queries ───────────────────────────────────────────────────

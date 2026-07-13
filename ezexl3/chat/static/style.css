@@ -47,6 +47,21 @@ body { display: flex; overflow: hidden; }
 #header-title { font-weight: 600; font-size: 14px; }
 #header-model { color: var(--text-dim); font-size: 12px; margin-left: auto; font-family: var(--mono); }
 
+/* Preference-capture mode toggle (KTO / DPO) */
+#rating-mode-toggle {
+  display: flex; margin-left: 14px;
+  border: 1px solid var(--border-light); border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+#rating-mode-toggle button {
+  background: transparent; border: none; cursor: pointer;
+  color: var(--text-dim); font-size: 11px; font-weight: 600;
+  padding: 4px 12px; letter-spacing: 0.04em;
+}
+#rating-mode-toggle button + button { border-left: 1px solid var(--border-light); }
+#rating-mode-toggle button:hover { color: var(--text-muted); }
+#rating-mode-toggle button.active { background: var(--accent); color: #fff; }
+
 #chat-area {
   flex: 1; overflow-y: auto; scroll-behavior: smooth;
   padding: 0 100px;
@@ -581,8 +596,41 @@ body { display: flex; overflow: hidden; }
 .msg-rating button.rated-pair { filter: none; }
 .msg-rating button.rated-good { border-color: #2f6e3b; background: rgba(74, 222, 128, 0.12); }
 .msg-rating button.rated-bad { border-color: #7a3030; background: rgba(248, 113, 113, 0.12); }
-.msg-rating button.rated-pair { border-color: #6b5b1e; background: rgba(250, 204, 21, 0.12); }
+.msg-rating button.rated-pair { border-color: #6b5b1e; background: rgba(250, 204, 21, 0.12); color: #facc15; }
 #messages.editing .msg-rating button { opacity: 0.3; pointer-events: none; }
+
+/* ── DPO duel (two candidates side by side) ────────────────────── */
+.duel-block { margin: 12px 0; }
+.duel-wrap { display: flex; gap: 12px; align-items: stretch; }
+.duel-candidate {
+  flex: 1 1 0; min-width: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+}
+.duel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.duel-label {
+  font-size: 11px; font-weight: 700; color: var(--text-dim);
+  letter-spacing: 0.08em;
+}
+.duel-pick-btn {
+  background: var(--accent); color: #fff; border: none; cursor: pointer;
+  padding: 4px 14px; border-radius: var(--radius-sm);
+  font-size: 12px; font-weight: 600;
+}
+.duel-pick-btn:hover { background: var(--accent-hover); }
+.duel-skip { text-align: center; margin-top: 8px; }
+.duel-skip button {
+  background: none; border: 1px solid var(--border-light); cursor: pointer;
+  color: var(--text-dim); font-size: 11px;
+  padding: 3px 12px; border-radius: var(--radius-sm);
+}
+.duel-skip button:hover { color: var(--text-muted); border-color: var(--text-dim); }
+.msg-body.duel-waiting { color: var(--text-dim); }
 
 /* Disable all actions during editing */
 #messages.editing .msg-actions-inline button,

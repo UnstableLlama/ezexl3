@@ -117,7 +117,8 @@ async function loadDraft() {
   loadBtn.disabled = true;
   loadBtn.textContent = 'Loading...';
   statusEl.style.display = '';
-  statusEl.textContent = 'Loading draft model...';
+  statusEl.textContent =
+    'Loading draft (recurrent models reload with the draft — may take a while)...';
 
   try {
     const res = await fetch('/api/draft/load', {
@@ -132,8 +133,9 @@ async function loadDraft() {
     if (data.ok) {
       syncDraftState(data.status);
       updateDraftModelInfo(data.status);
-      statusEl.textContent = 'Draft loaded.';
-      setTimeout(() => { statusEl.style.display = 'none'; }, 2000);
+      statusEl.textContent = data.reloaded
+        ? 'Model reloaded with draft.' : 'Draft loaded.';
+      setTimeout(() => { statusEl.style.display = 'none'; }, 3000);
     } else {
       statusEl.textContent = 'Error: ' + (data.error || 'Unknown error');
       updateDraftControls();

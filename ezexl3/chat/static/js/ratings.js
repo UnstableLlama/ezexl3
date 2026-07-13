@@ -1,23 +1,30 @@
 // ── Ratings: KTO/DPO preference-data capture ────────────────────
-// 👍/👎 on assistant messages writes KTO rows; 👍×👎 within a sibling
-// group auto-generates DPO pairs; ⚖ records explicit manual pairs.
+// A header toggle picks the capture mode:
+//   KTO — 👍/👎 on any assistant reply writes one independent labeled row.
+//   DPO — each send/regen generates TWO candidates side by side; picking
+//         the better one writes a single chosen/rejected pair.
 // Rows land in <ratings_dir>/<dataset>.{kto,dpo}.jsonl, trainer-ready.
 
 let ratingsDataset = 'chat';
+let ratingsMode = 'kto';    // 'kto' | 'dpo'
+let pendingDuel = null;     // {a, b} assistant node ids awaiting a pick
 const ratingsState = {
   kto: new Map(),           // node_id -> bool
-  manualChosen: new Set(),  // node_ids chosen in a manual pair
+  pairs: [],                // [{chosen, rejected}] node-id pairs on disk
   counts: {kto: 0, dpo: 0},
   dir: '',
 };
 
 function getRating(nodeId) { return ratingsState.kto.get(nodeId); }
-function isManualChosen(nodeId) { return ratingsState.manualChosen.has(nodeId); }
+function pairForNode(nodeId) {
+  return ratingsState.pairs.find(p => p.chosen === nodeId) || null;
+}
 
 function applyRatingsPayload(data) {
   ratingsState.kto = new Map(Object.entries(data.kto || {}));
-  ratingsState.manualChosen = new Set(
-    (data.dpo || []).filter(p => p.source === 'manual').map(p => p.chosen));
+  ratingsState.pairs = (data.dpo || [])
+    .filter(p => p.chosen && p.rejected)
+    .map(p => ({chosen: p.chosen, rejected: p.rejected}));
   ratingsState.counts = {
     kto: Object.keys(data.kto || {}).length,
     dpo: (data.dpo || []).length,
@@ -33,6 +40,24 @@ async function refreshRatings() {
     applyRatingsPayload(await res.json());
     renderActiveTree();
   } catch {}
+}
+
+// ── Capture mode ────────────────────────────────────────────────
+
+function setRatingsMode(mode, persist = true) {
+  ratingsMode = mode === 'dpo' ? 'dpo' : 'kto';
+  document.querySelectorAll('#rating-mode-toggle button').forEach(b =>
+    b.classList.toggle('active', b.dataset.mode === ratingsMode));
+  // A duel can't outlive a mode switch — dismiss it without recording.
+  if (ratingsMode !== 'dpo' && pendingDuel) resolveDuel(pendingDuel.b, false);
+  if (persist) {
+    fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ratings_mode: ratingsMode}),
+    }).catch(() => {});
+  }
+  renderActiveTree();
 }
 
 // ── Row construction ────────────────────────────────────────────
@@ -54,21 +79,6 @@ function buildPromptTurns(assistantNodeId) {
   return turns;
 }
 
-function siblingGroup(assistantNodeId) {
-  // All assistant siblings (same user parent) with current labels.
-  const node = tree.nodes.get(assistantNodeId);
-  const parent = node ? tree.nodes.get(node.parentId) : null;
-  if (!parent) return [];
-  return parent.children
-    .map(id => tree.nodes.get(id))
-    .filter(n => n && n.role === 'assistant' && n.content.trim())
-    .map(n => ({
-      node_id: n.id,
-      content: n.content,
-      label: ratingsState.kto.has(n.id) ? ratingsState.kto.get(n.id) : null,
-    }));
-}
-
 // ── Actions ─────────────────────────────────────────────────────
 
 async function rateNode(nodeId, label) {
@@ -81,39 +91,57 @@ async function rateNode(nodeId, label) {
   const current = ratingsState.kto.get(nodeId);
   const newLabel = (current === label) ? null : label;
 
-  // Update local state first so the sibling group carries the new label.
-  if (newLabel === null) ratingsState.kto.delete(nodeId);
-  else ratingsState.kto.set(nodeId, newLabel);
-
   await postRate({
     dataset: ratingsDataset,
     prompt,
     kto: {node_id: nodeId, completion: node.content, label: newLabel},
-    group: siblingGroup(nodeId),
   });
 }
 
-async function preferNode(nodeId) {
-  // ⚖ toggle: mark this sibling as preferred over every sibling not
-  // rated 👍 (manual DPO pairs); click again to withdraw them.
-  const node = tree.nodes.get(nodeId);
-  if (!node || node.role !== 'assistant' || !node.content.trim()) return;
+async function resolveDuel(winnerId, record) {
+  // Settle the pending two-candidate duel: continue the conversation from
+  // *winnerId*; with record=true also write the DPO pair.
+  if (!pendingDuel) return;
+  const {a, b} = pendingDuel;
+  pendingDuel = null;
+  const loserId = winnerId === a ? b : a;
+  const winner = tree.nodes.get(winnerId);
+  const parent = winner ? tree.nodes.get(winner.parentId) : null;
+  if (parent) {
+    const idx = parent.children.indexOf(winnerId);
+    if (idx >= 0) parent.activeChild = idx;
+  }
+  if (record) {
+    const loser = tree.nodes.get(loserId);
+    const prompt = winner ? buildPromptTurns(winnerId) : null;
+    if (winner && loser && prompt) {
+      await postRate({
+        dataset: ratingsDataset,
+        prompt,
+        pair: {
+          chosen: {node_id: winnerId, content: winner.content},
+          rejected: {node_id: loserId, content: loser.content},
+        },
+      });
+    }
+  }
+  renderActiveTree();
+  inputBox.focus();
+}
+
+async function removePairFor(nodeId) {
+  // Click on the "preferred" badge: withdraw the recorded pair.
+  const p = pairForNode(nodeId);
+  if (!p) return;
   const prompt = buildPromptTurns(nodeId);
   if (!prompt) return;
-
-  const remove = ratingsState.manualChosen.has(nodeId);
-  const rejected = siblingGroup(nodeId)
-    .filter(g => g.node_id !== nodeId && g.label !== true)
-    .map(({node_id, content}) => ({node_id, content}));
-  if (!remove && rejected.length === 0) return;
-
   await postRate({
     dataset: ratingsDataset,
     prompt,
-    manual: {
-      chosen: {node_id: nodeId, content: node.content},
-      rejected,
-      remove,
+    pair: {
+      chosen: {node_id: p.chosen},
+      rejected: {node_id: p.rejected},
+      remove: true,
     },
   });
 }
@@ -163,10 +191,14 @@ async function initRatings() {
     const cfgRes = await fetch('/api/config');
     const cfg = await cfgRes.json();
     if (cfg.ratings_dataset) ratingsDataset = cfg.ratings_dataset;
+    setRatingsMode(cfg.ratings_mode, false);
     const nameInput = document.getElementById('ratings-dataset');
     const dirInput = document.getElementById('ratings-dir');
     nameInput.value = ratingsDataset;
     if (cfg.ratings_dir) dirInput.value = cfg.ratings_dir;
+
+    document.querySelectorAll('#rating-mode-toggle button').forEach(btn =>
+      btn.addEventListener('click', () => setRatingsMode(btn.dataset.mode)));
 
     nameInput.addEventListener('change', async () => {
       const name = nameInput.value.trim() || 'chat';
@@ -193,4 +225,7 @@ async function initRatings() {
   await refreshRatings();
 }
 
-initRatings();
+// Exposed so send/regen can await mode restoration — a message sent
+// right after page load must not race the config fetch and go out in
+// the wrong capture mode. initRatings never rejects.
+const ratingsReady = initRatings();
