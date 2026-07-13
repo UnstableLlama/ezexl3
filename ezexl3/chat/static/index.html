@@ -227,6 +227,21 @@
     </div>
   </div>
 
+  <h2>Preference Data</h2>
+  <div class="sb-section">
+    <div class="sb-row">
+      <label class="sb-label">Dataset</label>
+      <input type="text" id="ratings-dataset" list="ratings-datasets" value="chat" placeholder="dataset name">
+      <datalist id="ratings-datasets"></datalist>
+    </div>
+    <div class="sb-row">
+      <label class="sb-label">Datasets Dir</label>
+      <input type="text" id="ratings-dir" class="mono" placeholder="(default)">
+    </div>
+    <div class="sb-hint" id="ratings-info"></div>
+    <div class="sb-hint">Mode toggle is in the top bar. KTO: &#x1F44D;/&#x1F44E; a reply &rarr; labeled row. DPO: each send generates two candidates &mdash; pick the better &rarr; pair. Trainer-ready JSONL.</div>
+  </div>
+
   <h2>Model</h2>
   <div class="sb-section">
     <div class="model-info" id="model-info">Loading...</div>
@@ -238,6 +253,10 @@
   <div id="header">
     <button id="toggle-sidebar" title="Toggle settings">&#9776;</button>
     <span id="header-title">ezexl3 chat</span>
+    <div id="rating-mode-toggle" title="Preference-data capture mode">
+      <button data-mode="kto" class="active" title="KTO: &#x1F44D;/&#x1F44E; a reply writes one labeled row">KTO</button>
+      <button data-mode="dpo" title="DPO: each send generates two candidates; pick the better one to record a pair">DPO</button>
+    </div>
     <span id="header-model"></span>
   </div>
   <div id="chat-area">
@@ -274,6 +293,7 @@
 <script src="js/model.js"></script>
 <script src="js/chat.js"></script>
 <script src="js/session.js"></script>
+<script src="js/ratings.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>

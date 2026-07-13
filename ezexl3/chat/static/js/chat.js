@@ -54,10 +54,107 @@ async function streamResponse(message, context, bodyEl, {initialText = '', prefi
   return {fullText, tpsData};
 }
 
+// ── DPO duel: generate two candidates for one user turn ────────
+let duelStopped = false;  // set by stopGeneration(); abandons the duel
+
+async function streamDuel(message, context, bodies) {
+  // One /api/chat request with n=2: the server batches both candidates
+  // in a single generator pass and tags every SSE event with `cand`,
+  // so both columns stream CONCURRENTLY.
+  const texts = bodies.map(() => '');
+  const tps = bodies.map(() => null);
+
+  const resp = await fetch('/api/chat', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({message, context, n: bodies.length}),
+  });
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, {stream: true});
+
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const payload = line.slice(6);
+      if (payload === '[DONE]') continue;
+
+      try {
+        const evt = JSON.parse(payload);
+        const c = evt.cand || 0;
+        switch (evt.type) {
+          case 'token':
+            texts[c] += evt.text;
+            bodies[c].classList.remove('duel-waiting');
+            renderStreaming(bodies[c], texts[c]);
+            scrollToBottom();
+            break;
+          case 'tps':
+            tps[c] = evt;
+            break;
+          case 'done':
+            break;
+          case 'error':
+            texts[c] += `\n\n**Error:** ${evt.message}`;
+            renderStreaming(bodies[c], texts[c]);
+            break;
+        }
+      } catch {}
+    }
+  }
+
+  return texts.map((fullText, i) => ({fullText, tpsData: tps[i]}));
+}
+
+async function runDuel(userNode, context) {
+  // Streams two candidates side by side, adds both as sibling assistant
+  // nodes, and (unless stopped) arms pendingDuel so renderActiveTree
+  // shows the pick UI.
+  duelStopped = false;
+
+  const duelEl = document.createElement('div');
+  duelEl.className = 'duel-wrap';
+  msgContainer.appendChild(duelEl);
+  const bodies = [];
+  for (const label of ['A', 'B']) {
+    const cand = document.createElement('div');
+    cand.className = 'duel-candidate';
+    cand.innerHTML =
+      `<div class="duel-head"><span class="duel-label">${label}</span></div>` +
+      '<div class="msg-body duel-waiting">&hellip;</div>';
+    duelEl.appendChild(cand);
+    bodies.push(cand.querySelector('.msg-body'));
+  }
+
+  const results = await streamDuel(userNode.content, context, bodies);
+
+  const ids = [];
+  for (const {fullText, tpsData} of results) {
+    if (!fullText.trim()) continue;  // stopped before any tokens
+    const node = addAssistantNode(userNode.id, fullText.trim());
+    if (tpsData) node.tpsData = tpsData;
+    ids.push(node.id);
+  }
+
+  if (ids.length === 2 && !duelStopped) {
+    pendingDuel = {a: ids[0], b: ids[1]};
+  }
+  renderActiveTree();
+}
+
 // ── Send message ────────────────────────────────────────────────
 async function sendMessage() {
   const text = inputBox.value.trim();
   if (!text || generating || !modelLoaded) return;
+  if (typeof ratingsReady !== 'undefined') await ratingsReady;
 
   inputBox.value = '';
   inputBox.style.height = 'auto';
@@ -72,31 +169,40 @@ async function sendMessage() {
   // Render tree (shows user message, empty assistant placeholder will be added)
   renderActiveTree();
 
-  // Create assistant placeholder in DOM
-  const assistantEl = createMsgEl('assistant', '');
-  msgContainer.appendChild(assistantEl);
-  const bodyEl = assistantEl.querySelector('.msg-body');
-
   generating = true;
   sendBtn.style.display = 'none';
   stopBtn.style.display = 'flex';
   sendBtn.disabled = true;
 
-  try {
-    const {fullText, tpsData} = await streamResponse(text, context, bodyEl);
+  if (ratingsMode === 'dpo') {
+    try {
+      await runDuel(userNode, context);
+    } catch (e) {
+      console.error('Duel failed:', e);
+      renderActiveTree();
+    }
+  } else {
+    // Create assistant placeholder in DOM
+    const assistantEl = createMsgEl('assistant', '');
+    msgContainer.appendChild(assistantEl);
+    const bodyEl = assistantEl.querySelector('.msg-body');
 
-    // Final render
-    renderFinal(bodyEl, fullText);
+    try {
+      const {fullText, tpsData} = await streamResponse(text, context, bodyEl);
 
-    // Add assistant to tree with TPS data
-    const assistNode = addAssistantNode(userNode.id, fullText.trim());
-    if (tpsData) assistNode.tpsData = tpsData;
+      // Final render
+      renderFinal(bodyEl, fullText);
 
-    // Re-render full tree to get proper action buttons + TPS badge
-    renderActiveTree();
+      // Add assistant to tree with TPS data
+      const assistNode = addAssistantNode(userNode.id, fullText.trim());
+      if (tpsData) assistNode.tpsData = tpsData;
 
-  } catch (e) {
-    renderFinal(bodyEl, `\n\n**Error:** ${e.message}`);
+      // Re-render full tree to get proper action buttons + TPS badge
+      renderActiveTree();
+
+    } catch (e) {
+      renderFinal(bodyEl, `\n\n**Error:** ${e.message}`);
+    }
   }
 
   generating = false;
@@ -110,6 +216,7 @@ async function sendMessage() {
 // ── Regenerate response ─────────────────────────────────────────
 async function regenerateResponse(assistantNodeId) {
   if (generating) return;
+  if (typeof ratingsReady !== 'undefined') await ratingsReady;
 
   const assistNode = tree.nodes.get(assistantNodeId);
   if (!assistNode || assistNode.role !== 'assistant') return;
@@ -125,27 +232,36 @@ async function regenerateResponse(assistantNodeId) {
   renderActiveTree();
   userNode.activeChild = savedActiveChild;
 
-  // Create assistant placeholder
-  const assistantEl = createMsgEl('assistant', '');
-  msgContainer.appendChild(assistantEl);
-  const bodyEl = assistantEl.querySelector('.msg-body');
-
   generating = true;
   sendBtn.style.display = 'none';
   stopBtn.style.display = 'flex';
   sendBtn.disabled = true;
 
-  try {
-    const {fullText, tpsData} = await streamResponse(userNode.content, context, bodyEl);
-    renderFinal(bodyEl, fullText);
+  if (ratingsMode === 'dpo') {
+    try {
+      await runDuel(userNode, context);
+    } catch (e) {
+      console.error('Duel failed:', e);
+      renderActiveTree();
+    }
+  } else {
+    // Create assistant placeholder
+    const assistantEl = createMsgEl('assistant', '');
+    msgContainer.appendChild(assistantEl);
+    const bodyEl = assistantEl.querySelector('.msg-body');
 
-    // Add as new sibling assistant node
-    const newAssist = addAssistantNode(userNode.id, fullText.trim());
-    if (tpsData) newAssist.tpsData = tpsData;
+    try {
+      const {fullText, tpsData} = await streamResponse(userNode.content, context, bodyEl);
+      renderFinal(bodyEl, fullText);
 
-    renderActiveTree();
-  } catch (e) {
-    renderFinal(bodyEl, `\n\n**Error:** ${e.message}`);
+      // Add as new sibling assistant node
+      const newAssist = addAssistantNode(userNode.id, fullText.trim());
+      if (tpsData) newAssist.tpsData = tpsData;
+
+      renderActiveTree();
+    } catch (e) {
+      renderFinal(bodyEl, `\n\n**Error:** ${e.message}`);
+    }
   }
 
   generating = false;
@@ -345,6 +461,7 @@ async function continueGeneration(assistantNodeId) {
 
 // ── Stop generation ─────────────────────────────────────────────
 async function stopGeneration() {
+  duelStopped = true;  // a stopped duel is abandoned, not recorded
   await fetch('/api/stop', {method: 'POST'});
 }
 

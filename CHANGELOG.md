@@ -14,6 +14,21 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   MTP speculative decoding. Skips if the output file already exists.
 - **chat: GPT-OSS (harmony) prompt format** ported from exllamav3 dev,
   with model-name auto-detection (gpt-oss / gpt_oss / gptoss).
+- **chat: preference-data capture (KTO / DPO)**: 👍/👎 buttons on assistant
+  messages write KTO rows; 👍×👎 among sibling regenerations auto-generates
+  DPO pairs, and a ⚖ button records explicit preferred-sibling pairs.
+  Rows land in `<datasets_dir>/<name>.{kto,dpo}.jsonl` in exactly the
+  column format the exllamav3 fork's `training/qlora_train_pref.py` reads
+  with its default keys (prompt / completion / label, prompt / chosen /
+  rejected) — a collected dataset trains with zero conversion. The prompt
+  column stores the full conversation history as {role, content} turns
+  (the trainer currently uses system + last user turn; full history is
+  kept for future multi-turn training). Dataset name and directory are
+  configurable in the sidebar (persisted to `ui.json`); ratings are keyed
+  by conversation-tree node id, so re-rating updates in place and marks
+  restore across sessions. New endpoints `GET /api/ratings`,
+  `POST /api/rate`; new module `ezexl3/chat/ratings.py`; hand-edited or
+  externally appended JSONL lines are preserved verbatim.
 
 ### Changed
 - **Vendored eval scripts pinned to dev for exllamav3 v1.0.0 prep**:

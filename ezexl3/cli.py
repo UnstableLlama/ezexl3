@@ -296,6 +296,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Cache size in tokens (default: 32768). Must be multiple of 256")
     ch.add_argument("-cq", "--cache-quant", type=str, default=None,
                     help="Cache quantization bits: kv_bits or k_bits,v_bits (default: 6,6)")
+    ch.add_argument("-df", "--draft-model", default=None,
+                    help="Draft model directory for speculative decoding (e.g. DFlash), "
+                         "loaded together with the model (required for recurrent models "
+                         "like Qwen3.5/3.6). Needs -m.")
+    ch.add_argument("--mtp", action="store_true",
+                    help="MTP drafting via the model's built-in MTP head. Needs -m.")
+    ch.add_argument("--ngram", type=int, default=0, metavar="MIN",
+                    help="N-gram drafting (no draft model) with minimum match length MIN. Needs -m.")
 
     # --- mtp (MTP-tensor-only quantization) ---
     mt = sub.add_parser(
@@ -380,6 +388,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if cmd == "chat":
         from ezexl3.chat.server import run_server
+        if sum([bool(args.draft_model), bool(args.mtp), bool(args.ngram)]) > 1:
+            print("Error: specify only one of -df/--draft-model, --mtp, --ngram",
+                  file=sys.stderr)
+            return 2
+        if (args.draft_model or args.mtp or args.ngram) and not args.model:
+            print("Error: -df/--mtp/--ngram need -m (the draft source is "
+                  "loaded together with the model)", file=sys.stderr)
+            return 2
         # When -m is omitted, launch UI-only (no model pre-loaded)
         chat_devices = None
         dr = None
@@ -394,6 +410,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             device_ratios=dr,
             cache_size=args.cache_size,
             cache_quant=args.cache_quant,
+            draft_model_dir=args.draft_model,
+            use_mtp=args.mtp,
+            ngram_min=args.ngram,
             host=args.host,
             port=args.port,
             open_browser=not args.no_browser,

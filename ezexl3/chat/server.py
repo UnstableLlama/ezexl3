@@ -14,6 +14,9 @@ from pathlib import Path
 from aiohttp import web
 
 from .inference import ChatEngine, ChatSettings
+from .ratings import (
+    RatingsStore, default_datasets_dir, valid_dataset_name, validate_prompt,
+)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -67,6 +70,8 @@ def create_app(engine: ChatEngine) -> web.Application:
     app.router.add_post("/api/ui/launch", handle_ui_launch)
     app.router.add_get("/api/config", handle_config_get)
     app.router.add_post("/api/config", handle_config_set)
+    app.router.add_get("/api/ratings", handle_ratings_get)
+    app.router.add_post("/api/rate", handle_rate)
     app.router.add_static("/", STATIC_DIR, show_index=False, append_version=True)
 
     return app
@@ -113,6 +118,11 @@ async def handle_chat(request: web.Request) -> web.Response:
         engine.context = [tuple(pair) for pair in data["context"]]
     if not message:
         return web.json_response({"error": "Empty message"}, status=400)
+    # Candidates per generation (DPO duel mode sends n=2), batched
+    # concurrently in one generator pass.
+    n = data.get("n", 1)
+    if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 4:
+        n = 1
 
     response = web.StreamResponse(
         status=200,
@@ -127,7 +137,7 @@ async def handle_chat(request: web.Request) -> web.Response:
     await response.prepare(request)
 
     prefix = data.get("prefix", "")
-    async for event in engine.generate(message, prefix=prefix):
+    async for event in engine.generate(message, prefix=prefix, n=n):
         sse_data = f"data: {json.dumps(event)}\n\n"
         await response.write(sse_data.encode("utf-8"))
 
@@ -441,9 +451,35 @@ async def handle_draft_load(request: web.Request) -> web.Response:
                 status=400,
             )
     try:
-        await asyncio.to_thread(engine.load_draft, draft_dir or None, mtp, ngram_min)
+        reloaded = False
+        if engine.needs_load_time_draft():
+            # Recurrent models size draft headroom at cache creation, so
+            # enabling a draft source means a full reload with the draft
+            # configured. Reuse the current load parameters and carry the
+            # chat settings across (load_model resets them).
+            saved_settings = engine.settings
+            await asyncio.to_thread(
+                engine.load_model,
+                model_dir=engine.model_dir,
+                lora_dirs=list(engine.lora_dirs),
+                lora_weights=list(engine.lora_weights),
+                draft_model_dir=draft_dir or None,
+                use_mtp=mtp,
+                ngram_min=ngram_min,
+                devices=engine._devices or None,
+                device_ratios=engine._device_ratios,
+                cache_size=engine._cache_size,
+                cache_quant=engine._cache_quant,
+            )
+            engine.settings = saved_settings
+            reloaded = True
+        else:
+            await asyncio.to_thread(
+                engine.load_draft, draft_dir or None, mtp, ngram_min,
+            )
         return web.json_response({
             "ok": True,
+            "reloaded": reloaded,
             "status": engine.get_status(),
         })
     except Exception as e:
@@ -553,6 +589,119 @@ async def handle_config_set(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Preference ratings (KTO / DPO data collection)
+# ---------------------------------------------------------------------------
+
+def _ratings_store() -> RatingsStore:
+    cfg = _load_config()
+    root = (cfg.get("ratings_dir") or "").strip() or default_datasets_dir()
+    return RatingsStore(root)
+
+
+async def handle_ratings_get(request: web.Request) -> web.Response:
+    dataset = request.query.get("dataset", "chat")
+    if not valid_dataset_name(dataset):
+        return web.json_response(
+            {"error": f"Invalid dataset name: {dataset!r}"}, status=400,
+        )
+    store = await asyncio.to_thread(_ratings_store)
+
+    def _snapshot():
+        state = store.state(dataset)
+        return {
+            "dataset": dataset,
+            "dir": str(store.root),
+            "datasets": store.list_datasets(),
+            **state,
+        }
+
+    return web.json_response(await asyncio.to_thread(_snapshot))
+
+
+async def handle_rate(request: web.Request) -> web.Response:
+    """Record preference data for chat messages.
+
+    Body: {dataset, prompt, kto?: {node_id, completion, label},
+           pair?: {chosen: {node_id, content},
+                   rejected: {node_id, content}, remove?}}
+
+    kto upserts one thumbs row (KTO mode); pair upserts the DPO row for a
+    two-candidate duel (DPO mode), keyed by the unordered node-id duo.
+    Returns the updated ratings snapshot.
+    """
+    engine: ChatEngine = request.app[_KEY_ENGINE]
+    data = await request.json()
+
+    dataset = data.get("dataset", "chat")
+    if not valid_dataset_name(dataset):
+        return web.json_response(
+            {"error": f"Invalid dataset name: {dataset!r}"}, status=400,
+        )
+    kto = data.get("kto")
+    pair = data.get("pair")
+    if not (kto or pair):
+        return web.json_response(
+            {"error": "Nothing to record: need kto or pair"},
+            status=400,
+        )
+    prompt = data.get("prompt")
+    err = validate_prompt(prompt)
+    if err:
+        return web.json_response({"error": err}, status=400)
+
+    if kto is not None:
+        if not kto.get("node_id") or not isinstance(kto.get("completion"), str):
+            return web.json_response(
+                {"error": "kto needs node_id and completion"}, status=400,
+            )
+        if kto.get("label") not in (True, False, None):
+            return web.json_response(
+                {"error": "kto label must be true, false, or null"}, status=400,
+            )
+    if pair is not None:
+        chosen = pair.get("chosen") or {}
+        rejected = pair.get("rejected") or {}
+        if not chosen.get("node_id") or not rejected.get("node_id"):
+            return web.json_response(
+                {"error": "pair needs chosen.node_id and rejected.node_id"},
+                status=400,
+            )
+        if not pair.get("remove") and (
+            not isinstance(chosen.get("content"), str)
+            or not isinstance(rejected.get("content"), str)
+        ):
+            return web.json_response(
+                {"error": "pair needs chosen and rejected content"}, status=400,
+            )
+
+    # Full model dir as provenance — the basename alone is ambiguous for
+    # layouts like .../Llama-3.2-3B-Instruct/4.
+    model = engine.model_dir or engine.model_name
+
+    def _apply():
+        store = _ratings_store()
+        if kto is not None:
+            store.rate_kto(dataset, kto["node_id"], prompt,
+                           kto["completion"], kto.get("label"), model)
+        if pair is not None:
+            store.rate_dpo_pair(dataset, prompt, pair.get("chosen") or {},
+                                pair.get("rejected") or {}, model,
+                                remove=bool(pair.get("remove")))
+        state = store.state(dataset)
+        return {
+            "dataset": dataset,
+            "dir": str(store.root),
+            "datasets": store.list_datasets(),
+            **state,
+        }
+
+    try:
+        return web.json_response(await asyncio.to_thread(_apply))
+    except (OSError, ValueError) as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -587,6 +736,9 @@ def run_server(
     device_ratios: str | None = None,
     cache_size: int | None = None,
     cache_quant: str | None = None,
+    draft_model_dir: str | None = None,
+    use_mtp: bool = False,
+    ngram_min: int = 0,
     host: str = "127.0.0.1",
     port: int = 8800,
     open_browser: bool = True,
@@ -598,6 +750,9 @@ def run_server(
         device_ratios=device_ratios,
         cache_size=cache_size,
         cache_quant=cache_quant,
+        draft_model_dir=draft_model_dir,
+        use_mtp=use_mtp,
+        ngram_min=ngram_min,
     )
 
     # Warn if binding to a non-loopback address (no auth layer).

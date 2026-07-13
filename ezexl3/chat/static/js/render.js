@@ -120,6 +120,14 @@ function renderActiveTree() {
     const node = tree.nodes.get(nodeId);
     if (!node) continue;
 
+    // A pending DPO duel renders as a side-by-side pick UI covering both
+    // candidates (only one of them is ever on the active path).
+    if (typeof pendingDuel !== 'undefined' && pendingDuel &&
+        (nodeId === pendingDuel.a || nodeId === pendingDuel.b)) {
+      renderDuelChoice(msgContainer);
+      continue;
+    }
+
     const sibInfo = getSiblingInfo(nodeId);
 
     // Outer wrapper with side arrows
@@ -174,6 +182,37 @@ function renderActiveTree() {
 
     if (sibInfo) {
       headerEl.innerHTML += `<span class="branch-counter">${sibInfo.current} / ${sibInfo.total}</span>`;
+    }
+
+    // Rating controls (assistant only), gated by the capture mode:
+    // KTO mode shows 👍/👎; DPO mode shows a "preferred" badge on
+    // messages whose duel pick is recorded (click to withdraw).
+    if (node.role === 'assistant' && typeof getRating === 'function') {
+      const ratingSpan = document.createElement('span');
+      ratingSpan.className = 'msg-rating';
+      const rating = getRating(nodeId);
+
+      function addRate(glyph, title, handler, activeCls, active) {
+        const btn = document.createElement('button');
+        btn.textContent = glyph;
+        btn.title = title;
+        if (active) btn.className = activeCls;
+        btn.addEventListener('click', handler);
+        ratingSpan.appendChild(btn);
+      }
+
+      if (ratingsMode === 'kto') {
+        addRate('\u{1F44D}', 'Good response (KTO)',
+          () => rateNode(nodeId, true), 'rated-good', rating === true);
+        addRate('\u{1F44E}', 'Bad response (KTO)',
+          () => rateNode(nodeId, false), 'rated-bad', rating === false);
+        if (rating !== undefined) ratingSpan.classList.add('has-rating');
+      } else if (pairForNode(nodeId)) {
+        addRate('✓ preferred', 'DPO pair recorded — click to withdraw',
+          () => removePairFor(nodeId), 'rated-pair', true);
+        ratingSpan.classList.add('has-rating');
+      }
+      if (ratingSpan.childElementCount) headerEl.appendChild(ratingSpan);
     }
 
     // Action buttons (inline in header)
@@ -234,4 +273,48 @@ function renderActiveTree() {
   }
 
   scrollToBottom();
+}
+
+// ── DPO duel pick UI ────────────────────────────────────────────
+function renderDuelChoice(container) {
+  const block = document.createElement('div');
+  block.className = 'duel-block';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'duel-wrap';
+  for (const [id, label] of [[pendingDuel.a, 'A'], [pendingDuel.b, 'B']]) {
+    const node = tree.nodes.get(id);
+    if (!node) continue;
+    const cand = document.createElement('div');
+    cand.className = 'duel-candidate';
+
+    const head = document.createElement('div');
+    head.className = 'duel-head';
+    head.innerHTML = `<span class="duel-label">${label}</span>`;
+    const pickBtn = document.createElement('button');
+    pickBtn.className = 'duel-pick-btn';
+    pickBtn.textContent = `Prefer ${label}`;
+    pickBtn.title = 'Record the DPO pair and continue from this reply';
+    pickBtn.addEventListener('click', () => resolveDuel(id, true));
+    head.appendChild(pickBtn);
+    cand.appendChild(head);
+
+    const body = document.createElement('div');
+    body.className = 'msg-body';
+    renderFinal(body, node.content);
+    cand.appendChild(body);
+    wrap.appendChild(cand);
+  }
+  block.appendChild(wrap);
+
+  const skip = document.createElement('div');
+  skip.className = 'duel-skip';
+  const skipBtn = document.createElement('button');
+  skipBtn.textContent = 'Skip — continue without recording';
+  skipBtn.title = 'Keep candidate B and record nothing';
+  skipBtn.addEventListener('click', () => resolveDuel(pendingDuel.b, false));
+  skip.appendChild(skipBtn);
+  block.appendChild(skip);
+
+  container.appendChild(block);
 }

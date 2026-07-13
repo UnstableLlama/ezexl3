@@ -188,6 +188,41 @@ class TestRecurrentModelDraftHeadroom(unittest.TestCase):
             self.engine.load_draft(ngram_min=3)
         self.assertEqual(self.engine.ngram_min, 3)
 
+    def test_needs_load_time_draft(self):
+        # Recurrent without headroom: only a load-time draft works
+        self.engine.cache.max_history = 0
+        self.assertTrue(self.engine.needs_load_time_draft())
+        # Recurrent with headroom: hot-loading is fine
+        self.engine.cache.max_history = 4
+        self.assertFalse(self.engine.needs_load_time_draft())
+        # Non-recurrent: always hot-loadable
+        self.engine.model.caps = {}
+        self.engine.cache.max_history = 0
+        self.assertFalse(self.engine.needs_load_time_draft())
+
+
+class TestEngineInitDraft(unittest.TestCase):
+    """ChatEngine can be constructed with a draft source so the CLI can
+    load model + draft together (required for recurrent models)."""
+
+    def test_init_stores_draft_model_dir(self):
+        engine = ChatEngine(model_dir="/m", draft_model_dir="/d/dflash")
+        self.assertEqual(engine.draft_model_dir, os.path.abspath("/d/dflash"))
+        self.assertEqual(engine.draft_model_name, "dflash")
+
+    def test_init_stores_mtp_and_ngram(self):
+        self.assertTrue(ChatEngine(model_dir="/m", use_mtp=True).use_mtp)
+        self.assertEqual(ChatEngine(model_dir="/m", ngram_min=3).ngram_min, 3)
+
+    def test_init_rejects_multiple_draft_sources(self):
+        for kwargs in (
+            {"draft_model_dir": "/d", "use_mtp": True},
+            {"draft_model_dir": "/d", "ngram_min": 3},
+            {"use_mtp": True, "ngram_min": 3},
+        ):
+            with self.assertRaises(ValueError):
+                ChatEngine(model_dir="/m", **kwargs)
+
 
 class TestLoadPassesMinDraftLen(unittest.TestCase):
     """load() must ask model_init for recurrent draft headroom whenever any

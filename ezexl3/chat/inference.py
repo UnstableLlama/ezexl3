@@ -129,7 +129,15 @@ class ChatEngine:
         device_ratios: str | None = None,
         cache_size: int | None = None,
         cache_quant: str | None = None,
+        draft_model_dir: str | None = None,
+        use_mtp: bool = False,
+        ngram_min: int = 0,
     ):
+        if sum([bool(draft_model_dir), bool(use_mtp), bool(ngram_min)]) > 1:
+            raise ValueError(
+                "Specify only one of: draft model directory, MTP drafting, "
+                "or n-gram drafting"
+            )
         self.model_dir = os.path.abspath(model_dir) if model_dir else None
         self._devices = devices or []
         self._device_ratios = device_ratios
@@ -154,6 +162,15 @@ class ChatEngine:
         self.ngram_min: int = 0
         self.context_length: int = 0
         self.model_name: str = os.path.basename(self.model_dir) if self.model_dir else ""
+
+        # Draft source requested at construction (loaded together with the
+        # model — required for recurrent models, whose caches must be sized
+        # with draft headroom at creation).
+        if draft_model_dir:
+            self.draft_model_dir = os.path.abspath(draft_model_dir)
+            self.draft_model_name = os.path.basename(self.draft_model_dir)
+        self.use_mtp = bool(use_mtp)
+        self.ngram_min = int(ngram_min or 0)
 
         # Chat state
         self.settings = ChatSettings()
@@ -397,6 +414,18 @@ class ChatEngine:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+    def needs_load_time_draft(self) -> bool:
+        """True if enabling a draft source requires a full model reload.
+
+        Recurrent (hybrid linear-attn) models size their state history at
+        cache creation; enabling drafting post-load on a cache without
+        draft headroom corrupts recurrent state allocation.
+        """
+        caps = getattr(self.model, "caps", None)
+        if isinstance(caps, dict) and caps.get("recurrent_states"):
+            return getattr(self.cache, "max_history", 0) < 4
+        return False
+
     def load_draft(
         self,
         draft_model_dir: str | None = None,
@@ -418,17 +447,12 @@ class ChatEngine:
                 "draft_model_dir is required unless MTP or n-gram drafting is enabled"
             )
 
-        # Recurrent models can only draft if the cache was created with
-        # history slots (see load()); enabling drafting post-load on a
-        # cache without headroom corrupts recurrent state allocation.
-        caps = getattr(self.model, "caps", None)
-        if isinstance(caps, dict) and caps.get("recurrent_states"):
-            if getattr(self.cache, "max_history", 0) < 4:
-                raise RuntimeError(
-                    "This model uses recurrent states, so speculative decoding "
-                    "must be enabled at load time (the cache needs draft "
-                    "headroom). Reload the model with the draft option selected."
-                )
+        if self.needs_load_time_draft():
+            raise RuntimeError(
+                "This model uses recurrent states, so speculative decoding "
+                "must be enabled at load time (the cache needs draft "
+                "headroom). Reload the model with the draft option selected."
+            )
 
         if self.draft_model is not None:
             self.unload_draft()
@@ -565,14 +589,46 @@ class ChatEngine:
 
         return ids
 
-    async def generate(self, user_message: str, prefix: str = "") -> AsyncGenerator[dict, None]:
-        """
-        Stream a response for *user_message*.
+    @staticmethod
+    def _tps_event(r: dict, elapsed: float, cand: int) -> dict:
+        new_tokens = r.get("new_tokens", 0)
+        prompt_tokens = r.get("prompt_tokens", 0)
+        tps = new_tokens / elapsed if elapsed > 0 else 0
+        prefill_tps = (
+            prompt_tokens / r["time_prefill"]
+            if r.get("time_prefill", 0) > 0
+            else 0
+        )
+        ev = {
+            "type": "tps",
+            "cand": cand,
+            "new_tokens": new_tokens,
+            "prompt_tokens": prompt_tokens,
+            "cached_tokens": r.get("cached_tokens", 0),
+            "tps": round(tps, 2),
+            "prefill_tps": round(prefill_tps, 2),
+            "elapsed": round(elapsed, 2),
+        }
+        if r.get("accepted_draft_tokens", 0) > 0:
+            accepted = r["accepted_draft_tokens"]
+            rejected = r.get("rejected_draft_tokens", 0)
+            total = accepted + rejected
+            ev["draft_accepted"] = accepted
+            ev["draft_rejected"] = rejected
+            ev["draft_acceptance_rate"] = round(accepted / total, 3) if total > 0 else 0
+        return ev
 
-        Yields dicts:
-            {"type": "token", "text": "..."}
-            {"type": "tps", ...}
-            {"type": "done", "eos_reason": "..."}
+    async def generate(self, user_message: str, prefix: str = "",
+                       n: int = 1) -> AsyncGenerator[dict, None]:
+        """
+        Stream response(s) for *user_message*. With n > 1 all candidates
+        generate CONCURRENTLY as batched jobs in one generator pass —
+        the chat UI's DPO duel mode uses n=2.
+
+        Yields dicts; "cand" indexes the candidate (always 0 when n=1):
+            {"type": "token", "cand": 0, "text": "..."}
+            {"type": "tps", "cand": 0, ...}
+            {"type": "done", "cand": 0, "eos_reason": "..."}
             {"type": "error", "message": "..."}
         """
         Job = _import_job()
@@ -596,7 +652,6 @@ class ChatEngine:
 
             prompt_format = self._get_prompt_format()
             stop_conditions = self._get_stop_conditions(prompt_format)
-            sampler = self._get_sampler()
             ids = self._build_input_ids(prompt_format, prefix=prefix)
 
             # Banned strings
@@ -608,71 +663,54 @@ class ChatEngine:
                 if tt[1]:
                     banned.append(tt[1])
 
-            job = Job(
-                input_ids=ids,
-                max_new_tokens=self.settings.max_response_tokens,
-                stop_conditions=stop_conditions,
-                sampler=sampler,
-                banned_strings=banned if banned else None,
-            )
-            self._current_job = job
-            self.generator.enqueue(job)
+            jobs = [
+                Job(
+                    input_ids=ids,
+                    max_new_tokens=self.settings.max_response_tokens,
+                    stop_conditions=stop_conditions,
+                    sampler=self._get_sampler(),
+                    banned_strings=list(banned) if banned else None,
+                )
+                for _ in range(max(1, int(n)))
+            ]
+            cand_of = {id(job): i for i, job in enumerate(jobs)}
+            self._current_job = list(jobs)
+            for job in jobs:
+                self.generator.enqueue(job)
 
-            response_text = ""
+            texts = [""] * len(jobs)
+            finals: list = [None] * len(jobs)
+            pending = len(jobs)
             t_start = time.time()
-            r = None
 
-            while self.generator.num_remaining_jobs():
+            while pending and self.generator.num_remaining_jobs():
                 for r in self.generator.iterate():
+                    cand = cand_of.get(id(r.get("job")), 0)
                     chunk = r.get("text", "")
                     if chunk:
-                        response_text += chunk
-                        yield {"type": "token", "text": chunk}
+                        texts[cand] += chunk
+                        yield {"type": "token", "cand": cand, "text": chunk}
 
-                    if r.get("eos"):
-                        break
+                    if r.get("eos") and finals[cand] is None:
+                        finals[cand] = r
+                        pending -= 1
+                        yield self._tps_event(r, time.time() - t_start, cand)
+                        yield {"type": "done", "cand": cand,
+                               "eos_reason": r.get("eos_reason", "unknown")}
 
                 # Let the event loop breathe
                 await asyncio.sleep(0)
 
-                if r and r.get("eos"):
-                    break
+            # Close out candidates that never reported eos (cancelled)
+            for cand, r in enumerate(finals):
+                if r is None:
+                    yield self._tps_event({}, time.time() - t_start, cand)
+                    yield {"type": "done", "cand": cand, "eos_reason": "unknown"}
 
-            # Stats
-            elapsed = time.time() - t_start
-            eos_reason = r.get("eos_reason", "unknown") if r else "unknown"
-            new_tokens = r.get("new_tokens", 0) if r else 0
-            prompt_tokens = r.get("prompt_tokens", 0) if r else 0
-            cached_tokens = r.get("cached_tokens", 0) if r else 0
-            tps = new_tokens / elapsed if elapsed > 0 else 0
-            prefill_tps = (
-                prompt_tokens / r["time_prefill"]
-                if r and r.get("time_prefill", 0) > 0
-                else 0
-            )
-
-            tps_data = {
-                "type": "tps",
-                "new_tokens": new_tokens,
-                "prompt_tokens": prompt_tokens,
-                "cached_tokens": cached_tokens,
-                "tps": round(tps, 2),
-                "prefill_tps": round(prefill_tps, 2),
-                "elapsed": round(elapsed, 2),
-            }
-            if r and r.get("accepted_draft_tokens", 0) > 0:
-                accepted = r["accepted_draft_tokens"]
-                rejected = r.get("rejected_draft_tokens", 0)
-                total = accepted + rejected
-                tps_data["draft_accepted"] = accepted
-                tps_data["draft_rejected"] = rejected
-                tps_data["draft_acceptance_rate"] = round(accepted / total, 3) if total > 0 else 0
-            yield tps_data
-
-            yield {"type": "done", "eos_reason": eos_reason}
-
-            # Save to context (include prefix for continue)
-            full_response = (prefix + response_text).strip()
+            # Save to context. With n > 1 candidate 0 is a placeholder —
+            # the client re-syncs the real context (the duel winner's
+            # branch) on its next request.
+            full_response = (prefix + texts[0]).strip()
             self.context[-1] = (user_message, full_response)
 
         except Exception as e:
@@ -682,12 +720,14 @@ class ChatEngine:
             self._current_job = None
 
     def cancel(self):
-        """Cancel the current generation."""
-        if self._current_job is not None and self.generator is not None:
-            try:
-                self.generator.cancel(self._current_job)
-            except Exception:
-                pass
+        """Cancel the current generation (all candidates, if a duel)."""
+        jobs = self._current_job
+        if jobs is not None and self.generator is not None:
+            for job in (jobs if isinstance(jobs, list) else [jobs]):
+                try:
+                    self.generator.cancel(job)
+                except Exception:
+                    pass
             self._is_generating = False
             self._current_job = None
 
