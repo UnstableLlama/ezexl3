@@ -14,6 +14,9 @@ from pathlib import Path
 from aiohttp import web
 
 from .inference import ChatEngine, ChatSettings
+from .ratings import (
+    RatingsStore, default_datasets_dir, valid_dataset_name, validate_prompt,
+)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -67,6 +70,8 @@ def create_app(engine: ChatEngine) -> web.Application:
     app.router.add_post("/api/ui/launch", handle_ui_launch)
     app.router.add_get("/api/config", handle_config_get)
     app.router.add_post("/api/config", handle_config_set)
+    app.router.add_get("/api/ratings", handle_ratings_get)
+    app.router.add_post("/api/rate", handle_rate)
     app.router.add_static("/", STATIC_DIR, show_index=False, append_version=True)
 
     return app
@@ -550,6 +555,134 @@ async def handle_config_set(request: web.Request) -> web.Response:
     cfg.update(incoming)
     await asyncio.to_thread(_save_config, cfg)
     return web.json_response({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Preference ratings (KTO / DPO data collection)
+# ---------------------------------------------------------------------------
+
+def _ratings_store() -> RatingsStore:
+    cfg = _load_config()
+    root = (cfg.get("ratings_dir") or "").strip() or default_datasets_dir()
+    return RatingsStore(root)
+
+
+async def handle_ratings_get(request: web.Request) -> web.Response:
+    dataset = request.query.get("dataset", "chat")
+    if not valid_dataset_name(dataset):
+        return web.json_response(
+            {"error": f"Invalid dataset name: {dataset!r}"}, status=400,
+        )
+    store = await asyncio.to_thread(_ratings_store)
+
+    def _snapshot():
+        state = store.state(dataset)
+        return {
+            "dataset": dataset,
+            "dir": str(store.root),
+            "datasets": store.list_datasets(),
+            **state,
+        }
+
+    return web.json_response(await asyncio.to_thread(_snapshot))
+
+
+async def handle_rate(request: web.Request) -> web.Response:
+    """Record preference data for chat messages.
+
+    Body: {dataset, prompt, kto?: {node_id, completion, label},
+           group?: [{node_id, content, label}],
+           manual?: {chosen: {node_id, content},
+                     rejected: [{node_id, content}], remove?}}
+
+    kto upserts one thumbs row; group rebuilds auto DPO pairs (👍×👎 cross
+    product within one sibling set); manual adds/removes explicit ⚖ pairs.
+    Returns the updated ratings snapshot.
+    """
+    engine: ChatEngine = request.app[_KEY_ENGINE]
+    data = await request.json()
+
+    dataset = data.get("dataset", "chat")
+    if not valid_dataset_name(dataset):
+        return web.json_response(
+            {"error": f"Invalid dataset name: {dataset!r}"}, status=400,
+        )
+    kto = data.get("kto")
+    group = data.get("group")
+    manual = data.get("manual")
+    if not (kto or group or manual):
+        return web.json_response(
+            {"error": "Nothing to record: need kto, group, or manual"},
+            status=400,
+        )
+    prompt = data.get("prompt")
+    err = validate_prompt(prompt)
+    if err:
+        return web.json_response({"error": err}, status=400)
+
+    if kto is not None:
+        if not kto.get("node_id") or not isinstance(kto.get("completion"), str):
+            return web.json_response(
+                {"error": "kto needs node_id and completion"}, status=400,
+            )
+        if kto.get("label") not in (True, False, None):
+            return web.json_response(
+                {"error": "kto label must be true, false, or null"}, status=400,
+            )
+    if group is not None:
+        if not isinstance(group, list) or any(
+            not isinstance(g, dict) or not g.get("node_id")
+            or not isinstance(g.get("content"), str)
+            or g.get("label") not in (True, False, None)
+            for g in group
+        ):
+            return web.json_response(
+                {"error": "group must be a list of {node_id, content, label}"},
+                status=400,
+            )
+    if manual is not None:
+        chosen = manual.get("chosen") or {}
+        rejected = manual.get("rejected") or []
+        if not manual.get("remove") and (
+            not chosen.get("node_id") or not isinstance(chosen.get("content"), str)
+            or not isinstance(rejected, list) or not rejected
+            or any(not isinstance(r, dict) or not r.get("node_id")
+                   or not isinstance(r.get("content"), str) for r in rejected)
+        ):
+            return web.json_response(
+                {"error": "manual needs chosen and a non-empty rejected list"},
+                status=400,
+            )
+        if manual.get("remove") and not chosen.get("node_id"):
+            return web.json_response(
+                {"error": "manual remove needs chosen.node_id"}, status=400,
+            )
+
+    model = engine.model_name
+
+    def _apply():
+        store = _ratings_store()
+        if kto is not None:
+            store.rate_kto(dataset, kto["node_id"], prompt,
+                           kto["completion"], kto.get("label"), model)
+        if group is not None:
+            store.sync_dpo_auto(dataset, prompt, group, model)
+        if manual is not None:
+            store.rate_dpo_manual(dataset, prompt, manual.get("chosen") or {},
+                                  manual.get("rejected") or [], model,
+                                  remove=bool(manual.get("remove")))
+        state = store.state(dataset)
+        return {
+            "dataset": dataset,
+            "dir": str(store.root),
+            "datasets": store.list_datasets(),
+            **state,
+        }
+
+    try:
+        return web.json_response(await asyncio.to_thread(_apply))
+    except (OSError, ValueError) as e:
+        return web.json_response({"error": str(e)}, status=500)
 
 
 # ---------------------------------------------------------------------------

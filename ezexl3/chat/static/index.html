@@ -227,6 +227,21 @@
     </div>
   </div>
 
+  <h2>Preference Data</h2>
+  <div class="sb-section">
+    <div class="sb-row">
+      <label class="sb-label">Dataset</label>
+      <input type="text" id="ratings-dataset" list="ratings-datasets" value="chat" placeholder="dataset name">
+      <datalist id="ratings-datasets"></datalist>
+    </div>
+    <div class="sb-row">
+      <label class="sb-label">Datasets Dir</label>
+      <input type="text" id="ratings-dir" class="mono" placeholder="(default)">
+    </div>
+    <div class="sb-hint" id="ratings-info"></div>
+    <div class="sb-hint">&#x1F44D;/&#x1F44E; on replies &rarr; KTO rows; &#x1F44D;&times;&#x1F44E; among regens and &#x2696; &rarr; DPO pairs. Trainer-ready JSONL.</div>
+  </div>
+
   <h2>Model</h2>
   <div class="sb-section">
     <div class="model-info" id="model-info">Loading...</div>
@@ -274,6 +289,7 @@
 <script src="js/model.js"></script>
 <script src="js/chat.js"></script>
 <script src="js/session.js"></script>
+<script src="js/ratings.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>

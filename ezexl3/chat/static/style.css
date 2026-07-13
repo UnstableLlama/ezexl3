@@ -561,6 +561,29 @@ body { display: flex; overflow: hidden; }
 .msg-actions-inline button:hover { color: var(--text-primary); border-color: var(--border-light); }
 .msg-actions-inline .danger:hover { color: var(--red); border-color: var(--red); }
 
+/* ── Rating buttons (KTO/DPO capture) ──────────────────────────── */
+.msg-rating {
+  display: inline-flex; gap: 2px; margin-left: 6px;
+  opacity: 0; transition: opacity .15s;
+}
+.msg-wrap:hover .msg-rating { opacity: 1; }
+.msg-rating.has-rating { opacity: 1; }
+.msg-rating button {
+  background: none; border: 1px solid transparent;
+  cursor: pointer; padding: 1px 5px;
+  border-radius: 3px; font-size: 12px;
+  filter: grayscale(1) opacity(0.55);
+  transition: filter .1s, border-color .1s;
+}
+.msg-rating button:hover { filter: none; border-color: var(--border-light); }
+.msg-rating button.rated-good,
+.msg-rating button.rated-bad,
+.msg-rating button.rated-pair { filter: none; }
+.msg-rating button.rated-good { border-color: #2f6e3b; background: rgba(74, 222, 128, 0.12); }
+.msg-rating button.rated-bad { border-color: #7a3030; background: rgba(248, 113, 113, 0.12); }
+.msg-rating button.rated-pair { border-color: #6b5b1e; background: rgba(250, 204, 21, 0.12); }
+#messages.editing .msg-rating button { opacity: 0.3; pointer-events: none; }
+
 /* Disable all actions during editing */
 #messages.editing .msg-actions-inline button,
 #messages.editing .msg-arrow button {

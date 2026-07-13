@@ -176,6 +176,35 @@ function renderActiveTree() {
       headerEl.innerHTML += `<span class="branch-counter">${sibInfo.current} / ${sibInfo.total}</span>`;
     }
 
+    // Rating buttons (assistant only): 👍/👎 → KTO, ⚖ → manual DPO pair
+    if (node.role === 'assistant' && typeof getRating === 'function') {
+      const ratingSpan = document.createElement('span');
+      ratingSpan.className = 'msg-rating';
+      const rating = getRating(nodeId);
+
+      function addRate(glyph, title, handler, activeCls, active) {
+        const btn = document.createElement('button');
+        btn.textContent = glyph;
+        btn.title = title;
+        if (active) btn.className = activeCls;
+        btn.addEventListener('click', handler);
+        ratingSpan.appendChild(btn);
+      }
+
+      addRate('\u{1F44D}', 'Good response (KTO)',
+        () => rateNode(nodeId, true), 'rated-good', rating === true);
+      addRate('\u{1F44E}', 'Bad response (KTO)',
+        () => rateNode(nodeId, false), 'rated-bad', rating === false);
+      if (siblingGroup(nodeId).length >= 2) {
+        addRate('⚖', 'Prefer this version over its siblings (DPO)',
+          () => preferNode(nodeId), 'rated-pair', isManualChosen(nodeId));
+      }
+      if (rating !== undefined || isManualChosen(nodeId)) {
+        ratingSpan.classList.add('has-rating');
+      }
+      headerEl.appendChild(ratingSpan);
+    }
+
     // Action buttons (inline in header)
     const actionsDiv = document.createElement('div');
     actionsDiv.className = 'msg-actions-inline';
