@@ -120,26 +120,28 @@ async function streamDuel(message, context, bodies, systemPrompts = null) {
 }
 
 async function runDuel(userNode, context) {
-  // Streams two candidates side by side, adds both as sibling assistant
-  // nodes, and (unless stopped) arms pendingDuel so renderActiveTree
-  // shows the pick UI.
+  // Streams n candidates side by side (n = the sidebar batch size),
+  // adds them all as sibling assistant nodes, and (unless stopped) arms
+  // pendingDuel so renderActiveTree shows the pick UI. However many
+  // candidates generate, judging is best-vs-worst: one ▲ + one ▼.
   duelStopped = false;
+  const n = duelCandidateCount();
 
   const duelEl = document.createElement('div');
   duelEl.className = 'duel-wrap';
   msgContainer.appendChild(duelEl);
   const bodies = [];
-  for (const label of ['A', 'B']) {
+  for (let i = 0; i < n; i++) {
     const cand = document.createElement('div');
     cand.className = 'duel-candidate';
     cand.innerHTML =
-      `<div class="duel-head"><span class="duel-label">${label}</span></div>` +
+      `<div class="duel-head"><span class="duel-label">${duelLabel(i)}</span></div>` +
       '<div class="msg-body duel-waiting">&hellip;</div>';
     duelEl.appendChild(cand);
     bodies.push(cand.querySelector('.msg-body'));
   }
 
-  const spoofs = duelSystemPrompts();
+  const spoofs = duelSystemPrompts(n);
   const results = await streamDuel(userNode.content, context, bodies, spoofs);
 
   const ids = [];
@@ -151,7 +153,7 @@ async function runDuel(userNode, context) {
     ids.push(node.id);
   });
 
-  if (ids.length === 2 && !duelStopped) {
+  if (ids.length === n && !duelStopped) {
     pendingDuel = {userNodeId: userNode.id, ids, marks: {}};
   }
   renderActiveTree();
@@ -205,7 +207,7 @@ async function regenerateDuelCandidates() {
     const cand = document.createElement('div');
     cand.className = 'duel-candidate';
     cand.innerHTML =
-      `<div class="duel-head"><span class="duel-label">${i === 0 ? 'A' : 'B'}</span></div>` +
+      `<div class="duel-head"><span class="duel-label">${duelLabel(i)}</span></div>` +
       '<div class="msg-body duel-waiting">&hellip;</div>';
     duelEl.appendChild(cand);
     const body = cand.querySelector('.msg-body');
@@ -219,8 +221,8 @@ async function regenerateDuelCandidates() {
   });
 
   try {
-    // Each regenerated slot keeps its own generation prompt (A or B).
-    const spoofs = duelSystemPrompts();
+    // Each regenerated slot keeps its own slot's generation prompt.
+    const spoofs = duelSystemPrompts(duel.ids.length);
     const slotSpoofs = failIdxs.map(i => spoofs[i] || null);
     const results = await streamDuel(userNode.content, context, streamBodies,
                                      slotSpoofs);

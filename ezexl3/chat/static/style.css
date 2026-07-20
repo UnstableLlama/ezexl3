@@ -599,11 +599,11 @@ body { display: flex; overflow: hidden; }
 .msg-rating button.rated-pair { border-color: #6b5b1e; background: rgba(250, 204, 21, 0.12); color: #facc15; }
 #messages.editing .msg-rating button { opacity: 0.3; pointer-events: none; }
 
-/* ── DPO duel (two candidates side by side) ────────────────────── */
+/* ── DPO duel (candidates side by side; wraps beyond two) ──────── */
 .duel-block { margin: 12px 0; }
-.duel-wrap { display: flex; gap: 12px; align-items: stretch; }
+.duel-wrap { display: flex; gap: 12px; align-items: stretch; flex-wrap: wrap; }
 .duel-candidate {
-  flex: 1 1 0; min-width: 0;
+  flex: 1 1 260px; min-width: 0;
   background: var(--bg-secondary);
   border: 1px solid var(--border-light);
   border-radius: var(--radius);
@@ -673,6 +673,11 @@ body { display: flex; overflow: hidden; }
 }
 .duel-skip-btn:hover { color: var(--text-muted); border-color: var(--text-dim); }
 .msg-body.duel-waiting { color: var(--text-dim); }
+
+/* ── Prompt queue (sidebar) ─────────────────────────────────────── */
+.queue-open-row { display: flex; gap: 6px; }
+.queue-open-row input { width: 80px; }
+.queue-open-row .sb-btn { flex: 1; }
 
 /* Disable all actions during editing */
 #messages.editing .msg-actions-inline button,

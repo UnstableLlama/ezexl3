@@ -7,6 +7,24 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **chat: prompt queue for batch DPO capture**: a sidebar Prompt Queue
+  panel opens a JSONL file of prompts and runs through it as DPO duels —
+  each prompt starts a fresh single-turn conversation, and every
+  Commit/Skip advances the queue and auto-starts the next prompt. Lines
+  may be JSON strings, `{"prompt": ...}`-style objects, turn lists, or
+  plain text. Progress is checkpointed per file (next unserved file line,
+  in `<ratings_dir>/queue_checkpoints.json`) so a re-opened queue resumes
+  where judging left off; a "Start at Line" field overrides the
+  checkpoint. New endpoints: `GET /api/queue`, `POST /api/queue/open`,
+  `POST /api/queue/advance` (idempotent, index-guarded),
+  `POST /api/queue/close`.
+- **chat: candidates per duel (DPO batch size)**: a sidebar setting
+  (2–4, persisted as `ratings_duel_n`) sets how many candidates each DPO
+  send generates simultaneously. Judging stays best-vs-worst: exactly one
+  ▲ and one ▼ make the recorded pair, other candidates remain unrecorded
+  siblings, and ✗ + Regenerate replaces any subset. With more than two
+  candidates the contrastive generation prompts split by halves (System
+  Prompt A covers the first half, B the second).
 - **chat: Off capture mode (new default)**: the top-bar preference-capture
   toggle gains an Off position for normal chat — no rating controls, no
   duels, nothing written. Unknown or unset persisted `ratings_mode` values

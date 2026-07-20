@@ -239,6 +239,10 @@
       <input type="text" id="ratings-dir" class="mono" placeholder="(default)">
     </div>
     <div class="sb-row">
+      <label class="sb-label">Candidates per Duel (DPO)</label>
+      <input type="number" id="ratings-duel-n" value="2" min="2" max="4" step="1" title="How many candidates each DPO send generates simultaneously. Judging stays best-vs-worst: exactly one chosen + one rejected make the pair.">
+    </div>
+    <div class="sb-row">
       <label class="sb-label">System Prompt A (DPO)</label>
       <textarea class="sb-textarea" id="ratings-sys-a" rows="3" placeholder="(main system prompt)"></textarea>
     </div>
@@ -246,9 +250,31 @@
       <label class="sb-label">System Prompt B (DPO)</label>
       <textarea class="sb-textarea" id="ratings-sys-b" rows="3" placeholder="(main system prompt)"></textarea>
     </div>
-    <div class="sb-hint">Generation-only prompts for duel candidates A and B — e.g. one biasing toward the behavior you want, one against. Blank = main system prompt. The dataset's <code>prompt</code> column always keeps the main system prompt; these are recorded as <code>chosen_system</code>/<code>rejected_system</code> metadata the trainer ignores.</div>
+    <div class="sb-hint">Generation-only prompts for duel candidates — e.g. one biasing toward the behavior you want, one against. Prompt A covers the first half of the candidates, B the second half (with 2 candidates: A and B). Blank = main system prompt. The dataset's <code>prompt</code> column always keeps the main system prompt; these are recorded as <code>chosen_system</code>/<code>rejected_system</code> metadata the trainer ignores.</div>
     <div class="sb-hint" id="ratings-info"></div>
-    <div class="sb-hint">Mode toggle is in the top bar (Off = normal chat). KTO: &#x1F44D;/&#x1F44E; a reply &rarr; labeled row. DPO: each send generates two candidates &mdash; mark &#9650; chosen / &#9660; rejected and commit &rarr; pair; &#x2717; + Regenerate replaces a failed candidate. Trainer-ready JSONL.</div>
+    <div class="sb-hint">Mode toggle is in the top bar (Off = normal chat). KTO: &#x1F44D;/&#x1F44E; a reply &rarr; labeled row. DPO: each send generates candidates side by side &mdash; mark &#9650; chosen / &#9660; rejected and commit &rarr; pair; &#x2717; + Regenerate replaces a failed candidate. Trainer-ready JSONL.</div>
+  </div>
+
+  <h2>Prompt Queue</h2>
+  <div class="sb-section">
+    <div class="sb-row">
+      <label class="sb-label">Prompts File (.jsonl)</label>
+      <input type="text" id="queue-path" class="mono" placeholder="/path/to/prompts.jsonl">
+    </div>
+    <div class="sb-row">
+      <label class="sb-label">Start at Line</label>
+      <div class="queue-open-row">
+        <input type="number" id="queue-start-line" min="1" step="1" placeholder="(resume)">
+        <button id="queue-open-btn" class="sb-btn">Open</button>
+        <button id="queue-close-btn" class="sb-btn danger" style="display:none">Close</button>
+      </div>
+    </div>
+    <div class="sb-hint" id="queue-status" style="display:none"></div>
+    <div class="btn-row" id="queue-controls" style="display:none">
+      <button id="queue-next-btn" class="sb-btn">&#9654; Run prompt</button>
+      <button id="queue-skip-btn" class="sb-btn">Skip prompt</button>
+    </div>
+    <div class="sb-hint">Run a JSONL of prompts through DPO capture: each prompt starts a fresh conversation as a duel, and every Commit/Skip checkpoints progress (per file, in the datasets dir) and auto-starts the next. Leave the line blank to resume from the checkpoint. Lines may be JSON strings, <code>{"prompt": ...}</code> objects, or plain text.</div>
   </div>
 
   <h2>Model</h2>
@@ -304,6 +330,7 @@
 <script src="js/chat.js"></script>
 <script src="js/session.js"></script>
 <script src="js/ratings.js"></script>
+<script src="js/queue.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>

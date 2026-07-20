@@ -21,15 +21,28 @@ const ratingsState = {
 
 function getRating(nodeId) { return ratingsState.kto.get(nodeId); }
 
-function duelSystemPrompts() {
-  // Per-candidate generation system prompts for DPO duels: [A, B],
-  // null = use the main (trained) system prompt.
+function duelLabel(i) { return String.fromCharCode(65 + i); }  // A, B, C…
+
+function duelCandidateCount() {
+  // Candidates generated per duel (batch size). However many generate,
+  // judging stays best-vs-worst: exactly one ▲ and one ▼ make the pair.
+  const el = document.getElementById('ratings-duel-n');
+  const n = el ? parseInt(el.value, 10) : 2;
+  return Math.min(4, Math.max(2, isNaN(n) ? 2 : n));
+}
+
+function duelSystemPrompts(n = 2) {
+  // Per-candidate generation system prompts for n duel candidates:
+  // System Prompt A covers the first half, B the second half (with n=2
+  // that's the classic A/B split). null = main (trained) system prompt.
   const read = id => {
     const el = document.getElementById(id);
     const v = el ? el.value.trim() : '';
     return v || null;
   };
-  return [read('ratings-sys-a'), read('ratings-sys-b')];
+  const a = read('ratings-sys-a'), b = read('ratings-sys-b');
+  const half = Math.ceil(n / 2);
+  return Array.from({length: n}, (_, i) => (i < half ? a : b));
 }
 function pairForNode(nodeId) {
   return ratingsState.pairs.find(p => p.chosen === nodeId) || null;
@@ -146,7 +159,7 @@ async function commitDuel() {
   // Save the judged pair (▲ chosen / ▼ rejected) and continue the
   // conversation from the chosen candidate.
   if (!pendingDuel) return;
-  const {ids, marks} = pendingDuel;
+  const {ids, marks, userNodeId} = pendingDuel;
   const chosenId = ids.find(id => marks[id] === 'up');
   const rejectedId = ids.find(id => marks[id] === 'down');
   if (!chosenId || !rejectedId) return;
@@ -171,18 +184,20 @@ async function commitDuel() {
   }
   renderActiveTree();
   inputBox.focus();
+  if (typeof queueDuelResolved === 'function') queueDuelResolved(userNodeId);
 }
 
 function skipDuel() {
   // Dismiss the duel without recording: continue from the ▲ candidate
-  // if one is marked, otherwise from B.
+  // if one is marked, otherwise from the last one.
   if (!pendingDuel) return;
-  const {ids, marks} = pendingDuel;
+  const {ids, marks, userNodeId} = pendingDuel;
   const keepId = ids.find(id => marks[id] === 'up') || ids[ids.length - 1];
   pendingDuel = null;
   _activateDuelNode(keepId);
   renderActiveTree();
   inputBox.focus();
+  if (typeof queueDuelResolved === 'function') queueDuelResolved(userNodeId);
 }
 
 async function removePairFor(nodeId) {
@@ -264,6 +279,21 @@ async function initRatings() {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({[key]: el.value.trim()}),
+        }).catch(() => {});
+      });
+    }
+
+    // Candidates per duel (persisted; batch size for DPO generation)
+    const nInput = document.getElementById('ratings-duel-n');
+    if (nInput) {
+      const cfgN = parseInt(cfg.ratings_duel_n, 10);
+      if (cfgN >= 2 && cfgN <= 4) nInput.value = cfgN;
+      nInput.addEventListener('change', () => {
+        nInput.value = duelCandidateCount();
+        fetch('/api/config', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ratings_duel_n: duelCandidateCount()}),
         }).catch(() => {});
       });
     }

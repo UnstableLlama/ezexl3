@@ -298,7 +298,7 @@ function renderDuelChoice(container) {
 
     const head = document.createElement('div');
     head.className = 'duel-head';
-    head.innerHTML = `<span class="duel-label">${i === 0 ? 'A' : 'B'}</span>`;
+    head.innerHTML = `<span class="duel-label">${duelLabel(i)}</span>`;
     if (node.genSystem) {
       const sysTag = document.createElement('span');
       sysTag.className = 'duel-sys-tag';

@@ -14,6 +14,7 @@ from pathlib import Path
 from aiohttp import web
 
 from .inference import ChatEngine, ChatSettings
+from .prompt_queue import PromptQueue, load_checkpoint, save_checkpoint
 from .ratings import (
     RatingsStore, default_datasets_dir, valid_dataset_name, validate_prompt,
 )
@@ -28,6 +29,9 @@ _KEY_ENGINE = web.AppKey("engine", ChatEngine)
 _KEY_SPAWN = web.AppKey("_spawn_on_exit", list)
 _KEY_HOST = web.AppKey("_host", str)
 _KEY_PORT = web.AppKey("_port", int)
+# Mutable holder ({"queue": PromptQueue | None}) — aiohttp freezes app
+# state after startup, so handlers mutate the dict instead of the app.
+_KEY_QUEUE = web.AppKey("prompt_queue", dict)
 
 
 @web.middleware
@@ -42,6 +46,7 @@ def create_app(engine: ChatEngine) -> web.Application:
     app = web.Application(middlewares=[_no_cache_static])
     app[_KEY_ENGINE] = engine
     app[_KEY_SPAWN] = None  # set by handle_ui_launch
+    app[_KEY_QUEUE] = {"queue": None}
 
     async def _cleanup_spawn(app):
         cmd = app.get(_KEY_SPAWN)
@@ -72,6 +77,10 @@ def create_app(engine: ChatEngine) -> web.Application:
     app.router.add_post("/api/config", handle_config_set)
     app.router.add_get("/api/ratings", handle_ratings_get)
     app.router.add_post("/api/rate", handle_rate)
+    app.router.add_get("/api/queue", handle_queue_get)
+    app.router.add_post("/api/queue/open", handle_queue_open)
+    app.router.add_post("/api/queue/advance", handle_queue_advance)
+    app.router.add_post("/api/queue/close", handle_queue_close)
     app.router.add_static("/", STATIC_DIR, show_index=False, append_version=True)
 
     return app
@@ -719,6 +728,84 @@ async def handle_rate(request: web.Request) -> web.Response:
         return web.json_response(await asyncio.to_thread(_apply))
     except (OSError, ValueError) as e:
         return web.json_response({"error": str(e)}, status=500)
+
+
+# ---------------------------------------------------------------------------
+# Prompt queue (batch DPO capture from a JSONL of prompts)
+# ---------------------------------------------------------------------------
+
+async def handle_queue_get(request: web.Request) -> web.Response:
+    q = request.app[_KEY_QUEUE]["queue"]
+    return web.json_response(q.status() if q else {"active": False})
+
+
+async def handle_queue_open(request: web.Request) -> web.Response:
+    """Open a JSONL prompt file as the active queue.
+
+    Body: {path, start_line?}. Without start_line the cursor resumes
+    from the file's checkpoint (or the beginning). Opening replaces any
+    previously open queue.
+    """
+    data = await request.json()
+    path = (data.get("path") or "").strip()
+    if not path:
+        return web.json_response({"error": "path is required"}, status=400)
+    start_line = data.get("start_line")
+    if start_line is not None and (
+            not isinstance(start_line, int) or isinstance(start_line, bool)
+            or start_line < 1):
+        return web.json_response(
+            {"error": "start_line must be a positive integer"}, status=400)
+    if not Path(path).expanduser().is_file():
+        return web.json_response(
+            {"error": f"File not found: {path}"}, status=400)
+
+    def _open():
+        queue = PromptQueue(path)
+        line = start_line
+        if line is None:
+            line = load_checkpoint(_ratings_store().root, queue.path)
+        if line is not None:
+            queue.seek_line(line)
+        return queue
+
+    try:
+        queue = await asyncio.to_thread(_open)
+    except (OSError, ValueError, UnicodeDecodeError) as e:
+        return web.json_response({"error": str(e)}, status=400)
+    request.app[_KEY_QUEUE]["queue"] = queue
+    return web.json_response(queue.status())
+
+
+async def handle_queue_advance(request: web.Request) -> web.Response:
+    """Advance past the entry at {index} and checkpoint the new cursor.
+
+    The index guard makes this idempotent: a stale or duplicate advance
+    (e.g. a re-sent request) leaves the cursor alone and just returns
+    the current status.
+    """
+    q = request.app[_KEY_QUEUE]["queue"]
+    if q is None:
+        return web.json_response({"error": "No queue open"}, status=400)
+    data = await request.json()
+    index = data.get("index")
+    if not isinstance(index, int) or isinstance(index, bool):
+        return web.json_response(
+            {"error": "index must be an integer"}, status=400)
+    if q.advance(index):
+        try:
+            await asyncio.to_thread(
+                lambda: save_checkpoint(_ratings_store().root, q.path,
+                                        q.next_line()))
+        except OSError as e:
+            return web.json_response({"error": str(e)}, status=500)
+    return web.json_response(q.status())
+
+
+async def handle_queue_close(request: web.Request) -> web.Response:
+    """Close the active queue (the checkpoint is kept for later resume)."""
+    request.app[_KEY_QUEUE]["queue"] = None
+    return web.json_response({"active": False})
 
 
 # ---------------------------------------------------------------------------
