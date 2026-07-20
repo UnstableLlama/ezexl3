@@ -200,6 +200,18 @@ function skipDuel() {
   if (typeof queueDuelResolved === 'function') queueDuelResolved(userNodeId);
 }
 
+function skipDuel() {
+  // Dismiss the duel without recording: continue from the ▲ candidate
+  // if one is marked, otherwise from B.
+  if (!pendingDuel) return;
+  const {ids, marks} = pendingDuel;
+  const keepId = ids.find(id => marks[id] === 'up') || ids[ids.length - 1];
+  pendingDuel = null;
+  _activateDuelNode(keepId);
+  renderActiveTree();
+  inputBox.focus();
+}
+
 async function removePairFor(nodeId) {
   // Click on the "preferred" badge: withdraw the recorded pair.
   const p = pairForNode(nodeId);
