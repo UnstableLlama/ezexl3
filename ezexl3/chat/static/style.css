@@ -617,6 +617,13 @@ body { display: flex; overflow: hidden; }
   font-size: 11px; font-weight: 700; color: var(--text-dim);
   letter-spacing: 0.08em;
 }
+.duel-sys-tag {
+  font-size: 9px; font-weight: 600; letter-spacing: 0.06em;
+  color: var(--text-dim); border: 1px solid var(--border-light);
+  border-radius: 3px; padding: 1px 4px; margin-left: 6px;
+  cursor: help; text-transform: uppercase;
+}
+
 /* Per-candidate judgment marks: ▲ chosen / ▼ rejected / ✗ failed */
 .duel-marks { display: inline-flex; gap: 4px; }
 .duel-mark-btn {

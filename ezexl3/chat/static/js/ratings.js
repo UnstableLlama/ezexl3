@@ -20,6 +20,17 @@ const ratingsState = {
 };
 
 function getRating(nodeId) { return ratingsState.kto.get(nodeId); }
+
+function duelSystemPrompts() {
+  // Per-candidate generation system prompts for DPO duels: [A, B],
+  // null = use the main (trained) system prompt.
+  const read = id => {
+    const el = document.getElementById(id);
+    const v = el ? el.value.trim() : '';
+    return v || null;
+  };
+  return [read('ratings-sys-a'), read('ratings-sys-b')];
+}
 function pairForNode(nodeId) {
   return ratingsState.pairs.find(p => p.chosen === nodeId) || null;
 }
@@ -145,12 +156,16 @@ async function commitDuel() {
   const rejected = tree.nodes.get(rejectedId);
   const prompt = chosen ? buildPromptTurns(chosenId) : null;
   if (chosen && rejected && prompt) {
+    // genSystem records the generation-time system prompt when it
+    // differed from the trained one (null otherwise) — metadata only.
     await postRate({
       dataset: ratingsDataset,
       prompt,
       pair: {
-        chosen: {node_id: chosenId, content: chosen.content},
-        rejected: {node_id: rejectedId, content: rejected.content},
+        chosen: {node_id: chosenId, content: chosen.content,
+                 gen_system: chosen.genSystem ?? null},
+        rejected: {node_id: rejectedId, content: rejected.content,
+                   gen_system: rejected.genSystem ?? null},
       },
     });
   }
@@ -237,6 +252,21 @@ async function initRatings() {
     const dirInput = document.getElementById('ratings-dir');
     nameInput.value = ratingsDataset;
     if (cfg.ratings_dir) dirInput.value = cfg.ratings_dir;
+
+    // Duel generation prompts (persisted; blank = main system prompt)
+    for (const [id, key] of [['ratings-sys-a', 'ratings_system_a'],
+                             ['ratings-sys-b', 'ratings_system_b']]) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      if (cfg[key]) el.value = cfg[key];
+      el.addEventListener('change', () => {
+        fetch('/api/config', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({[key]: el.value.trim()}),
+        }).catch(() => {});
+      });
+    }
 
     document.querySelectorAll('#rating-mode-toggle button').forEach(btn =>
       btn.addEventListener('click', () => setRatingsMode(btn.dataset.mode)));

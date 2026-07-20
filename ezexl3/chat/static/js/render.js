@@ -299,6 +299,13 @@ function renderDuelChoice(container) {
     const head = document.createElement('div');
     head.className = 'duel-head';
     head.innerHTML = `<span class="duel-label">${i === 0 ? 'A' : 'B'}</span>`;
+    if (node.genSystem) {
+      const sysTag = document.createElement('span');
+      sysTag.className = 'duel-sys-tag';
+      sysTag.textContent = 'sys';
+      sysTag.title = `Generated with custom system prompt:\n${node.genSystem}`;
+      head.querySelector('.duel-label').after(sysTag);
+    }
 
     const markSpan = document.createElement('span');
     markSpan.className = 'duel-marks';

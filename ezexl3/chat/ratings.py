@@ -16,8 +16,9 @@
 # "prompt" is a TRL-conversational list of {role, content} turns (full chat
 # history; the trainer currently folds this to system + last user turn, but
 # the stored data keeps the full context for future multi-turn training).
-# Extra provenance keys (node_id, model, ts, source) ride along on every row;
-# the trainer selects columns by name and ignores them.
+# Extra provenance keys (node_id, model, ts, source, and on DPO rows the
+# chosen_system/rejected_system generation prompts) ride along on every
+# row; the trainer selects columns by name and ignores them.
 
 from __future__ import annotations
 
@@ -141,6 +142,12 @@ class RatingsStore:
         The pair is keyed by the UNORDERED {chosen, rejected} node-id duo,
         so re-picking the other candidate of a duel replaces the old row
         instead of leaving two contradictory pairs on disk.
+
+        chosen/rejected may carry "gen_system" — the system prompt that
+        candidate was actually generated under, when it differed from the
+        trained prompt stored in the "prompt" column. It lands in the
+        chosen_system/rejected_system metadata columns (null when the
+        trained prompt was used); the trainer ignores them.
         """
         path = self._path(dataset, "dpo")
         duo = {chosen["node_id"], rejected["node_id"]}
@@ -156,6 +163,8 @@ class RatingsStore:
                     "rejected": rejected["content"],
                     "chosen_node_id": chosen["node_id"],
                     "rejected_node_id": rejected["node_id"],
+                    "chosen_system": chosen.get("gen_system"),
+                    "rejected_system": rejected.get("gen_system"),
                     "source": "duel",
                     "model": model,
                     "ts": _now(),

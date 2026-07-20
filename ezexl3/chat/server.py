@@ -123,6 +123,18 @@ async def handle_chat(request: web.Request) -> web.Response:
     n = data.get("n", 1)
     if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 4:
         n = 1
+    # Optional per-candidate system-prompt overrides (DPO generation
+    # bias); None/"" entries fall back to the trained prompt.
+    system_prompts = data.get("system_prompts")
+    if system_prompts is not None:
+        if (not isinstance(system_prompts, list)
+                or len(system_prompts) != n
+                or not all(s is None or isinstance(s, str)
+                           for s in system_prompts)):
+            return web.json_response(
+                {"error": "system_prompts must be a list of n strings/nulls"},
+                status=400,
+            )
 
     response = web.StreamResponse(
         status=200,
@@ -137,7 +149,8 @@ async def handle_chat(request: web.Request) -> web.Response:
     await response.prepare(request)
 
     prefix = data.get("prefix", "")
-    async for event in engine.generate(message, prefix=prefix, n=n):
+    async for event in engine.generate(message, prefix=prefix, n=n,
+                                       system_prompts=system_prompts):
         sse_data = f"data: {json.dumps(event)}\n\n"
         await response.write(sse_data.encode("utf-8"))
 
@@ -673,6 +686,13 @@ async def handle_rate(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": "pair needs chosen and rejected content"}, status=400,
             )
+        for side in (chosen, rejected):
+            gs = side.get("gen_system")
+            if gs is not None and not isinstance(gs, str):
+                return web.json_response(
+                    {"error": "gen_system must be a string or null"},
+                    status=400,
+                )
 
     # Full model dir as provenance — the basename alone is ambiguous for
     # layouts like .../Llama-3.2-3B-Instruct/4.

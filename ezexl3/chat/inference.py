@@ -552,12 +552,18 @@ class ChatEngine:
         )
         return model_init.get_arg_sampler(ns)
 
-    def _build_input_ids(self, prompt_format, prefix: str = ""):
-        """Tokenize full context, trimming from head if too long."""
+    def _build_input_ids(self, prompt_format, prefix: str = "",
+                         system_prompt: str | None = None):
+        """Tokenize full context, trimming from head if too long.
+
+        *system_prompt* overrides the settings' system prompt for this
+        build only (used for per-candidate DPO generation prompts);
+        None means use the trained prompt from settings.
+        """
         think = self.settings.think
-        frm_context = prompt_format.format(
-            self.settings.system_prompt, self.context, think
-        )
+        sys_prompt = (self.settings.system_prompt if system_prompt is None
+                      else system_prompt)
+        frm_context = prompt_format.format(sys_prompt, self.context, think)
         if prefix:
             frm_context += prefix
         elif think and prompt_format.thinktag()[0] is not None:
@@ -575,9 +581,7 @@ class ChatEngine:
                 if len(self.context) <= 1:
                     break
                 self.context = self.context[1:]
-                frm_context = prompt_format.format(
-                    self.settings.system_prompt, self.context, think
-                )
+                frm_context = prompt_format.format(sys_prompt, self.context, think)
                 if prefix:
                     frm_context += prefix
                 elif think and prompt_format.thinktag()[0] is not None:
@@ -619,11 +623,19 @@ class ChatEngine:
         return ev
 
     async def generate(self, user_message: str, prefix: str = "",
-                       n: int = 1) -> AsyncGenerator[dict, None]:
+                       n: int = 1,
+                       system_prompts: list | None = None,
+                       ) -> AsyncGenerator[dict, None]:
         """
         Stream response(s) for *user_message*. With n > 1 all candidates
         generate CONCURRENTLY as batched jobs in one generator pass —
         the chat UI's DPO duel mode uses n=2.
+
+        *system_prompts* optionally overrides the system prompt per
+        candidate (list of str-or-None aligned with n; None or "" falls
+        back to the settings' trained prompt). Used by DPO duels to bias
+        each candidate's generation while the recorded dataset keeps the
+        trained prompt.
 
         Yields dicts; "cand" indexes the candidate (always 0 when n=1):
             {"type": "token", "cand": 0, "text": "..."}
@@ -652,7 +664,18 @@ class ChatEngine:
 
             prompt_format = self._get_prompt_format()
             stop_conditions = self._get_stop_conditions(prompt_format)
-            ids = self._build_input_ids(prompt_format, prefix=prefix)
+
+            # Per-candidate input ids: candidates share everything except
+            # an optional per-candidate system-prompt override. Identical
+            # prompts still share cache pages via the generator's dedup.
+            n_jobs = max(1, int(n))
+            ids_per_cand = []
+            for i in range(n_jobs):
+                override = None
+                if system_prompts and i < len(system_prompts):
+                    override = system_prompts[i] or None
+                ids_per_cand.append(self._build_input_ids(
+                    prompt_format, prefix=prefix, system_prompt=override))
 
             # Banned strings
             banned = list(self.settings.banned_strings)
@@ -671,7 +694,7 @@ class ChatEngine:
                     sampler=self._get_sampler(),
                     banned_strings=list(banned) if banned else None,
                 )
-                for _ in range(max(1, int(n)))
+                for ids in ids_per_cand
             ]
             cand_of = {id(job): i for i, job in enumerate(jobs)}
             self._current_job = list(jobs)

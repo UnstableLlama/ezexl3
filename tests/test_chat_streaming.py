@@ -269,6 +269,42 @@ class TestChatServer(AioHTTPTestCase):
             self.assertEqual(len(token_events), len(FAKE_TOKENS), bad_n)
             self.assertTrue(all(e["cand"] == 0 for e in token_events), bad_n)
 
+    async def test_chat_system_prompts_override_per_candidate(self):
+        """DPO generation prompts: system_prompts biases each candidate's
+        prompt build; None/"" entries fall back to the trained prompt."""
+        self._fresh_generator()
+        self.engine.settings.system_prompt = "TRAINED"
+        captured = []
+        orig = self.engine._build_input_ids
+
+        def spy(prompt_format, prefix="", system_prompt=None):
+            captured.append(system_prompt)
+            return orig(prompt_format, prefix=prefix,
+                        system_prompt=system_prompt)
+
+        self.engine._build_input_ids = spy
+        resp = await self.client.request(
+            "POST", "/api/chat",
+            json={"message": "Hi", "n": 2,
+                  "system_prompts": ["BE TERSE", ""]},
+        )
+        self.assertEqual(resp.status, 200)
+        events = parse_sse_events(await resp.read())
+        dones = [e for e in events
+                 if isinstance(e, dict) and e["type"] == "done"]
+        self.assertEqual({d["cand"] for d in dones}, {0, 1})
+        # Candidate 0 built with the override, candidate 1 ("" → trained)
+        self.assertEqual(captured, ["BE TERSE", None])
+
+    async def test_chat_bad_system_prompts_rejected(self):
+        for bad in ("BE TERSE", ["only one"], ["a", "b", "c"], [1, 2],
+                    [None, 5]):
+            resp = await self.client.request(
+                "POST", "/api/chat",
+                json={"message": "Hi", "n": 2, "system_prompts": bad},
+            )
+            self.assertEqual(resp.status, 400, bad)
+
     async def test_chat_empty_message_rejected(self):
         resp = await self.client.request(
             "POST", "/api/chat",

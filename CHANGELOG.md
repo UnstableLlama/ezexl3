@@ -19,6 +19,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   writes the chosen/rejected pair and continues from the chosen reply.
   Replaces the one-click "Prefer A/B" buttons; Skip still continues
   without recording.
+- **chat: DPO generation prompts (contrastive spoofing)**: sidebar
+  System Prompt A/B fields override the system prompt at generation time
+  for duel candidates A and B (blank = main prompt), so one candidate can
+  be biased toward the target behavior and the other away from it —
+  RLCD-style contrastive pairs with a human judge. The dataset's `prompt`
+  column always keeps the main system prompt; the generation prompts are
+  recorded as `chosen_system`/`rejected_system` metadata columns the
+  trainer ignores (null when unspoofed). `/api/chat` gains an optional
+  `system_prompts` list (per-candidate, validated against `n`);
+  regenerating a ✗ candidate re-uses its own slot's prompt; a "sys" tag
+  on a candidate shows the prompt it was generated under.
 - **MTP tensor quantization** (`ezexl3 mtp` + dashboard MTP tab): wraps
   exllamav3's new `util/convert_mtp.py` (dev branch). Quantizes just the
   MTP tensors from a base checkpoint into a standalone `.safetensors`
