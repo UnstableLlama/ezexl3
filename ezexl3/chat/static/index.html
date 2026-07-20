@@ -238,8 +238,17 @@
       <label class="sb-label">Datasets Dir</label>
       <input type="text" id="ratings-dir" class="mono" placeholder="(default)">
     </div>
+    <div class="sb-row">
+      <label class="sb-label">System Prompt A (DPO)</label>
+      <textarea class="sb-textarea" id="ratings-sys-a" rows="3" placeholder="(main system prompt)"></textarea>
+    </div>
+    <div class="sb-row">
+      <label class="sb-label">System Prompt B (DPO)</label>
+      <textarea class="sb-textarea" id="ratings-sys-b" rows="3" placeholder="(main system prompt)"></textarea>
+    </div>
+    <div class="sb-hint">Generation-only prompts for duel candidates A and B — e.g. one biasing toward the behavior you want, one against. Blank = main system prompt. The dataset's <code>prompt</code> column always keeps the main system prompt; these are recorded as <code>chosen_system</code>/<code>rejected_system</code> metadata the trainer ignores.</div>
     <div class="sb-hint" id="ratings-info"></div>
-    <div class="sb-hint">Mode toggle is in the top bar. KTO: &#x1F44D;/&#x1F44E; a reply &rarr; labeled row. DPO: each send generates two candidates &mdash; pick the better &rarr; pair. Trainer-ready JSONL.</div>
+    <div class="sb-hint">Mode toggle is in the top bar (Off = normal chat). KTO: &#x1F44D;/&#x1F44E; a reply &rarr; labeled row. DPO: each send generates two candidates &mdash; mark &#9650; chosen / &#9660; rejected and commit &rarr; pair; &#x2717; + Regenerate replaces a failed candidate. Trainer-ready JSONL.</div>
   </div>
 
   <h2>Model</h2>
@@ -254,8 +263,9 @@
     <button id="toggle-sidebar" title="Toggle settings">&#9776;</button>
     <span id="header-title">ezexl3 chat</span>
     <div id="rating-mode-toggle" title="Preference-data capture mode">
-      <button data-mode="kto" class="active" title="KTO: &#x1F44D;/&#x1F44E; a reply writes one labeled row">KTO</button>
-      <button data-mode="dpo" title="DPO: each send generates two candidates; pick the better one to record a pair">DPO</button>
+      <button data-mode="off" class="active" title="Normal chat — no preference-data capture">Off</button>
+      <button data-mode="kto" title="KTO: &#x1F44D;/&#x1F44E; a reply writes one labeled row">KTO</button>
+      <button data-mode="dpo" title="DPO: each send generates two candidates; mark &#9650;/&#9660; and commit to record a pair">DPO</button>
     </div>
     <span id="header-model"></span>
   </div>

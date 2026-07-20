@@ -1,9 +1,10 @@
 """
 Tests for chat preference-rating capture (KTO / DPO data collection).
 
-The chat UI captures in one of two modes: KTO (👍/👎 writes independent
-labeled rows) or DPO (each send generates two candidates; picking the
-better one writes a single chosen/rejected pair). Rows are JSONL shaped
+The chat UI captures in one of two modes — KTO (👍/👎 writes independent
+labeled rows) or DPO (each send generates two candidates; mark ▲/▼ and
+commit to write a single chosen/rejected pair) — plus an Off position
+(the default) that disables capture. Rows are JSONL shaped
 exactly like what UnstableLlama/exllamav3's training/qlora_train_pref.py
 reads with its default keys (--prompt-key prompt, --completion-key
 completion, --label-key label, --chosen-key chosen, --rejected-key
@@ -146,6 +147,31 @@ class TestRatingsStore(unittest.TestCase):
                             {"node_id": "d", "content": "D"}, "m")
         self.assertEqual(len(store.state("t")["dpo"]), 2)
 
+    def test_pair_records_generation_prompts(self):
+        # Per-candidate generation system prompts land in their own
+        # metadata columns; the trainer selects columns by name and
+        # never sees them.
+        store, root = make_store()
+        store.rate_dpo_pair(
+            "t", PROMPT,
+            {"node_id": "a", "content": "A", "gen_system": "be helpful"},
+            {"node_id": "b", "content": "B", "gen_system": "be lazy"}, "m")
+        row = json.loads((root / "t.dpo.jsonl").read_text())
+        self.assertEqual(row["chosen_system"], "be helpful")
+        self.assertEqual(row["rejected_system"], "be lazy")
+        # Trainer columns are untouched by spoofing
+        self.assertEqual(row["chosen"], "A")
+        self.assertEqual(row["rejected"], "B")
+        # Unspoofed pairs keep the columns (null) so every row in a file
+        # shares one schema.
+        store.rate_dpo_pair("t", PROMPT, {"node_id": "c", "content": "C"},
+                            {"node_id": "d", "content": "D"}, "m")
+        rows = [json.loads(l) for l in
+                (root / "t.dpo.jsonl").read_text().splitlines()]
+        self.assertEqual(set(rows[0]), set(rows[1]))
+        self.assertIsNone(rows[1]["chosen_system"])
+        self.assertIsNone(rows[1]["rejected_system"])
+
     def test_pair_remove(self):
         store, _ = make_store()
         store.rate_dpo_pair("t", PROMPT, {"node_id": "a", "content": "A"},
@@ -258,6 +284,27 @@ class TestRatingRoutes(AioHTTPTestCase):
         data = await resp.json()
         self.assertEqual(data["dpo"], [])
 
+    async def test_rate_pair_with_generation_prompts(self):
+        body = {
+            "dataset": "t", "prompt": PROMPT,
+            "pair": {
+                "chosen": {"node_id": "a", "content": "better",
+                           "gen_system": "be great"},
+                "rejected": {"node_id": "b", "content": "worse",
+                             "gen_system": None},
+            },
+        }
+        resp = await self.client.request("POST", "/api/rate", json=body)
+        self.assertEqual(resp.status, 200)
+        row = json.loads(
+            (Path(self.tmpdir) / "t.dpo.jsonl").read_text().splitlines()[0])
+        self.assertEqual(row["chosen_system"], "be great")
+        self.assertIsNone(row["rejected_system"])
+        # Non-string gen_system is rejected
+        body["pair"]["chosen"]["gen_system"] = 42
+        resp = await self.client.request("POST", "/api/rate", json=body)
+        self.assertEqual(resp.status, 400)
+
     async def test_rate_rejects_bad_input(self):
         cases = [
             {"dataset": "../evil", "prompt": PROMPT,
@@ -309,26 +356,49 @@ class TestUiWiring(unittest.TestCase):
         self.assertIn('id="ratings-dataset"', html)
         self.assertIn('id="ratings-dir"', html)
         self.assertIn('id="rating-mode-toggle"', html)
+        self.assertIn('data-mode="off"', html)
         self.assertIn('data-mode="kto"', html)
         self.assertIn('data-mode="dpo"', html)
+        self.assertIn('id="ratings-sys-a"', html)
+        self.assertIn('id="ratings-sys-b"', html)
         self.assertIn('js/ratings.js', html)
+
+    def test_capture_defaults_to_off(self):
+        # Off (normal chat) is the default: the toggle pre-selects it and
+        # the JS falls back to it for unknown/unset persisted modes.
+        html = (REPO_ROOT / "ezexl3/chat/static/index.html").read_text()
+        self.assertIn('data-mode="off" class="active"', html)
+        js = (REPO_ROOT / "ezexl3/chat/static/js/ratings.js").read_text()
+        self.assertIn("let ratingsMode = 'off'", js)
 
     def test_render_wires_rating_controls(self):
         js = (REPO_ROOT / "ezexl3/chat/static/js/render.js").read_text()
         self.assertIn("rateNode", js)
         self.assertIn("renderDuelChoice", js)
-        self.assertIn("resolveDuel", js)
+        # Duel judgment controls: per-candidate marks + commit/regen/skip
+        for name in ("setDuelMark", "commitDuel", "skipDuel",
+                     "regenerateDuelCandidates"):
+            self.assertIn(name, js)
+        # Off mode renders no rating controls
+        self.assertIn("ratingsMode !== 'off'", js)
 
     def test_ratings_js_defines_api(self):
         js = (REPO_ROOT / "ezexl3/chat/static/js/ratings.js").read_text()
-        for name in ("rateNode", "resolveDuel", "setRatingsMode",
-                     "refreshRatings", "buildPromptTurns", "removePairFor"):
+        for name in ("rateNode", "setDuelMark", "commitDuel", "skipDuel",
+                     "setRatingsMode", "refreshRatings", "buildPromptTurns",
+                     "removePairFor", "duelSystemPrompts"):
             self.assertIn(name, js)
+        # Committed pairs carry the generation-prompt provenance
+        self.assertIn("gen_system", js)
 
     def test_chat_js_runs_duels_in_dpo_mode(self):
         js = (REPO_ROOT / "ezexl3/chat/static/js/chat.js").read_text()
         self.assertIn("runDuel", js)
+        self.assertIn("regenerateDuelCandidates", js)
         self.assertIn("ratingsMode === 'dpo'", js)
+        # Duels pass the per-candidate generation prompts to /api/chat
+        self.assertIn("duelSystemPrompts", js)
+        self.assertIn("system_prompts", js)
 
 
 if __name__ == "__main__":

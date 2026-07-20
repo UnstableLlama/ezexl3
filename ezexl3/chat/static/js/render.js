@@ -120,10 +120,10 @@ function renderActiveTree() {
     const node = tree.nodes.get(nodeId);
     if (!node) continue;
 
-    // A pending DPO duel renders as a side-by-side pick UI covering both
-    // candidates (only one of them is ever on the active path).
+    // A pending DPO duel renders as a side-by-side judgment UI covering
+    // both candidates (only one of them is ever on the active path).
     if (typeof pendingDuel !== 'undefined' && pendingDuel &&
-        (nodeId === pendingDuel.a || nodeId === pendingDuel.b)) {
+        pendingDuel.ids.includes(nodeId)) {
       renderDuelChoice(msgContainer);
       continue;
     }
@@ -185,9 +185,11 @@ function renderActiveTree() {
     }
 
     // Rating controls (assistant only), gated by the capture mode:
-    // KTO mode shows 👍/👎; DPO mode shows a "preferred" badge on
-    // messages whose duel pick is recorded (click to withdraw).
-    if (node.role === 'assistant' && typeof getRating === 'function') {
+    // Off shows nothing; KTO mode shows 👍/👎; DPO mode shows a
+    // "preferred" badge on messages whose duel pick is recorded
+    // (click to withdraw).
+    if (node.role === 'assistant' && typeof getRating === 'function' &&
+        ratingsMode !== 'off') {
       const ratingSpan = document.createElement('span');
       ratingSpan.className = 'msg-rating';
       const rating = getRating(nodeId);
@@ -275,28 +277,51 @@ function renderActiveTree() {
   scrollToBottom();
 }
 
-// ── DPO duel pick UI ────────────────────────────────────────────
+// ── DPO duel judgment UI ────────────────────────────────────────
+// Each candidate gets ▲ (chosen) / ▼ (rejected) / ✗ (failed) marks.
+// Regenerate replaces the ✗ candidates; Commit (one ▲ + one ▼) writes
+// the pair; Skip continues without recording.
 function renderDuelChoice(container) {
   const block = document.createElement('div');
   block.className = 'duel-block';
+  const {ids, marks} = pendingDuel;
 
   const wrap = document.createElement('div');
   wrap.className = 'duel-wrap';
-  for (const [id, label] of [[pendingDuel.a, 'A'], [pendingDuel.b, 'B']]) {
+  ids.forEach((id, i) => {
     const node = tree.nodes.get(id);
-    if (!node) continue;
+    if (!node) return;
+    const mark = marks[id];
     const cand = document.createElement('div');
     cand.className = 'duel-candidate';
+    if (mark) cand.classList.add(`duel-marked-${mark}`);
 
     const head = document.createElement('div');
     head.className = 'duel-head';
-    head.innerHTML = `<span class="duel-label">${label}</span>`;
-    const pickBtn = document.createElement('button');
-    pickBtn.className = 'duel-pick-btn';
-    pickBtn.textContent = `Prefer ${label}`;
-    pickBtn.title = 'Record the DPO pair and continue from this reply';
-    pickBtn.addEventListener('click', () => resolveDuel(id, true));
-    head.appendChild(pickBtn);
+    head.innerHTML = `<span class="duel-label">${i === 0 ? 'A' : 'B'}</span>`;
+    if (node.genSystem) {
+      const sysTag = document.createElement('span');
+      sysTag.className = 'duel-sys-tag';
+      sysTag.textContent = 'sys';
+      sysTag.title = `Generated with custom system prompt:\n${node.genSystem}`;
+      head.querySelector('.duel-label').after(sysTag);
+    }
+
+    const markSpan = document.createElement('span');
+    markSpan.className = 'duel-marks';
+    for (const [m, glyph, title] of [
+      ['up', '▲', 'Chosen — the better reply'],
+      ['down', '▼', 'Rejected — the worse reply'],
+      ['fail', '✗', 'Failed — discard; Regenerate replaces it'],
+    ]) {
+      const btn = document.createElement('button');
+      btn.textContent = glyph;
+      btn.title = title;
+      btn.className = `duel-mark-btn mark-${m}` + (mark === m ? ' active' : '');
+      btn.addEventListener('click', () => setDuelMark(id, m));
+      markSpan.appendChild(btn);
+    }
+    head.appendChild(markSpan);
     cand.appendChild(head);
 
     const body = document.createElement('div');
@@ -304,17 +329,38 @@ function renderDuelChoice(container) {
     renderFinal(body, node.content);
     cand.appendChild(body);
     wrap.appendChild(cand);
-  }
+  });
   block.appendChild(wrap);
 
-  const skip = document.createElement('div');
-  skip.className = 'duel-skip';
-  const skipBtn = document.createElement('button');
-  skipBtn.textContent = 'Skip — continue without recording';
-  skipBtn.title = 'Keep candidate B and record nothing';
-  skipBtn.addEventListener('click', () => resolveDuel(pendingDuel.b, false));
-  skip.appendChild(skipBtn);
-  block.appendChild(skip);
+  const bar = document.createElement('div');
+  bar.className = 'duel-actions';
 
+  const anyFail = ids.some(id => marks[id] === 'fail');
+  const regenBtn = document.createElement('button');
+  regenBtn.className = 'duel-regen-btn';
+  regenBtn.textContent = '↻ Regenerate';
+  regenBtn.title = 'Regenerate the candidates marked ✗';
+  regenBtn.disabled = !anyFail;
+  regenBtn.addEventListener('click', () => regenerateDuelCandidates());
+  bar.appendChild(regenBtn);
+
+  const havePair = ids.some(id => marks[id] === 'up') &&
+                   ids.some(id => marks[id] === 'down');
+  const commitBtn = document.createElement('button');
+  commitBtn.className = 'duel-commit-btn';
+  commitBtn.textContent = '✓ Commit pair';
+  commitBtn.title = 'Save the ▲/▼ pair and continue from the chosen reply';
+  commitBtn.disabled = !havePair;
+  commitBtn.addEventListener('click', () => commitDuel());
+  bar.appendChild(commitBtn);
+
+  const skipBtn = document.createElement('button');
+  skipBtn.className = 'duel-skip-btn';
+  skipBtn.textContent = 'Skip';
+  skipBtn.title = 'Continue without recording a pair';
+  skipBtn.addEventListener('click', () => skipDuel());
+  bar.appendChild(skipBtn);
+
+  block.appendChild(bar);
   container.appendChild(block);
 }

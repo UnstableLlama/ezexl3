@@ -57,17 +57,22 @@ async function streamResponse(message, context, bodyEl, {initialText = '', prefi
 // ── DPO duel: generate two candidates for one user turn ────────
 let duelStopped = false;  // set by stopGeneration(); abandons the duel
 
-async function streamDuel(message, context, bodies) {
+async function streamDuel(message, context, bodies, systemPrompts = null) {
   // One /api/chat request with n=2: the server batches both candidates
   // in a single generator pass and tags every SSE event with `cand`,
-  // so both columns stream CONCURRENTLY.
+  // so both columns stream CONCURRENTLY. systemPrompts optionally
+  // biases each candidate's generation (null entry = trained prompt).
   const texts = bodies.map(() => '');
   const tps = bodies.map(() => null);
 
+  const reqBody = {message, context, n: bodies.length};
+  if (systemPrompts && systemPrompts.some(Boolean)) {
+    reqBody.system_prompts = systemPrompts;
+  }
   const resp = await fetch('/api/chat', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({message, context, n: bodies.length}),
+    body: JSON.stringify(reqBody),
   });
 
   const reader = resp.body.getReader();
@@ -134,20 +139,117 @@ async function runDuel(userNode, context) {
     bodies.push(cand.querySelector('.msg-body'));
   }
 
-  const results = await streamDuel(userNode.content, context, bodies);
+  const spoofs = duelSystemPrompts();
+  const results = await streamDuel(userNode.content, context, bodies, spoofs);
 
   const ids = [];
-  for (const {fullText, tpsData} of results) {
-    if (!fullText.trim()) continue;  // stopped before any tokens
+  results.forEach(({fullText, tpsData}, i) => {
+    if (!fullText.trim()) return;  // stopped before any tokens
     const node = addAssistantNode(userNode.id, fullText.trim());
     if (tpsData) node.tpsData = tpsData;
+    node.genSystem = spoofs[i] || null;
     ids.push(node.id);
-  }
+  });
 
   if (ids.length === 2 && !duelStopped) {
-    pendingDuel = {a: ids[0], b: ids[1]};
+    pendingDuel = {userNodeId: userNode.id, ids, marks: {}};
   }
   renderActiveTree();
+}
+
+// ── DPO duel: regenerate the candidates marked ✗ ───────────────
+async function regenerateDuelCandidates() {
+  // Replaces just the failed (✗) candidates of the pending duel with
+  // fresh generations, keeping the other candidate's text and mark.
+  if (!pendingDuel || generating || !modelLoaded) return;
+  const duel = pendingDuel;
+  const failIdxs = duel.ids
+    .map((id, i) => (duel.marks[id] === 'fail' ? i : -1))
+    .filter(i => i >= 0);
+  if (!failIdxs.length) return;
+
+  pendingDuel = null;
+  duelStopped = false;
+
+  const userNode = tree.nodes.get(duel.userNodeId);
+  if (!userNode) { renderActiveTree(); return; }
+  const context = getActivePathUpTo(userNode.id);
+
+  // Drop the failed candidates from the tree; their replacements get
+  // fresh node ids (any stale mark goes with them).
+  for (const i of failIdxs) {
+    const id = duel.ids[i];
+    const idx = userNode.children.indexOf(id);
+    if (idx >= 0) userNode.children.splice(idx, 1);
+    tree.nodes.delete(id);
+    delete duel.marks[id];
+  }
+
+  // Render history up to the user turn, then rebuild the side-by-side
+  // view: kept candidates static, failed slots streaming.
+  const savedActiveChild = userNode.activeChild;
+  userNode.activeChild = -1;
+  renderActiveTree();
+  userNode.activeChild = Math.min(savedActiveChild, userNode.children.length - 1);
+
+  generating = true;
+  sendBtn.style.display = 'none';
+  stopBtn.style.display = 'flex';
+  sendBtn.disabled = true;
+
+  const duelEl = document.createElement('div');
+  duelEl.className = 'duel-wrap';
+  msgContainer.appendChild(duelEl);
+  const streamBodies = [];
+  duel.ids.forEach((id, i) => {
+    const cand = document.createElement('div');
+    cand.className = 'duel-candidate';
+    cand.innerHTML =
+      `<div class="duel-head"><span class="duel-label">${i === 0 ? 'A' : 'B'}</span></div>` +
+      '<div class="msg-body duel-waiting">&hellip;</div>';
+    duelEl.appendChild(cand);
+    const body = cand.querySelector('.msg-body');
+    if (failIdxs.includes(i)) {
+      streamBodies.push(body);
+    } else {
+      const node = tree.nodes.get(id);
+      body.classList.remove('duel-waiting');
+      renderFinal(body, node ? node.content : '');
+    }
+  });
+
+  try {
+    // Each regenerated slot keeps its own generation prompt (A or B).
+    const spoofs = duelSystemPrompts();
+    const slotSpoofs = failIdxs.map(i => spoofs[i] || null);
+    const results = await streamDuel(userNode.content, context, streamBodies,
+                                     slotSpoofs);
+    results.forEach((res, k) => {
+      const slot = failIdxs[k];
+      const text = res.fullText.trim();
+      if (!text) { duel.ids[slot] = null; return; }  // stopped before tokens
+      const node = addAssistantNode(userNode.id, text);
+      if (res.tpsData) node.tpsData = res.tpsData;
+      node.genSystem = slotSpoofs[k];
+      duel.ids[slot] = node.id;
+    });
+  } catch (e) {
+    console.error('Duel regen failed:', e);
+  }
+
+  generating = false;
+  sendBtn.style.display = 'flex';
+  stopBtn.style.display = 'none';
+  sendBtn.disabled = false;
+
+  // Re-arm the duel only if both slots hold a live candidate; a stopped
+  // regen leaves the surviving replies as ordinary siblings.
+  if (!duelStopped && duel.ids.every(Boolean)) {
+    pendingDuel = duel;
+  }
+  renderActiveTree();
+  inputBox.focus();
+  scrollToBottom();
 }
 
 // ── Send message ────────────────────────────────────────────────
