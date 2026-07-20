@@ -1,13 +1,17 @@
 // ── Ratings: KTO/DPO preference-data capture ────────────────────
 // A header toggle picks the capture mode:
+//   Off — normal chat, no capture UI (the default).
 //   KTO — 👍/👎 on any assistant reply writes one independent labeled row.
-//   DPO — each send/regen generates TWO candidates side by side; picking
-//         the better one writes a single chosen/rejected pair.
+//   DPO — each send/regen generates TWO candidates side by side; mark one
+//         ▲ chosen and one ▼ rejected, then Commit writes the pair. ✗
+//         marks a candidate failed so Regenerate replaces just that one.
 // Rows land in <ratings_dir>/<dataset>.{kto,dpo}.jsonl, trainer-ready.
 
 let ratingsDataset = 'chat';
-let ratingsMode = 'kto';    // 'kto' | 'dpo'
-let pendingDuel = null;     // {a, b} assistant node ids awaiting a pick
+let ratingsMode = 'off';    // 'off' | 'kto' | 'dpo'
+// Pending DPO duel awaiting judgment:
+//   {userNodeId, ids: [aId, bId], marks: {nodeId: 'up'|'down'|'fail'}}
+let pendingDuel = null;
 const ratingsState = {
   kto: new Map(),           // node_id -> bool
   pairs: [],                // [{chosen, rejected}] node-id pairs on disk
@@ -45,11 +49,11 @@ async function refreshRatings() {
 // ── Capture mode ────────────────────────────────────────────────
 
 function setRatingsMode(mode, persist = true) {
-  ratingsMode = mode === 'dpo' ? 'dpo' : 'kto';
+  ratingsMode = (mode === 'dpo' || mode === 'kto') ? mode : 'off';
   document.querySelectorAll('#rating-mode-toggle button').forEach(b =>
     b.classList.toggle('active', b.dataset.mode === ratingsMode));
   // A duel can't outlive a mode switch — dismiss it without recording.
-  if (ratingsMode !== 'dpo' && pendingDuel) resolveDuel(pendingDuel.b, false);
+  if (ratingsMode !== 'dpo' && pendingDuel) skipDuel();
   if (persist) {
     fetch('/api/config', {
       method: 'POST',
@@ -98,33 +102,70 @@ async function rateNode(nodeId, label) {
   });
 }
 
-async function resolveDuel(winnerId, record) {
-  // Settle the pending two-candidate duel: continue the conversation from
-  // *winnerId*; with record=true also write the DPO pair.
-  if (!pendingDuel) return;
-  const {a, b} = pendingDuel;
-  pendingDuel = null;
-  const loserId = winnerId === a ? b : a;
-  const winner = tree.nodes.get(winnerId);
-  const parent = winner ? tree.nodes.get(winner.parentId) : null;
+function setDuelMark(nodeId, mark) {
+  // Toggle a judgment mark on one duel candidate. ▲ (up) and ▼ (down)
+  // are exclusive across candidates — a pair has one of each; ✗ (fail)
+  // can sit on both.
+  if (!pendingDuel || !pendingDuel.ids.includes(nodeId)) return;
+  const marks = pendingDuel.marks;
+  if (marks[nodeId] === mark) {
+    delete marks[nodeId];
+  } else {
+    if (mark !== 'fail') {
+      for (const id of pendingDuel.ids) {
+        if (marks[id] === mark) delete marks[id];
+      }
+    }
+    marks[nodeId] = mark;
+  }
+  renderActiveTree();
+}
+
+function _activateDuelNode(nodeId) {
+  // Point the conversation's active branch at *nodeId*.
+  const node = tree.nodes.get(nodeId);
+  const parent = node ? tree.nodes.get(node.parentId) : null;
   if (parent) {
-    const idx = parent.children.indexOf(winnerId);
+    const idx = parent.children.indexOf(nodeId);
     if (idx >= 0) parent.activeChild = idx;
   }
-  if (record) {
-    const loser = tree.nodes.get(loserId);
-    const prompt = winner ? buildPromptTurns(winnerId) : null;
-    if (winner && loser && prompt) {
-      await postRate({
-        dataset: ratingsDataset,
-        prompt,
-        pair: {
-          chosen: {node_id: winnerId, content: winner.content},
-          rejected: {node_id: loserId, content: loser.content},
-        },
-      });
-    }
+}
+
+async function commitDuel() {
+  // Save the judged pair (▲ chosen / ▼ rejected) and continue the
+  // conversation from the chosen candidate.
+  if (!pendingDuel) return;
+  const {ids, marks} = pendingDuel;
+  const chosenId = ids.find(id => marks[id] === 'up');
+  const rejectedId = ids.find(id => marks[id] === 'down');
+  if (!chosenId || !rejectedId) return;
+  pendingDuel = null;
+  _activateDuelNode(chosenId);
+  const chosen = tree.nodes.get(chosenId);
+  const rejected = tree.nodes.get(rejectedId);
+  const prompt = chosen ? buildPromptTurns(chosenId) : null;
+  if (chosen && rejected && prompt) {
+    await postRate({
+      dataset: ratingsDataset,
+      prompt,
+      pair: {
+        chosen: {node_id: chosenId, content: chosen.content},
+        rejected: {node_id: rejectedId, content: rejected.content},
+      },
+    });
   }
+  renderActiveTree();
+  inputBox.focus();
+}
+
+function skipDuel() {
+  // Dismiss the duel without recording: continue from the ▲ candidate
+  // if one is marked, otherwise from B.
+  if (!pendingDuel) return;
+  const {ids, marks} = pendingDuel;
+  const keepId = ids.find(id => marks[id] === 'up') || ids[ids.length - 1];
+  pendingDuel = null;
+  _activateDuelNode(keepId);
   renderActiveTree();
   inputBox.focus();
 }

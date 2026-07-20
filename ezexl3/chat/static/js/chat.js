@@ -145,9 +145,99 @@ async function runDuel(userNode, context) {
   }
 
   if (ids.length === 2 && !duelStopped) {
-    pendingDuel = {a: ids[0], b: ids[1]};
+    pendingDuel = {userNodeId: userNode.id, ids, marks: {}};
   }
   renderActiveTree();
+}
+
+// ── DPO duel: regenerate the candidates marked ✗ ───────────────
+async function regenerateDuelCandidates() {
+  // Replaces just the failed (✗) candidates of the pending duel with
+  // fresh generations, keeping the other candidate's text and mark.
+  if (!pendingDuel || generating || !modelLoaded) return;
+  const duel = pendingDuel;
+  const failIdxs = duel.ids
+    .map((id, i) => (duel.marks[id] === 'fail' ? i : -1))
+    .filter(i => i >= 0);
+  if (!failIdxs.length) return;
+
+  pendingDuel = null;
+  duelStopped = false;
+
+  const userNode = tree.nodes.get(duel.userNodeId);
+  if (!userNode) { renderActiveTree(); return; }
+  const context = getActivePathUpTo(userNode.id);
+
+  // Drop the failed candidates from the tree; their replacements get
+  // fresh node ids (any stale mark goes with them).
+  for (const i of failIdxs) {
+    const id = duel.ids[i];
+    const idx = userNode.children.indexOf(id);
+    if (idx >= 0) userNode.children.splice(idx, 1);
+    tree.nodes.delete(id);
+    delete duel.marks[id];
+  }
+
+  // Render history up to the user turn, then rebuild the side-by-side
+  // view: kept candidates static, failed slots streaming.
+  const savedActiveChild = userNode.activeChild;
+  userNode.activeChild = -1;
+  renderActiveTree();
+  userNode.activeChild = Math.min(savedActiveChild, userNode.children.length - 1);
+
+  generating = true;
+  sendBtn.style.display = 'none';
+  stopBtn.style.display = 'flex';
+  sendBtn.disabled = true;
+
+  const duelEl = document.createElement('div');
+  duelEl.className = 'duel-wrap';
+  msgContainer.appendChild(duelEl);
+  const streamBodies = [];
+  duel.ids.forEach((id, i) => {
+    const cand = document.createElement('div');
+    cand.className = 'duel-candidate';
+    cand.innerHTML =
+      `<div class="duel-head"><span class="duel-label">${i === 0 ? 'A' : 'B'}</span></div>` +
+      '<div class="msg-body duel-waiting">&hellip;</div>';
+    duelEl.appendChild(cand);
+    const body = cand.querySelector('.msg-body');
+    if (failIdxs.includes(i)) {
+      streamBodies.push(body);
+    } else {
+      const node = tree.nodes.get(id);
+      body.classList.remove('duel-waiting');
+      renderFinal(body, node ? node.content : '');
+    }
+  });
+
+  try {
+    const results = await streamDuel(userNode.content, context, streamBodies);
+    results.forEach((res, k) => {
+      const slot = failIdxs[k];
+      const text = res.fullText.trim();
+      if (!text) { duel.ids[slot] = null; return; }  // stopped before tokens
+      const node = addAssistantNode(userNode.id, text);
+      if (res.tpsData) node.tpsData = res.tpsData;
+      duel.ids[slot] = node.id;
+    });
+  } catch (e) {
+    console.error('Duel regen failed:', e);
+  }
+
+  generating = false;
+  sendBtn.style.display = 'flex';
+  stopBtn.style.display = 'none';
+  sendBtn.disabled = false;
+
+  // Re-arm the duel only if both slots hold a live candidate; a stopped
+  // regen leaves the surviving replies as ordinary siblings.
+  if (!duelStopped && duel.ids.every(Boolean)) {
+    pendingDuel = duel;
+  }
+  renderActiveTree();
+  inputBox.focus();
+  scrollToBottom();
 }
 
 // ── Send message ────────────────────────────────────────────────

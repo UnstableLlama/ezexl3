@@ -1,9 +1,10 @@
 # Preference-rating store for the chat UI (KTO / DPO data collection).
 #
-# The UI captures in one of two modes (header toggle):
+# The UI captures in one of two modes (header toggle; a third "Off"
+# position — the default — disables capture entirely):
 #   KTO — 👍/👎 on a reply writes one independent labeled row.
-#   DPO — each send/regen produces two candidates; picking the better one
-#         writes one chosen/rejected pair.
+#   DPO — each send/regen produces two candidates; marking one ▲ chosen
+#         and one ▼ rejected then committing writes one pair.
 #
 # Rows are appended to plain JSONL files in the exact column format that
 # UnstableLlama/exllamav3's training/qlora_train_pref.py reads with its

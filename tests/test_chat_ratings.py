@@ -1,9 +1,10 @@
 """
 Tests for chat preference-rating capture (KTO / DPO data collection).
 
-The chat UI captures in one of two modes: KTO (👍/👎 writes independent
-labeled rows) or DPO (each send generates two candidates; picking the
-better one writes a single chosen/rejected pair). Rows are JSONL shaped
+The chat UI captures in one of two modes — KTO (👍/👎 writes independent
+labeled rows) or DPO (each send generates two candidates; mark ▲/▼ and
+commit to write a single chosen/rejected pair) — plus an Off position
+(the default) that disables capture. Rows are JSONL shaped
 exactly like what UnstableLlama/exllamav3's training/qlora_train_pref.py
 reads with its default keys (--prompt-key prompt, --completion-key
 completion, --label-key label, --chosen-key chosen, --rejected-key
@@ -309,25 +310,41 @@ class TestUiWiring(unittest.TestCase):
         self.assertIn('id="ratings-dataset"', html)
         self.assertIn('id="ratings-dir"', html)
         self.assertIn('id="rating-mode-toggle"', html)
+        self.assertIn('data-mode="off"', html)
         self.assertIn('data-mode="kto"', html)
         self.assertIn('data-mode="dpo"', html)
         self.assertIn('js/ratings.js', html)
+
+    def test_capture_defaults_to_off(self):
+        # Off (normal chat) is the default: the toggle pre-selects it and
+        # the JS falls back to it for unknown/unset persisted modes.
+        html = (REPO_ROOT / "ezexl3/chat/static/index.html").read_text()
+        self.assertIn('data-mode="off" class="active"', html)
+        js = (REPO_ROOT / "ezexl3/chat/static/js/ratings.js").read_text()
+        self.assertIn("let ratingsMode = 'off'", js)
 
     def test_render_wires_rating_controls(self):
         js = (REPO_ROOT / "ezexl3/chat/static/js/render.js").read_text()
         self.assertIn("rateNode", js)
         self.assertIn("renderDuelChoice", js)
-        self.assertIn("resolveDuel", js)
+        # Duel judgment controls: per-candidate marks + commit/regen/skip
+        for name in ("setDuelMark", "commitDuel", "skipDuel",
+                     "regenerateDuelCandidates"):
+            self.assertIn(name, js)
+        # Off mode renders no rating controls
+        self.assertIn("ratingsMode !== 'off'", js)
 
     def test_ratings_js_defines_api(self):
         js = (REPO_ROOT / "ezexl3/chat/static/js/ratings.js").read_text()
-        for name in ("rateNode", "resolveDuel", "setRatingsMode",
-                     "refreshRatings", "buildPromptTurns", "removePairFor"):
+        for name in ("rateNode", "setDuelMark", "commitDuel", "skipDuel",
+                     "setRatingsMode", "refreshRatings", "buildPromptTurns",
+                     "removePairFor"):
             self.assertIn(name, js)
 
     def test_chat_js_runs_duels_in_dpo_mode(self):
         js = (REPO_ROOT / "ezexl3/chat/static/js/chat.js").read_text()
         self.assertIn("runDuel", js)
+        self.assertIn("regenerateDuelCandidates", js)
         self.assertIn("ratingsMode === 'dpo'", js)
 
 

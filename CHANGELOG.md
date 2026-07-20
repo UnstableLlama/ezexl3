@@ -7,6 +7,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **chat: Off capture mode (new default)**: the top-bar preference-capture
+  toggle gains an Off position for normal chat — no rating controls, no
+  duels, nothing written. Unknown or unset persisted `ratings_mode` values
+  fall back to Off.
+- **chat: DPO duel judgment controls**: each duel candidate now carries
+  ▲ chosen / ▼ rejected / ✗ failed marks (▲/▼ exclusive across the duo,
+  ✗ allowed on one or both). A Regenerate button replaces just the ✗
+  candidates with fresh generations — the kept candidate's text and mark
+  survive — and a Commit button (enabled once one ▲ and one ▼ are set)
+  writes the chosen/rejected pair and continues from the chosen reply.
+  Replaces the one-click "Prefer A/B" buttons; Skip still continues
+  without recording.
 - **MTP tensor quantization** (`ezexl3 mtp` + dashboard MTP tab): wraps
   exllamav3's new `util/convert_mtp.py` (dev branch). Quantizes just the
   MTP tensors from a base checkpoint into a standalone `.safetensors`
