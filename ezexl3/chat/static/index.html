@@ -249,7 +249,7 @@
     <div class="sb-hint">Candidates generated side by side each DPO turn. On recurrent/hybrid models (Gemma4, Qwen3.5&hellip;) each extra candidate reserves a cache slot at load, so <strong>reload the model</strong> after changing it; non-recurrent models update immediately.</div>
     <div class="sb-row">
       <label class="sb-label">Prompt Queue (DPO)</label>
-      <textarea class="sb-textarea mono" id="ratings-queue-text" rows="4" placeholder="One prompt per line, or Load a .txt / .jsonl file"></textarea>
+      <textarea class="sb-textarea mono" id="ratings-queue-text" rows="4" placeholder="Paste JSON / JSONL / one prompt per line, or Load a file"></textarea>
     </div>
     <div class="queue-actions">
       <button id="queue-load-btn" class="sb-btn" type="button">Load file</button>
@@ -257,7 +257,7 @@
       <button id="queue-stop-btn" class="sb-btn danger" type="button" style="display:none">&#9632; Stop</button>
     </div>
     <div class="sb-hint" id="queue-status" style="display:none"></div>
-    <div class="sb-hint">Runs each prompt in a fresh conversation; after you commit (or skip) a pair it saves and auto-advances to the next. Starts DPO mode automatically. <code>.jsonl</code> rows use their <code>prompt</code>/<code>messages</code> field; otherwise one prompt per line.</div>
+    <div class="sb-hint">Accepts a JSON array, JSONL, or plain text (one prompt/line) &mdash; pasted or loaded. JSON rows are reduced to just their user text (<code>prompt</code>, <code>text</code>, <code>messages</code>/<code>conversations</code> turn lists, Alpaca <code>instruction</code>+<code>input</code>, ShareGPT&hellip;), so the model never sees raw JSON. Runs each in a fresh conversation; commit or skip auto-advances. Starts DPO mode automatically.</div>
     <div class="sb-row">
       <label class="sb-label">System Prompt A (DPO)</label>
       <textarea class="sb-textarea" id="ratings-sys-a" rows="3" placeholder="(main system prompt)"></textarea>

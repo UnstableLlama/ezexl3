@@ -13,8 +13,8 @@ let ratingsStripThink = false;  // strip thought blocks from saved rows
 let ratingsBatch = 2;       // DPO duel candidates per turn (2..8)
 // Prompt queue: run a dataset of prompts in series, one fresh conversation
 // each, auto-advancing after every commit/skip.
-//   {prompts: [str], index: <next to dispatch>, active: bool}
-let promptQueue = {prompts: [], index: 0, active: false};
+//   {prompts: [str], index: <next to dispatch>, active: bool, finished: bool}
+let promptQueue = {prompts: [], index: 0, active: false, finished: false};
 // Pending DPO duel awaiting judgment:
 //   {userNodeId, ids: [aId, bId, …], marks: {nodeId: 'up'|'down'|'fail'}}
 let pendingDuel = null;
@@ -266,14 +266,12 @@ function queueAfterJudgment() {
 }
 
 function startQueue() {
-  if (generating) return;
+  if (generating || !modelLoaded) return;
   const ta = document.getElementById('ratings-queue-text');
-  const prompts = (ta ? ta.value : '')
-    .split('\n').map(s => s.trim()).filter(Boolean);
+  const prompts = parsePrompts(ta ? ta.value : '');
   if (!prompts.length) return;
-  if (!modelLoaded) return;
   if (ratingsMode !== 'dpo') setRatingsMode('dpo');
-  promptQueue = {prompts, index: 0, active: true};
+  promptQueue = {prompts, index: 0, active: true, finished: false};
   advanceQueue();
 }
 
@@ -286,6 +284,7 @@ function advanceQueue() {
   if (!promptQueue.active) return;
   if (promptQueue.index >= promptQueue.prompts.length) {
     promptQueue.active = false;   // reached the end
+    promptQueue.finished = true;
     updateQueueUI();
     inputBox.focus();
     return;
@@ -304,59 +303,92 @@ async function runQueuePrompt() {
 }
 
 function importPromptFile(file) {
+  // Drop the raw file text into the box; parsing happens uniformly at
+  // preview/start time, so pasted and loaded data behave identically
+  // (and multi-line JSON prompts survive intact).
   if (!file) return;
   file.text().then(text => {
-    const prompts = parsePromptFile(file.name, text);
     const ta = document.getElementById('ratings-queue-text');
-    if (ta) ta.value = prompts.join('\n');
-    if (!promptQueue.active) { promptQueue.index = 0; }
+    if (ta) ta.value = text;
+    promptQueue.finished = false;
     updateQueueUI();
   }).catch(e => console.error('Prompt file load failed:', e));
 }
 
-function parsePromptFile(name, text) {
-  // Returns an array of prompt strings. A .jsonl/.json file (or content
-  // whose lines are all JSON) contributes one prompt per row via
-  // promptFromRow; anything else is treated as one prompt per non-blank
-  // line.
-  const lines = text.split('\n').map(s => s.trim()).filter(Boolean);
-  if (!lines.length) return [];
-  const jsonish = /\.jsonl?$/i.test(name) ||
-    lines.every(l => l.startsWith('{') || l.startsWith('['));
-  if (!jsonish) return lines;
+// ── Prompt parsing ──────────────────────────────────────────────
+// Reduce whatever is in the box (pasted or loaded) to a list of user
+// prompt strings, so the model only ever sees the content — never raw
+// JSON. Accepts a JSON array ([{…}, …]), JSONL (one object per line), or
+// plain text (one prompt per line); the three may even be mixed by line.
+function parsePrompts(text) {
+  const trimmed = (text || '').trim();
+  if (!trimmed) return [];
+  // Whole-text JSON first: a .json array/object or a single-line array.
+  if (trimmed[0] === '[' || trimmed[0] === '{') {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed.map(promptFromRow).filter(Boolean);
+      const p = promptFromRow(parsed);
+      if (p) return [p];
+    } catch { /* not one JSON value — fall through to line-by-line */ }
+  }
+  // Line-delimited: JSONL rows and/or plain-text prompts.
   const out = [];
-  for (const line of lines) {
-    let row;
-    try { row = JSON.parse(line); } catch { out.push(line); continue; }
-    const p = promptFromRow(row);
-    if (p) out.push(p);
+  for (const raw of trimmed.split('\n')) {
+    const s = raw.trim();
+    if (!s) continue;
+    if (s[0] === '{' || s[0] === '[') {
+      try { const p = promptFromRow(JSON.parse(s)); if (p) out.push(p); continue; }
+      catch { /* not JSON after all — treat as plain text */ }
+    }
+    out.push(s);
   }
   return out;
 }
 
 function promptFromRow(row) {
-  // Pull a user prompt out of one parsed JSON row: a bare string field,
-  // or the last user turn of a TRL-style turn list.
-  if (typeof row === 'string') return row.trim();
+  // Reduce one dataset row to its user-prompt text across the common
+  // instruction/chat formats. Returns null when nothing usable is found.
+  if (typeof row === 'string') return row.trim() || null;
   if (!row || typeof row !== 'object') return null;
-  for (const key of ['prompt', 'messages', 'conversations']) {
-    const v = row[key];
-    if (typeof v === 'string' && v.trim()) return v.trim();
-    if (Array.isArray(v)) {
-      for (let i = v.length - 1; i >= 0; i--) {
-        const t = v[i] || {};
-        const role = t.role || t.from;
-        const content = t.content ?? t.value;
-        if ((role === 'user' || role === 'human') &&
-            typeof content === 'string' && content.trim()) return content.trim();
-      }
-      const last = v[v.length - 1] || {};
-      const c = last.content ?? last.value;
-      if (typeof c === 'string' && c.trim()) return c.trim();
+
+  // Conversational turn lists — OpenAI/TRL `messages`, ShareGPT
+  // `conversations`, TRL `prompt` as a turn list: take the last user turn.
+  for (const key of ['messages', 'conversations', 'conversation', 'prompt', 'chat']) {
+    if (Array.isArray(row[key])) {
+      const t = lastUserTurn(row[key]);
+      if (t) return t;
     }
   }
-  for (const key of ['text', 'content', 'instruction', 'question', 'input']) {
+
+  // Alpaca-style: instruction (+ optional input).
+  if (typeof row.instruction === 'string' && row.instruction.trim()) {
+    const instr = row.instruction.trim();
+    const inp = typeof row.input === 'string' ? row.input.trim() : '';
+    return inp ? `${instr}\n\n${inp}` : instr;
+  }
+
+  // Single string fields, most-specific first.
+  for (const key of ['prompt', 'text', 'content', 'question', 'query',
+                     'input', 'user', 'human', 'q', 'source']) {
     if (typeof row[key] === 'string' && row[key].trim()) return row[key].trim();
+  }
+  return null;
+}
+
+function lastUserTurn(turns) {
+  // Content of the last user/human turn; else the last turn with content.
+  const contentOf = t => (t && (t.content ?? t.value ?? t.text));
+  const roleOf = t => (t && (t.role || t.from));
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const c = contentOf(turns[i]);
+    const role = roleOf(turns[i]);
+    if (typeof c === 'string' && c.trim() &&
+        (role === 'user' || role === 'human' || role === 'prompter')) return c.trim();
+  }
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const c = contentOf(turns[i]);
+    if (typeof c === 'string' && c.trim()) return c.trim();
   }
   return null;
 }
@@ -365,19 +397,30 @@ function updateQueueUI() {
   const info = document.getElementById('queue-status');
   const startBtn = document.getElementById('queue-start-btn');
   const stopBtn = document.getElementById('queue-stop-btn');
-  const total = promptQueue.prompts.length;
   if (info) {
     if (promptQueue.active) {
-      info.textContent = `Running prompt ${promptQueue.index} / ${total}`;
+      info.textContent =
+        `Running prompt ${promptQueue.index} / ${promptQueue.prompts.length}`;
       info.style.display = '';
-    } else if (total && promptQueue.index >= total) {
-      info.textContent = `Queue finished — ${total} prompt${total === 1 ? '' : 's'}`;
-      info.style.display = '';
-    } else if (total) {
-      info.textContent = `${total} prompt${total === 1 ? '' : 's'} loaded`;
+    } else if (promptQueue.finished) {
+      const n = promptQueue.prompts.length;
+      info.textContent = `Queue finished — ${n} prompt${n === 1 ? '' : 's'}`;
       info.style.display = '';
     } else {
-      info.style.display = 'none';
+      // Idle: live-preview what will actually be sent (extracted text,
+      // never raw JSON) so mis-parsed data is obvious before you start.
+      const ta = document.getElementById('ratings-queue-text');
+      const prompts = parsePrompts(ta ? ta.value : '');
+      if (prompts.length) {
+        const first = prompts[0].replace(/\s+/g, ' ').trim();
+        const clip = first.length > 60 ? first.slice(0, 60) + '…' : first;
+        info.innerHTML =
+          `${prompts.length} prompt${prompts.length === 1 ? '' : 's'} ready · ` +
+          `first: <em>${escHtml(clip)}</em>`;
+        info.style.display = '';
+      } else {
+        info.style.display = 'none';
+      }
     }
   }
   if (startBtn) startBtn.style.display = promptQueue.active ? 'none' : '';
@@ -460,6 +503,17 @@ async function initRatings() {
       queueFile.addEventListener('change', e => {
         importPromptFile(e.target.files[0]);
         e.target.value = '';
+      });
+    }
+    // Live-preview the parsed prompt count/first line as you paste or edit.
+    const queueText = document.getElementById('ratings-queue-text');
+    if (queueText) {
+      let previewTimer = null;
+      queueText.addEventListener('input', () => {
+        promptQueue.finished = false;
+        if (promptQueue.active) return;
+        clearTimeout(previewTimer);
+        previewTimer = setTimeout(updateQueueUI, 200);
       });
     }
     updateQueueUI();
