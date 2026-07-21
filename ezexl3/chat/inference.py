@@ -138,6 +138,7 @@ class ChatEngine:
         draft_model_dir: str | None = None,
         use_mtp: bool = False,
         ngram_min: int = 0,
+        batch_slots: int | None = None,
     ):
         if sum([bool(draft_model_dir), bool(use_mtp), bool(ngram_min)]) > 1:
             raise ValueError(
@@ -178,6 +179,12 @@ class ChatEngine:
         self.use_mtp = bool(use_mtp)
         self.ngram_min = int(ngram_min or 0)
 
+        # Concurrent DPO-duel candidates. Sets the recurrent cache's state
+        # slots (-ambs) at load, capping the batch size for hybrid/recurrent
+        # models; non-recurrent models batch freely and ignore it. See
+        # BATCH_SLOTS. Changing it needs a reload to re-allocate the cache.
+        self.batch_slots = int(batch_slots) if batch_slots else self.BATCH_SLOTS
+
         # Chat state
         self.settings = ChatSettings()
         self.context: list[tuple[str, Optional[str]]] = []
@@ -207,6 +214,7 @@ class ChatEngine:
             self._device_ratios,
             self._cache_size,
             self._cache_quant,
+            self.batch_slots,
         )
 
         # Recurrent (hybrid linear-attn) models like Qwen3.5 size their
@@ -297,6 +305,7 @@ class ChatEngine:
         device_ratios: str | None = None,
         cache_size: int | None = None,
         cache_quant: str | None = None,
+        batch_slots: int | None = None,
     ):
         """Load a model (callable from the UI after startup)."""
         if use_mtp and draft_model_dir:
@@ -318,6 +327,7 @@ class ChatEngine:
         self._device_ratios = device_ratios
         self._cache_size = cache_size or self.DEFAULT_CACHE_SIZE
         self._cache_quant = cache_quant or self.DEFAULT_CACHE_QUANT
+        self.batch_slots = int(batch_slots) if batch_slots else self.BATCH_SLOTS
         self.settings = ChatSettings()
         self.load()
 
@@ -861,6 +871,7 @@ def _build_model_args(
     device_ratios: str | None,
     cache_size: int | None,
     cache_quant: str | None,
+    batch_slots: int | None = None,
 ) -> object:
     """
     Build a namespace object mimicking the argparse args that
@@ -888,8 +899,9 @@ def _build_model_args(
     # of 1 serializes DPO duel candidates (Generator clamps its batch size
     # to the cache's slot count). Non-recurrent models ignore this. Older
     # exllamav3 builds don't expose the argument.
+    slots = int(batch_slots) if batch_slots else ChatEngine.BATCH_SLOTS
     if any("-ambs" in a.option_strings for a in parser._actions):
-        argv += ["-ambs", str(ChatEngine.BATCH_SLOTS)]
+        argv += ["-ambs", str(max(1, slots))]
 
     args = parser.parse_args(argv)
     # exllamav3 dev reads args.mtp in init() even when draft model args

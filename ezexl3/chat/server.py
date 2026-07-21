@@ -118,10 +118,11 @@ async def handle_chat(request: web.Request) -> web.Response:
         engine.context = [tuple(pair) for pair in data["context"]]
     if not message:
         return web.json_response({"error": "Empty message"}, status=400)
-    # Candidates per generation (DPO duel mode sends n=2), batched
-    # concurrently in one generator pass.
+    # Candidates per generation (DPO duel mode sends n>=2), batched
+    # concurrently in one generator pass. Recurrent models are further
+    # clamped to the cache slots allocated at load (see batch_slots).
     n = data.get("n", 1)
-    if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 4:
+    if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 8:
         n = 1
     # Optional per-candidate system-prompt overrides (DPO generation
     # bias); None/"" entries fall back to the trained prompt.
@@ -334,6 +335,15 @@ async def handle_model_load(request: web.Request) -> web.Response:
                 status=400,
             )
 
+    # Duel batch size (persisted in ui.json by the ratings UI) sets the
+    # recurrent-model cache slots allocated at load. Clamp to the same
+    # ceiling as the /api/chat n cap.
+    cfg = await asyncio.to_thread(_load_config)
+    batch_slots = cfg.get("ratings_batch", ChatEngine.BATCH_SLOTS)
+    if not isinstance(batch_slots, int) or isinstance(batch_slots, bool):
+        batch_slots = ChatEngine.BATCH_SLOTS
+    batch_slots = max(1, min(8, batch_slots))
+
     try:
         await asyncio.to_thread(
             engine.load_model,
@@ -347,6 +357,7 @@ async def handle_model_load(request: web.Request) -> web.Response:
             device_ratios=data.get("device_ratios"),
             cache_size=data.get("cache_size"),
             cache_quant=data.get("cache_quant"),
+            batch_slots=batch_slots,
         )
         return web.json_response({
             "ok": True,
@@ -483,6 +494,7 @@ async def handle_draft_load(request: web.Request) -> web.Response:
                 device_ratios=engine._device_ratios,
                 cache_size=engine._cache_size,
                 cache_quant=engine._cache_quant,
+                batch_slots=engine.batch_slots,
             )
             engine.settings = saved_settings
             reloaded = True

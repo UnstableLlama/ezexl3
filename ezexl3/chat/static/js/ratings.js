@@ -10,8 +10,13 @@
 let ratingsDataset = 'chat';
 let ratingsMode = 'off';    // 'off' | 'kto' | 'dpo'
 let ratingsStripThink = false;  // strip thought blocks from saved rows
+let ratingsBatch = 2;       // DPO duel candidates per turn (2..8)
+// Prompt queue: run a dataset of prompts in series, one fresh conversation
+// each, auto-advancing after every commit/skip.
+//   {prompts: [str], index: <next to dispatch>, active: bool}
+let promptQueue = {prompts: [], index: 0, active: false};
 // Pending DPO duel awaiting judgment:
-//   {userNodeId, ids: [aId, bId], marks: {nodeId: 'up'|'down'|'fail'}}
+//   {userNodeId, ids: [aId, bId, …], marks: {nodeId: 'up'|'down'|'fail'}}
 let pendingDuel = null;
 const ratingsState = {
   kto: new Map(),           // node_id -> bool
@@ -22,15 +27,24 @@ const ratingsState = {
 
 function getRating(nodeId) { return ratingsState.kto.get(nodeId); }
 
-function duelSystemPrompts() {
-  // Per-candidate generation system prompts for DPO duels: [A, B],
-  // null = use the main (trained) system prompt.
+function duelCount() {
+  // Candidates per DPO duel, clamped to the batch ceiling.
+  const n = parseInt(ratingsBatch, 10);
+  return Number.isFinite(n) ? Math.max(2, Math.min(8, n)) : 2;
+}
+
+function duelSystemPromptsFor(n) {
+  // Per-candidate generation system prompts for DPO duels, length n:
+  // candidates A and B take the two sidebar fields; any further candidates
+  // use the main (trained) prompt. null = use the main prompt.
   const read = id => {
     const el = document.getElementById(id);
     const v = el ? el.value.trim() : '';
     return v || null;
   };
-  return [read('ratings-sys-a'), read('ratings-sys-b')];
+  const a = read('ratings-sys-a');
+  const b = read('ratings-sys-b');
+  return Array.from({length: n}, (_, i) => (i === 0 ? a : i === 1 ? b : null));
 }
 function pairForNode(nodeId) {
   return ratingsState.pairs.find(p => p.chosen === nodeId) || null;
@@ -64,8 +78,12 @@ function setRatingsMode(mode, persist = true) {
   ratingsMode = (mode === 'dpo' || mode === 'kto') ? mode : 'off';
   document.querySelectorAll('#rating-mode-toggle button').forEach(b =>
     b.classList.toggle('active', b.dataset.mode === ratingsMode));
-  // A duel can't outlive a mode switch — dismiss it without recording.
-  if (ratingsMode !== 'dpo' && pendingDuel) skipDuel();
+  // A queue/duel can't outlive a switch away from DPO. Stop the queue
+  // first so the skip below doesn't auto-advance it.
+  if (ratingsMode !== 'dpo') {
+    if (promptQueue.active) stopQueue();
+    if (pendingDuel) skipDuel();
+  }
   if (persist) {
     fetch('/api/config', {
       method: 'POST',
@@ -184,6 +202,7 @@ async function commitDuel() {
   }
   renderActiveTree();
   inputBox.focus();
+  queueAfterJudgment();
 }
 
 function skipDuel() {
@@ -196,6 +215,7 @@ function skipDuel() {
   _activateDuelNode(keepId);
   renderActiveTree();
   inputBox.focus();
+  queueAfterJudgment();
 }
 
 async function removePairFor(nodeId) {
@@ -233,6 +253,135 @@ async function postRate(body) {
     console.error('Rating failed:', e);
   }
   renderActiveTree();
+}
+
+// ── Prompt queue ────────────────────────────────────────────────
+// Run a dataset of prompts in series. Each prompt gets a fresh
+// conversation; after the duel is committed or skipped the queue
+// advances to the next prompt automatically.
+
+function queueAfterJudgment() {
+  // Called at the end of commit/skip: advance the queue if it's running.
+  if (promptQueue.active && ratingsMode === 'dpo') advanceQueue();
+}
+
+function startQueue() {
+  if (generating) return;
+  const ta = document.getElementById('ratings-queue-text');
+  const prompts = (ta ? ta.value : '')
+    .split('\n').map(s => s.trim()).filter(Boolean);
+  if (!prompts.length) return;
+  if (!modelLoaded) return;
+  if (ratingsMode !== 'dpo') setRatingsMode('dpo');
+  promptQueue = {prompts, index: 0, active: true};
+  advanceQueue();
+}
+
+function stopQueue() {
+  promptQueue.active = false;
+  updateQueueUI();
+}
+
+function advanceQueue() {
+  if (!promptQueue.active) return;
+  if (promptQueue.index >= promptQueue.prompts.length) {
+    promptQueue.active = false;   // reached the end
+    updateQueueUI();
+    inputBox.focus();
+    return;
+  }
+  runQueuePrompt();
+}
+
+async function runQueuePrompt() {
+  if (!modelLoaded) { stopQueue(); return; }
+  const prompt = promptQueue.prompts[promptQueue.index];
+  promptQueue.index++;
+  updateQueueUI();
+  await clearContext();          // fresh conversation per prompt
+  inputBox.value = prompt;
+  await sendMessage();           // DPO mode → runDuel arms the judgment UI
+}
+
+function importPromptFile(file) {
+  if (!file) return;
+  file.text().then(text => {
+    const prompts = parsePromptFile(file.name, text);
+    const ta = document.getElementById('ratings-queue-text');
+    if (ta) ta.value = prompts.join('\n');
+    if (!promptQueue.active) { promptQueue.index = 0; }
+    updateQueueUI();
+  }).catch(e => console.error('Prompt file load failed:', e));
+}
+
+function parsePromptFile(name, text) {
+  // Returns an array of prompt strings. A .jsonl/.json file (or content
+  // whose lines are all JSON) contributes one prompt per row via
+  // promptFromRow; anything else is treated as one prompt per non-blank
+  // line.
+  const lines = text.split('\n').map(s => s.trim()).filter(Boolean);
+  if (!lines.length) return [];
+  const jsonish = /\.jsonl?$/i.test(name) ||
+    lines.every(l => l.startsWith('{') || l.startsWith('['));
+  if (!jsonish) return lines;
+  const out = [];
+  for (const line of lines) {
+    let row;
+    try { row = JSON.parse(line); } catch { out.push(line); continue; }
+    const p = promptFromRow(row);
+    if (p) out.push(p);
+  }
+  return out;
+}
+
+function promptFromRow(row) {
+  // Pull a user prompt out of one parsed JSON row: a bare string field,
+  // or the last user turn of a TRL-style turn list.
+  if (typeof row === 'string') return row.trim();
+  if (!row || typeof row !== 'object') return null;
+  for (const key of ['prompt', 'messages', 'conversations']) {
+    const v = row[key];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+    if (Array.isArray(v)) {
+      for (let i = v.length - 1; i >= 0; i--) {
+        const t = v[i] || {};
+        const role = t.role || t.from;
+        const content = t.content ?? t.value;
+        if ((role === 'user' || role === 'human') &&
+            typeof content === 'string' && content.trim()) return content.trim();
+      }
+      const last = v[v.length - 1] || {};
+      const c = last.content ?? last.value;
+      if (typeof c === 'string' && c.trim()) return c.trim();
+    }
+  }
+  for (const key of ['text', 'content', 'instruction', 'question', 'input']) {
+    if (typeof row[key] === 'string' && row[key].trim()) return row[key].trim();
+  }
+  return null;
+}
+
+function updateQueueUI() {
+  const info = document.getElementById('queue-status');
+  const startBtn = document.getElementById('queue-start-btn');
+  const stopBtn = document.getElementById('queue-stop-btn');
+  const total = promptQueue.prompts.length;
+  if (info) {
+    if (promptQueue.active) {
+      info.textContent = `Running prompt ${promptQueue.index} / ${total}`;
+      info.style.display = '';
+    } else if (total && promptQueue.index >= total) {
+      info.textContent = `Queue finished — ${total} prompt${total === 1 ? '' : 's'}`;
+      info.style.display = '';
+    } else if (total) {
+      info.textContent = `${total} prompt${total === 1 ? '' : 's'} loaded`;
+      info.style.display = '';
+    } else {
+      info.style.display = 'none';
+    }
+  }
+  if (startBtn) startBtn.style.display = promptQueue.active ? 'none' : '';
+  if (stopBtn) stopBtn.style.display = promptQueue.active ? '' : 'none';
 }
 
 // ── Sidebar ─────────────────────────────────────────────────────
@@ -280,6 +429,40 @@ async function initRatings() {
         }).catch(() => {});
       });
     }
+
+    // Duel batch size (persisted). Recurrent models allocate this many
+    // cache slots at load, so a change only takes full effect on the next
+    // model reload; non-recurrent models pick it up immediately.
+    const batchEl = document.getElementById('ratings-batch');
+    if (batchEl) {
+      ratingsBatch = Math.max(2, Math.min(8, parseInt(cfg.ratings_batch, 10) || 2));
+      batchEl.value = ratingsBatch;
+      batchEl.addEventListener('change', () => {
+        ratingsBatch = Math.max(2, Math.min(8, parseInt(batchEl.value, 10) || 2));
+        batchEl.value = ratingsBatch;
+        fetch('/api/config', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ratings_batch: ratingsBatch}),
+        }).catch(() => {});
+      });
+    }
+
+    // Prompt queue controls
+    const queueStart = document.getElementById('queue-start-btn');
+    const queueStop = document.getElementById('queue-stop-btn');
+    const queueLoad = document.getElementById('queue-load-btn');
+    const queueFile = document.getElementById('queue-file-input');
+    if (queueStart) queueStart.addEventListener('click', () => startQueue());
+    if (queueStop) queueStop.addEventListener('click', () => stopQueue());
+    if (queueLoad && queueFile) {
+      queueLoad.addEventListener('click', () => queueFile.click());
+      queueFile.addEventListener('change', e => {
+        importPromptFile(e.target.files[0]);
+        e.target.value = '';
+      });
+    }
+    updateQueueUI();
 
     // Duel generation prompts (persisted; blank = main system prompt)
     for (const [id, key] of [['ratings-sys-a', 'ratings_system_a'],

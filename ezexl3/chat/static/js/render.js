@@ -1,5 +1,8 @@
 // ── Rendering: Markdown, Think Tags, DOM ────────────────────────
 
+// Duel candidate labels: A, B, C, … (index 0-based).
+function candLabel(i) { return String.fromCharCode(65 + i); }
+
 // Configure marked
 marked.setOptions({
   breaks: true,
@@ -301,7 +304,7 @@ function renderDuelChoice(container) {
 
     const head = document.createElement('div');
     head.className = 'duel-head';
-    head.innerHTML = `<span class="duel-label">${i === 0 ? 'A' : 'B'}</span>`;
+    head.innerHTML = `<span class="duel-label">${candLabel(i)}</span>`;
     if (node.genSystem) {
       const sysTag = document.createElement('span');
       sysTag.className = 'duel-sys-tag';
@@ -339,12 +342,15 @@ function renderDuelChoice(container) {
   const bar = document.createElement('div');
   bar.className = 'duel-actions';
 
-  const anyFail = ids.some(id => marks[id] === 'fail');
+  // Regenerate replaces every candidate not pinned with ▲ or ▼ — an
+  // unmarked (or ✗) candidate is treated as discarded. Available as soon
+  // as at least one candidate is still unpinned.
+  const unpinned = ids.filter(id => marks[id] !== 'up' && marks[id] !== 'down');
   const regenBtn = document.createElement('button');
   regenBtn.className = 'duel-regen-btn';
   regenBtn.textContent = '↻ Regenerate';
-  regenBtn.title = 'Regenerate the candidates marked ✗';
-  regenBtn.disabled = !anyFail;
+  regenBtn.title = 'Regenerate every candidate not pinned with ▲ or ▼ (unmarked = discarded)';
+  regenBtn.disabled = unpinned.length === 0;
   regenBtn.addEventListener('click', () => regenerateDuelCandidates());
   bar.appendChild(regenBtn);
 

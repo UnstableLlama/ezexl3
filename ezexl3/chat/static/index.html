@@ -243,6 +243,22 @@
     </label>
     <div class="sb-hint">Remove thought blocks (<code>&lt;|channel&gt;&hellip;&lt;channel|&gt;</code> / <code>&lt;think&gt;&hellip;&lt;/think&gt;</code>, tags included) from completions and prompt history before writing dataset rows.</div>
     <div class="sb-row">
+      <label class="sb-label">Duel candidates (DPO)</label>
+      <input type="number" id="ratings-batch" min="2" max="8" step="1" value="2">
+    </div>
+    <div class="sb-hint">Candidates generated side by side each DPO turn. On recurrent/hybrid models (Gemma4, Qwen3.5&hellip;) each extra candidate reserves a cache slot at load, so <strong>reload the model</strong> after changing it; non-recurrent models update immediately.</div>
+    <div class="sb-row">
+      <label class="sb-label">Prompt Queue (DPO)</label>
+      <textarea class="sb-textarea mono" id="ratings-queue-text" rows="4" placeholder="One prompt per line, or Load a .txt / .jsonl file"></textarea>
+    </div>
+    <div class="queue-actions">
+      <button id="queue-load-btn" class="sb-btn" type="button">Load file</button>
+      <button id="queue-start-btn" class="sb-btn" type="button">&#9654; Start queue</button>
+      <button id="queue-stop-btn" class="sb-btn danger" type="button" style="display:none">&#9632; Stop</button>
+    </div>
+    <div class="sb-hint" id="queue-status" style="display:none"></div>
+    <div class="sb-hint">Runs each prompt in a fresh conversation; after you commit (or skip) a pair it saves and auto-advances to the next. Starts DPO mode automatically. <code>.jsonl</code> rows use their <code>prompt</code>/<code>messages</code> field; otherwise one prompt per line.</div>
+    <div class="sb-row">
       <label class="sb-label">System Prompt A (DPO)</label>
       <textarea class="sb-textarea" id="ratings-sys-a" rows="3" placeholder="(main system prompt)"></textarea>
     </div>
@@ -252,7 +268,7 @@
     </div>
     <div class="sb-hint">Generation-only prompts for duel candidates A and B — e.g. one biasing toward the behavior you want, one against. Blank = main system prompt. The dataset's <code>prompt</code> column always keeps the main system prompt; these are recorded as <code>chosen_system</code>/<code>rejected_system</code> metadata the trainer ignores.</div>
     <div class="sb-hint" id="ratings-info"></div>
-    <div class="sb-hint">Mode toggle is in the top bar (Off = normal chat). KTO: &#x1F44D;/&#x1F44E; a reply &rarr; labeled row. DPO: each send generates two candidates &mdash; mark &#9650; chosen / &#9660; rejected and commit &rarr; pair; &#x2717; + Regenerate replaces a failed candidate. Trainer-ready JSONL.</div>
+    <div class="sb-hint">Mode toggle is in the top bar (Off = normal chat). KTO: &#x1F44D;/&#x1F44E; a reply &rarr; labeled row. DPO: each send generates candidates side by side &mdash; mark &#9650; chosen / &#9660; rejected and commit &rarr; pair. Regenerate replaces every candidate you haven't pinned with &#9650;/&#9660;. Trainer-ready JSONL.</div>
   </div>
 
   <h2>Model</h2>
@@ -269,7 +285,7 @@
     <div id="rating-mode-toggle" title="Preference-data capture mode">
       <button data-mode="off" class="active" title="Normal chat — no preference-data capture">Off</button>
       <button data-mode="kto" title="KTO: &#x1F44D;/&#x1F44E; a reply writes one labeled row">KTO</button>
-      <button data-mode="dpo" title="DPO: each send generates two candidates; mark &#9650;/&#9660; and commit to record a pair">DPO</button>
+      <button data-mode="dpo" title="DPO: each send generates candidates side by side; mark &#9650;/&#9660; and commit to record a pair">DPO</button>
     </div>
     <span id="header-model"></span>
   </div>
@@ -296,6 +312,8 @@
 
 <!-- Hidden file input for session load -->
 <input type="file" id="file-input" accept=".json" style="display:none">
+<!-- Hidden file input for DPO prompt-queue import -->
+<input type="file" id="queue-file-input" accept=".txt,.jsonl,.json" style="display:none">
 
 <!-- ── Scripts (order matters: state → tree → render → settings → lora → draft → model → chat → session → main) ── -->
 <script src="js/state.js"></script>
