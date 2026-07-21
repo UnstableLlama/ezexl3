@@ -86,7 +86,9 @@ class TestAutoDetectCoverage(unittest.TestCase):
         #   - "raw": model-agnostic chatlog simulator
         #   - "mistral": legacy v1/v2 [INST] format, superseded by "mistral3";
         #     the "mistral" hint string routes to mistral3 for all modern models.
-        exempt = {"raw", "mistral"}
+        #   - "gemma4-nothink": manual alternative to "gemma4" (same models,
+        #     thinking suppressed); auto-detect must keep picking "gemma4".
+        exempt = {"raw", "mistral", "gemma4-nothink"}
 
         missing = set(prompt_formats.keys()) - reachable_modes - exempt
         self.assertEqual(

@@ -721,6 +721,30 @@ class PromptFormat_gemma4(PromptFormat):
         return "<|channel>thought", "<channel|>"
 
 
+class PromptFormat_gemma4_nothink(PromptFormat_gemma4):
+    description = "Gemma4, thinking disabled (pre-filled empty thought block)"
+
+    def format(self, system_prompt, messages, think):
+        context = ""
+        if system_prompt:
+            context += f"<|turn>system\n{system_prompt}<turn|>\n"
+        for u, a in messages:
+            context += f"<|turn>user\n{u}<turn|>\n"
+            context += "<|turn>model\n"
+            if a is not None:
+                context += f"{a}<turn|>\n"
+            else:
+                # Pre-fill an empty thought block so the model skips
+                # thinking and answers directly
+                context += "<|channel>thought\n<channel|>"
+        return context
+
+    def thinktag(self):
+        # Thinking is already suppressed by the empty block; make the
+        # think/no-think toggles no-ops so they can't double-inject tags
+        return None, None
+
+
 class PromptFormat_metharme(PromptFormat):
     description = "Metharme (PygmalionAI Pygmalion-2 / Mythalion)"
 
@@ -867,6 +891,7 @@ prompt_formats = {
     "mistral3": PromptFormat_mistral3,
     "gemma": PromptFormat_gemma,
     "gemma4": PromptFormat_gemma4,
+    "gemma4-nothink": PromptFormat_gemma4_nothink,
     "glm": PromptFormat_glm,
     "reka": PromptFormat_reka,
     "cohere": PromptFormat_cohere,

@@ -9,6 +9,7 @@
 
 let ratingsDataset = 'chat';
 let ratingsMode = 'off';    // 'off' | 'kto' | 'dpo'
+let ratingsStripThink = false;  // strip thought blocks from saved rows
 // Pending DPO duel awaiting judgment:
 //   {userNodeId, ids: [aId, bId], marks: {nodeId: 'up'|'down'|'fail'}}
 let pendingDuel = null;
@@ -77,6 +78,17 @@ function setRatingsMode(mode, persist = true) {
 
 // ── Row construction ────────────────────────────────────────────
 
+function stripThink(text) {
+  // Remove thought blocks — tags included — from text bound for a
+  // preference dataset: gemma4 <|channel>...<channel|> and generic
+  // <think>...</think>. No-op unless the sidebar checkbox is on.
+  if (!ratingsStripThink || !text) return text;
+  return text
+    .replace(/<\|channel>[\s\S]*?<channel\|>/g, '')
+    .replace(/<think>[\s\S]*?<\/think>/g, '')
+    .replace(/^\s+/, '');
+}
+
 function buildPromptTurns(assistantNodeId) {
   // Full conversation history before this assistant message, as
   // TRL-conversational {role, content} turns (system prompt included).
@@ -88,7 +100,7 @@ function buildPromptTurns(assistantNodeId) {
   if (sys) turns.push({role: 'system', content: sys});
   for (const [u, a] of getActivePathUpTo(userNode.id)) {
     turns.push({role: 'user', content: u});
-    if (a != null) turns.push({role: 'assistant', content: a});
+    if (a != null) turns.push({role: 'assistant', content: stripThink(a)});
   }
   turns.push({role: 'user', content: userNode.content});
   return turns;
@@ -109,7 +121,8 @@ async function rateNode(nodeId, label) {
   await postRate({
     dataset: ratingsDataset,
     prompt,
-    kto: {node_id: nodeId, completion: node.content, label: newLabel},
+    kto: {node_id: nodeId, completion: stripThink(node.content),
+          label: newLabel},
   });
 }
 
@@ -162,9 +175,9 @@ async function commitDuel() {
       dataset: ratingsDataset,
       prompt,
       pair: {
-        chosen: {node_id: chosenId, content: chosen.content,
+        chosen: {node_id: chosenId, content: stripThink(chosen.content),
                  gen_system: chosen.genSystem ?? null},
-        rejected: {node_id: rejectedId, content: rejected.content,
+        rejected: {node_id: rejectedId, content: stripThink(rejected.content),
                    gen_system: rejected.genSystem ?? null},
       },
     });
@@ -252,6 +265,21 @@ async function initRatings() {
     const dirInput = document.getElementById('ratings-dir');
     nameInput.value = ratingsDataset;
     if (cfg.ratings_dir) dirInput.value = cfg.ratings_dir;
+
+    // Strip-thinking toggle (persisted)
+    const stripEl = document.getElementById('ratings-strip-think');
+    if (stripEl) {
+      ratingsStripThink = !!cfg.ratings_strip_think;
+      stripEl.checked = ratingsStripThink;
+      stripEl.addEventListener('change', () => {
+        ratingsStripThink = stripEl.checked;
+        fetch('/api/config', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ratings_strip_think: ratingsStripThink}),
+        }).catch(() => {});
+      });
+    }
 
     // Duel generation prompts (persisted; blank = main system prompt)
     for (const [id, key] of [['ratings-sys-a', 'ratings_system_a'],

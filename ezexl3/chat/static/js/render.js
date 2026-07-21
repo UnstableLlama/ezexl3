@@ -102,6 +102,23 @@ function scrollToBottom() {
   area.scrollTop = area.scrollHeight;
 }
 
+function makeTpsBadge(t) {
+  const ctx = t.prompt_tokens ? `${t.prompt_tokens.toLocaleString()} ctx` : '';
+  const cached = t.cached_tokens ? ` (${t.cached_tokens.toLocaleString()} cached)` : '';
+  let parts = [];
+  if (ctx) parts.push(ctx + cached);
+  parts.push(`${t.new_tokens} gen · ${t.tps} t/s · ${t.elapsed}s`);
+  if (t.prefill_tps) parts.push(`prefill ${t.prefill_tps} t/s`);
+  if (t.draft_accepted != null) {
+    const rate = Math.round(t.draft_acceptance_rate * 100);
+    parts.push(`draft ${rate}% (${t.draft_accepted}/${t.draft_accepted + t.draft_rejected})`);
+  }
+  const tpsEl = document.createElement('div');
+  tpsEl.className = 'msg-tps';
+  tpsEl.textContent = parts.join(' · ');
+  return tpsEl;
+}
+
 // ── Tree-aware rendering ────────────────────────────────────────
 function renderActiveTree() {
   msgContainer.innerHTML = '';
@@ -253,21 +270,7 @@ function renderActiveTree() {
 
     // TPS badge below message body (for assistant messages with stats)
     if (node.role === 'assistant' && node.tpsData) {
-      const t = node.tpsData;
-      const ctx = t.prompt_tokens ? `${t.prompt_tokens.toLocaleString()} ctx` : '';
-      const cached = t.cached_tokens ? ` (${t.cached_tokens.toLocaleString()} cached)` : '';
-      let parts = [];
-      if (ctx) parts.push(ctx + cached);
-      parts.push(`${t.new_tokens} gen · ${t.tps} t/s · ${t.elapsed}s`);
-      if (t.prefill_tps) parts.push(`prefill ${t.prefill_tps} t/s`);
-      if (t.draft_accepted != null) {
-        const rate = Math.round(t.draft_acceptance_rate * 100);
-        parts.push(`draft ${rate}% (${t.draft_accepted}/${t.draft_accepted + t.draft_rejected})`);
-      }
-      const tpsEl = document.createElement('div');
-      tpsEl.className = 'msg-tps';
-      tpsEl.textContent = parts.join(' · ');
-      msgEl.appendChild(tpsEl);
+      msgEl.appendChild(makeTpsBadge(node.tpsData));
     }
 
     wrapEl.appendChild(msgEl);
@@ -328,6 +331,7 @@ function renderDuelChoice(container) {
     body.className = 'msg-body';
     renderFinal(body, node.content);
     cand.appendChild(body);
+    if (node.tpsData) cand.appendChild(makeTpsBadge(node.tpsData));
     wrap.appendChild(cand);
   });
   block.appendChild(wrap);

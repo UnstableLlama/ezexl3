@@ -465,7 +465,7 @@ async def handle_draft_load(request: web.Request) -> web.Response:
             )
     try:
         reloaded = False
-        if engine.needs_load_time_draft():
+        if engine.needs_load_time_draft(draft_dir or None):
             # Recurrent models size draft headroom at cache creation, so
             # enabling a draft source means a full reload with the draft
             # configured. Reuse the current load parameters and carry the

@@ -122,6 +122,12 @@ class ChatEngine:
     DEFAULT_CACHE_SIZE = 32768      # must be multiple of 256
     DEFAULT_CACHE_QUANT = "6,6"     # Q6 for both K and V
 
+    # Recurrent (hybrid linear-attn / SWA-state) models clamp the
+    # generator's batch size to the cache's recurrent state slots, which
+    # default to 1 — serializing DPO duel candidates. Two slots cover the
+    # n=2 duel; each extra slot costs real VRAM (~1.3 GB on a 31B Gemma4).
+    BATCH_SLOTS = 2
+
     def __init__(
         self,
         model_dir: str | None = None,
@@ -205,15 +211,15 @@ class ChatEngine:
 
         # Recurrent (hybrid linear-attn) models like Qwen3.5 size their
         # recurrent-state history at cache creation (Cache max_history);
-        # speculative decoding needs history >= draft length. min_draft_len
-        # covers any draft source — draft model dir, MTP head, or n-gram —
-        # at the generator's default draft length of 4. Older exllamav3
+        # speculative decoding needs history >= draft length. DFlash drafts
+        # a whole block per round (block_size - 1 tokens), other draft
+        # sources use the generator's default window of 4. Older exllamav3
         # builds lack the parameter, so only pass it when supported.
         init_kwargs = {}
         if self.draft_model_dir or self.use_mtp or self.ngram_min:
             import inspect
             if "min_draft_len" in inspect.signature(model_init.init).parameters:
-                init_kwargs["min_draft_len"] = 4
+                init_kwargs["min_draft_len"] = self._draft_len_hint()
 
         torch.set_grad_enabled(False)
         self.model, self.config, self.cache, self.tokenizer = model_init.init(args, **init_kwargs)
@@ -373,6 +379,46 @@ class ChatEngine:
         active = sum(1 for l in self.loras if l is not None)
         print(f"  LoRAs updated: {active} active / {len(self.loras)} total")
 
+    def _read_json_config(self, model_dir: str) -> dict:
+        try:
+            with open(os.path.join(model_dir, "config.json")) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return {}
+
+    def _draft_len_hint(self, draft_model_dir: str | None = None) -> int:
+        """Draft length the recurrent-state history must cover.
+
+        DFlash drafts block_size - 1 tokens per round; every other draft
+        source uses the generator's default window of 4.
+        """
+        d = draft_model_dir or self.draft_model_dir
+        if d:
+            cfg = self._read_json_config(d)
+            if "dflash_config" in cfg and cfg.get("block_size"):
+                return max(4, int(cfg["block_size"]) - 1)
+        return 4
+
+    def _check_draft_compat(self):
+        """DFlash drafts run on the target's embedding and lm_head, so
+        their hidden size must match the target's. A mismatched pair loads
+        cleanly and then dies on the first draft forward with a cryptic
+        shape error, so catch it here with a readable message."""
+        dcfg = self._read_json_config(self.draft_model_dir)
+        if "dflash_config" not in dcfg:
+            return  # regular draft models legitimately differ in size
+        tcfg = self._read_json_config(self.model_dir)
+        d_hidden = dcfg.get("hidden_size")
+        t_hidden = (tcfg.get("text_config") or {}).get("hidden_size") \
+            or tcfg.get("hidden_size")
+        if d_hidden and t_hidden and d_hidden != t_hidden:
+            raise RuntimeError(
+                f"DFlash draft {self.draft_model_name} was trained for a "
+                f"target with hidden size {d_hidden}, but "
+                f"{self.model_name} has hidden size {t_hidden}. "
+                f"Wrong base model for this draft?"
+            )
+
     def _load_draft_model(self):
         Config = _import_config()
         Model = _import_model()
@@ -394,6 +440,7 @@ class ChatEngine:
             self.draft_model = Model.from_config(self.draft_config, component="mtp")
             self.draft_model_name = f"{self.model_name} (MTP)"
         else:
+            self._check_draft_compat()
             self.draft_config = Config.from_directory(self.draft_model_dir)
             self.draft_model = Model.from_config(self.draft_config)
         self.draft_cache = Cache(
@@ -414,16 +461,20 @@ class ChatEngine:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    def needs_load_time_draft(self) -> bool:
+    def needs_load_time_draft(self, draft_model_dir: str | None = None) -> bool:
         """True if enabling a draft source requires a full model reload.
 
         Recurrent (hybrid linear-attn) models size their state history at
         cache creation; enabling drafting post-load on a cache without
-        draft headroom corrupts recurrent state allocation.
+        draft headroom corrupts recurrent state allocation. The required
+        headroom depends on the draft source (DFlash needs block_size - 1).
         """
         caps = getattr(self.model, "caps", None)
         if isinstance(caps, dict) and caps.get("recurrent_states"):
-            return getattr(self.cache, "max_history", 0) < 4
+            need = self._draft_len_hint(
+                os.path.abspath(draft_model_dir) if draft_model_dir else None
+            )
+            return getattr(self.cache, "max_history", 0) < need
         return False
 
     def load_draft(
@@ -447,7 +498,7 @@ class ChatEngine:
                 "draft_model_dir is required unless MTP or n-gram drafting is enabled"
             )
 
-        if self.needs_load_time_draft():
+        if self.needs_load_time_draft(draft_model_dir):
             raise RuntimeError(
                 "This model uses recurrent states, so speculative decoding "
                 "must be enabled at load time (the cache needs draft "
@@ -833,6 +884,12 @@ def _build_model_args(
         argv += ["-cs", str(cache_size)]
     if cache_quant:
         argv += ["-cq", cache_quant]
+    # Recurrent models get one state slot per concurrent job; the default
+    # of 1 serializes DPO duel candidates (Generator clamps its batch size
+    # to the cache's slot count). Non-recurrent models ignore this. Older
+    # exllamav3 builds don't expose the argument.
+    if any("-ambs" in a.option_strings for a in parser._actions):
+        argv += ["-ambs", str(ChatEngine.BATCH_SLOTS)]
 
     args = parser.parse_args(argv)
     # exllamav3 dev reads args.mtp in init() even when draft model args

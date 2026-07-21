@@ -238,6 +238,10 @@
       <label class="sb-label">Datasets Dir</label>
       <input type="text" id="ratings-dir" class="mono" placeholder="(default)">
     </div>
+    <label class="gpu-auto-label">
+      <input type="checkbox" id="ratings-strip-think"> Strip thinking
+    </label>
+    <div class="sb-hint">Remove thought blocks (<code>&lt;|channel&gt;&hellip;&lt;channel|&gt;</code> / <code>&lt;think&gt;&hellip;&lt;/think&gt;</code>, tags included) from completions and prompt history before writing dataset rows.</div>
     <div class="sb-row">
       <label class="sb-label">System Prompt A (DPO)</label>
       <textarea class="sb-textarea" id="ratings-sys-a" rows="3" placeholder="(main system prompt)"></textarea>
