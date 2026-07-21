@@ -604,6 +604,7 @@ body { display: flex; overflow: hidden; }
 .duel-wrap { display: flex; gap: 12px; align-items: stretch; }
 .duel-candidate {
   flex: 1 1 0; min-width: 0;
+  display: flex; flex-direction: column;   /* let the footer pin to the box bottom */
   background: var(--bg-secondary);
   border: 1px solid var(--border-light);
   border-radius: var(--radius);
@@ -649,9 +650,12 @@ body { display: flex; overflow: hidden; }
 .duel-candidate.duel-marked-down { border-color: #7a3030; }
 .duel-candidate.duel-marked-fail { border-color: #6b5b1e; opacity: 0.75; }
 
-/* Bottom-right repeat of the ▲/▼/✗ marks (for long replies) */
+/* Bottom-right repeat of the ▲/▼/✗ marks, pinned to the box's bottom-right
+   corner (margin-top:auto) so it sits there even when this candidate's text
+   is shorter than the other's. */
 .duel-foot {
-  display: flex; justify-content: flex-end; margin-top: 10px;
+  display: flex; justify-content: flex-end;
+  margin-top: auto; padding-top: 10px;
 }
 
 /* Duel action bar: Regenerate / Commit / Skip (repeated top & bottom) */

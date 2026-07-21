@@ -280,7 +280,9 @@ function renderActiveTree() {
     msgContainer.appendChild(wrapEl);
   }
 
-  scrollToBottom();
+  // While a duel awaits judgment, re-renders come from mark clicks — don't
+  // yank the view to the bottom (streaming already scrolled during gen).
+  if (!(typeof pendingDuel !== 'undefined' && pendingDuel)) scrollToBottom();
 }
 
 // ── DPO duel judgment UI ────────────────────────────────────────
