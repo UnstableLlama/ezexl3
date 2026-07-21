@@ -649,10 +649,16 @@ body { display: flex; overflow: hidden; }
 .duel-candidate.duel-marked-down { border-color: #7a3030; }
 .duel-candidate.duel-marked-fail { border-color: #6b5b1e; opacity: 0.75; }
 
-/* Duel action bar: Regenerate / Commit / Skip */
+/* Bottom-right repeat of the ▲/▼/✗ marks (for long replies) */
+.duel-foot {
+  display: flex; justify-content: flex-end; margin-top: 10px;
+}
+
+/* Duel action bar: Regenerate / Commit / Skip (repeated top & bottom) */
 .duel-actions {
   display: flex; justify-content: center; gap: 8px; margin-top: 8px;
 }
+.duel-actions-top { margin-top: 0; margin-bottom: 10px; }
 .duel-actions button {
   cursor: pointer; font-size: 12px;
   padding: 4px 14px; border-radius: var(--radius-sm);

@@ -284,13 +284,74 @@ function renderActiveTree() {
 }
 
 // ── DPO duel judgment UI ────────────────────────────────────────
-// Each candidate gets ▲ (chosen) / ▼ (rejected) / ✗ (failed) marks.
-// Regenerate replaces the ✗ candidates; Commit (one ▲ + one ▼) writes
-// the pair; Skip continues without recording.
+// Each candidate gets ▲ (chosen) / ▼ (rejected) / ✗ (failed) marks, shown
+// at both the top and bottom of the reply so long generations can be
+// judged from either end. Regenerate replaces the un-pinned candidates;
+// Commit (one ▲ + one ▼) writes the pair; Skip continues without
+// recording. The action bar is repeated above and below the generations.
 function renderDuelChoice(container) {
   const block = document.createElement('div');
   block.className = 'duel-block';
   const {ids, marks} = pendingDuel;
+
+  // Per-candidate ▲/▼/✗ marks. Built fresh per placement so the header and
+  // footer copies each get live handlers; all mutate the shared
+  // pendingDuel and re-render, keeping every copy in sync.
+  function makeMarks(id, mark) {
+    const markSpan = document.createElement('span');
+    markSpan.className = 'duel-marks';
+    for (const [m, glyph, title] of [
+      ['up', '▲', 'Chosen — the better reply'],
+      ['down', '▼', 'Rejected — the worse reply'],
+      ['fail', '✗', 'Failed — discard; Regenerate replaces it'],
+    ]) {
+      const btn = document.createElement('button');
+      btn.textContent = glyph;
+      btn.title = title;
+      btn.className = `duel-mark-btn mark-${m}` + (mark === m ? ' active' : '');
+      btn.addEventListener('click', () => setDuelMark(id, m));
+      markSpan.appendChild(btn);
+    }
+    return markSpan;
+  }
+
+  // Regenerate / Commit / Skip bar, repeated top (`where`='top') and bottom.
+  function makeActionBar(where) {
+    const bar = document.createElement('div');
+    bar.className = 'duel-actions duel-actions-' + where;
+
+    // Regenerate replaces every candidate not pinned with ▲ or ▼ — an
+    // unmarked (or ✗) candidate is treated as discarded. Enabled as soon
+    // as at least one candidate is still unpinned.
+    const unpinned = ids.filter(id => marks[id] !== 'up' && marks[id] !== 'down');
+    const regenBtn = document.createElement('button');
+    regenBtn.className = 'duel-regen-btn';
+    regenBtn.textContent = '↻ Regenerate';
+    regenBtn.title = 'Regenerate every candidate not pinned with ▲ or ▼ (unmarked = discarded)';
+    regenBtn.disabled = unpinned.length === 0;
+    regenBtn.addEventListener('click', () => regenerateDuelCandidates());
+    bar.appendChild(regenBtn);
+
+    const havePair = ids.some(id => marks[id] === 'up') &&
+                     ids.some(id => marks[id] === 'down');
+    const commitBtn = document.createElement('button');
+    commitBtn.className = 'duel-commit-btn';
+    commitBtn.textContent = '✓ Commit pair';
+    commitBtn.title = 'Save the ▲/▼ pair and continue from the chosen reply';
+    commitBtn.disabled = !havePair;
+    commitBtn.addEventListener('click', () => commitDuel());
+    bar.appendChild(commitBtn);
+
+    const skipBtn = document.createElement('button');
+    skipBtn.className = 'duel-skip-btn';
+    skipBtn.textContent = 'Skip';
+    skipBtn.title = 'Continue without recording a pair';
+    skipBtn.addEventListener('click', () => skipDuel());
+    bar.appendChild(skipBtn);
+    return bar;
+  }
+
+  block.appendChild(makeActionBar('top'));
 
   const wrap = document.createElement('div');
   wrap.className = 'duel-wrap';
@@ -312,22 +373,7 @@ function renderDuelChoice(container) {
       sysTag.title = `Generated with custom system prompt:\n${node.genSystem}`;
       head.querySelector('.duel-label').after(sysTag);
     }
-
-    const markSpan = document.createElement('span');
-    markSpan.className = 'duel-marks';
-    for (const [m, glyph, title] of [
-      ['up', '▲', 'Chosen — the better reply'],
-      ['down', '▼', 'Rejected — the worse reply'],
-      ['fail', '✗', 'Failed — discard; Regenerate replaces it'],
-    ]) {
-      const btn = document.createElement('button');
-      btn.textContent = glyph;
-      btn.title = title;
-      btn.className = `duel-mark-btn mark-${m}` + (mark === m ? ' active' : '');
-      btn.addEventListener('click', () => setDuelMark(id, m));
-      markSpan.appendChild(btn);
-    }
-    head.appendChild(markSpan);
+    head.appendChild(makeMarks(id, mark));
     cand.appendChild(head);
 
     const body = document.createElement('div');
@@ -335,42 +381,17 @@ function renderDuelChoice(container) {
     renderFinal(body, node.content);
     cand.appendChild(body);
     if (node.tpsData) cand.appendChild(makeTpsBadge(node.tpsData));
+
+    // Repeat the marks bottom-right so a long reply needs no scroll-up.
+    const foot = document.createElement('div');
+    foot.className = 'duel-foot';
+    foot.appendChild(makeMarks(id, mark));
+    cand.appendChild(foot);
+
     wrap.appendChild(cand);
   });
   block.appendChild(wrap);
 
-  const bar = document.createElement('div');
-  bar.className = 'duel-actions';
-
-  // Regenerate replaces every candidate not pinned with ▲ or ▼ — an
-  // unmarked (or ✗) candidate is treated as discarded. Available as soon
-  // as at least one candidate is still unpinned.
-  const unpinned = ids.filter(id => marks[id] !== 'up' && marks[id] !== 'down');
-  const regenBtn = document.createElement('button');
-  regenBtn.className = 'duel-regen-btn';
-  regenBtn.textContent = '↻ Regenerate';
-  regenBtn.title = 'Regenerate every candidate not pinned with ▲ or ▼ (unmarked = discarded)';
-  regenBtn.disabled = unpinned.length === 0;
-  regenBtn.addEventListener('click', () => regenerateDuelCandidates());
-  bar.appendChild(regenBtn);
-
-  const havePair = ids.some(id => marks[id] === 'up') &&
-                   ids.some(id => marks[id] === 'down');
-  const commitBtn = document.createElement('button');
-  commitBtn.className = 'duel-commit-btn';
-  commitBtn.textContent = '✓ Commit pair';
-  commitBtn.title = 'Save the ▲/▼ pair and continue from the chosen reply';
-  commitBtn.disabled = !havePair;
-  commitBtn.addEventListener('click', () => commitDuel());
-  bar.appendChild(commitBtn);
-
-  const skipBtn = document.createElement('button');
-  skipBtn.className = 'duel-skip-btn';
-  skipBtn.textContent = 'Skip';
-  skipBtn.title = 'Continue without recording a pair';
-  skipBtn.addEventListener('click', () => skipDuel());
-  bar.appendChild(skipBtn);
-
-  block.appendChild(bar);
+  block.appendChild(makeActionBar('bottom'));
   container.appendChild(block);
 }
