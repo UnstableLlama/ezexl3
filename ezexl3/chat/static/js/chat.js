@@ -120,11 +120,14 @@ async function streamDuel(message, context, bodies, systemPrompts = null) {
 }
 
 async function runDuel(userNode, context) {
-  // Streams N candidates (duelCount()) side by side, adds each as a sibling
-  // assistant node, and (unless stopped) arms pendingDuel so renderActiveTree
-  // shows the pick UI.
+  // Streams N candidates side by side, adds each as a sibling assistant
+  // node, and (unless stopped) arms pendingDuel so renderActiveTree shows
+  // the judgment UI. Queue-driven bulk mode allows a single candidate,
+  // generates every candidate under System Prompt A, and swaps the ▲/▼
+  // pick UI for ✗ / Save-all.
   duelStopped = false;
-  const n = duelCount();
+  const bulk = bulkQueueActive();
+  const n = bulk ? bulkCount() : duelCount();
 
   const duelEl = document.createElement('div');
   duelEl.className = 'duel-wrap';
@@ -140,7 +143,9 @@ async function runDuel(userNode, context) {
     bodies.push(cand.querySelector('.msg-body'));
   }
 
-  const spoofs = duelSystemPromptsFor(n);
+  const spoofs = bulk
+    ? Array.from({length: n}, () => bulkGenSystem())
+    : duelSystemPromptsFor(n);
   const results = await streamDuel(userNode.content, context, bodies, spoofs);
 
   const ids = [];
@@ -152,20 +157,26 @@ async function runDuel(userNode, context) {
     ids.push(node.id);
   });
 
-  if (ids.length === n && n >= 2 && !duelStopped) {
-    pendingDuel = {userNodeId: userNode.id, ids, marks: {}};
+  if (ids.length === n && (n >= 2 || bulk) && !duelStopped) {
+    pendingDuel = {userNodeId: userNode.id, ids, marks: {}, bulk,
+                   sourceRow: bulk ? (promptQueue.current || null) : null};
   }
   renderActiveTree();
 }
 
 // ── DPO duel: regenerate the un-pinned candidates ──────────────
 async function regenerateDuelCandidates() {
-  // Replaces every candidate NOT pinned with a ▲/▼ vote (unmarked or ✗)
-  // with a fresh generation, keeping the voted candidates' text and marks.
+  // Duels: replaces every candidate NOT pinned with a ▲/▼ vote (unmarked
+  // or ✗), keeping the voted candidates' text and marks. Bulk: unmarked
+  // candidates are keepers (Save-all records them), so only ✗-marked
+  // ones are replaced.
   if (!pendingDuel || generating || !modelLoaded) return;
   const duel = pendingDuel;
   const regenIdxs = duel.ids
-    .map((id, i) => (duel.marks[id] === 'up' || duel.marks[id] === 'down') ? -1 : i)
+    .map((id, i) => {
+      if (duel.bulk) return duel.marks[id] === 'fail' ? i : -1;
+      return (duel.marks[id] === 'up' || duel.marks[id] === 'down') ? -1 : i;
+    })
     .filter(i => i >= 0);
   if (!regenIdxs.length) return;
 
@@ -220,8 +231,11 @@ async function regenerateDuelCandidates() {
   });
 
   try {
-    // Each regenerated slot keeps its own generation prompt (A/B/…).
-    const spoofs = duelSystemPromptsFor(duel.ids.length);
+    // Each regenerated slot keeps its own generation prompt (A/B/… for
+    // duels; System Prompt A across the board for bulk).
+    const spoofs = duel.bulk
+      ? Array.from({length: duel.ids.length}, () => bulkGenSystem())
+      : duelSystemPromptsFor(duel.ids.length);
     const slotSpoofs = regenIdxs.map(i => spoofs[i] || null);
     const results = await streamDuel(userNode.content, context, streamBodies,
                                      slotSpoofs);

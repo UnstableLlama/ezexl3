@@ -614,17 +614,25 @@ class ChatEngine:
         return model_init.get_arg_sampler(ns)
 
     def _build_input_ids(self, prompt_format, prefix: str = "",
-                         system_prompt: str | None = None):
+                         system_prompt: str | None = None,
+                         context: list | None = None):
         """Tokenize full context, trimming from head if too long.
 
         *system_prompt* overrides the settings' system prompt for this
         build only (used for per-candidate DPO generation prompts);
         None means use the trained prompt from settings.
+
+        *context* overrides the persistent chat context for this build
+        (bulk generation builds fresh single-turn contexts per prompt);
+        when None the persistent self.context is used AND head-trimmed
+        in place if too long, matching interactive-chat behavior.
         """
         think = self.settings.think
         sys_prompt = (self.settings.system_prompt if system_prompt is None
                       else system_prompt)
-        frm_context = prompt_format.format(sys_prompt, self.context, think)
+        persistent = context is None
+        ctx = self.context if persistent else context
+        frm_context = prompt_format.format(sys_prompt, ctx, think)
         if prefix:
             frm_context += prefix
         elif think and prompt_format.thinktag()[0] is not None:
@@ -639,10 +647,12 @@ class ChatEngine:
         # Trim from head if context too long
         if exp_len > self.context_length:
             while exp_len > self.context_length - 2 * self.settings.max_response_tokens:
-                if len(self.context) <= 1:
+                if len(ctx) <= 1:
                     break
-                self.context = self.context[1:]
-                frm_context = prompt_format.format(sys_prompt, self.context, think)
+                ctx = ctx[1:]
+                if persistent:
+                    self.context = ctx
+                frm_context = prompt_format.format(sys_prompt, ctx, think)
                 if prefix:
                     frm_context += prefix
                 elif think and prompt_format.thinktag()[0] is not None:
@@ -796,6 +806,132 @@ class ChatEngine:
             # branch) on its next request.
             full_response = (prefix + texts[0]).strip()
             self.context[-1] = (user_message, full_response)
+
+        except Exception as e:
+            yield {"type": "error", "message": str(e)}
+        finally:
+            self._is_generating = False
+            self._current_job = None
+
+    async def generate_bulk(self, prompts: list, n: int = 1,
+                            system_prompt: str | None = None,
+                            ) -> AsyncGenerator[dict, None]:
+        """
+        Generate *n* completions for EACH prompt in *prompts*, all as one
+        job pool — the generator batches across prompts up to its ceiling
+        (recurrent models: the -ambs cache slots allocated at load), so
+        throughput is bounded by the model, not by per-prompt turnaround.
+
+        Every prompt is a fresh single-turn conversation; the persistent
+        chat context is neither read nor written. *system_prompt*
+        overrides the settings' system prompt for every job (None/"" =
+        the trained prompt).
+
+        Yields dicts (no per-token streaming — completions arrive whole):
+            {"type": "row_done", "item": i, "cand": j, "text": "...",
+             "eos_reason": "..."}
+            {"type": "progress", "done": k, "total": m,
+             "new_tokens": t, "elapsed": s, "tps": r}
+            {"type": "error", "message": "..."}
+        """
+        Job = _import_job()
+
+        if not self.is_loaded:
+            yield {"type": "error", "message": "Model not loaded"}
+            return
+        if self._is_generating:
+            yield {"type": "error", "message": "Already generating"}
+            return
+        if not prompts:
+            return
+
+        self._is_generating = True
+        try:
+            n = max(1, int(n))
+            prompt_format = self._get_prompt_format()
+            stop_conditions = self._get_stop_conditions(prompt_format)
+            override = system_prompt or None
+
+            banned = list(self.settings.banned_strings)
+            if self.settings.no_think:
+                tt = prompt_format.thinktag()
+                if tt[0]:
+                    banned.append(tt[0])
+                if tt[1]:
+                    banned.append(tt[1])
+
+            jobs = []
+            slot_of = {}      # id(job) -> (item, cand)
+            for i, message in enumerate(prompts):
+                ids = self._build_input_ids(
+                    prompt_format, system_prompt=override,
+                    context=[(message, None)])
+                for j in range(n):
+                    job = Job(
+                        input_ids=ids,
+                        max_new_tokens=self.settings.max_response_tokens,
+                        stop_conditions=stop_conditions,
+                        sampler=self._get_sampler(),
+                        banned_strings=list(banned) if banned else None,
+                    )
+                    slot_of[id(job)] = (i, j)
+                    jobs.append(job)
+
+            self._current_job = list(jobs)
+            for job in jobs:
+                self.generator.enqueue(job)
+
+            texts = {id(job): "" for job in jobs}
+            done_of = {id(job): False for job in jobs}
+            pending = len(jobs)
+            total = len(jobs)
+            new_tokens = 0
+            t_start = time.time()
+            t_beat = t_start
+
+            while pending and self.generator.num_remaining_jobs():
+                for r in self.generator.iterate():
+                    job = r.get("job")
+                    if id(job) not in slot_of:
+                        continue
+                    chunk = r.get("text", "")
+                    if chunk:
+                        texts[id(job)] += chunk
+                    if r.get("eos") and not done_of[id(job)]:
+                        done_of[id(job)] = True
+                        pending -= 1
+                        new_tokens += r.get("new_tokens", 0)
+                        item, cand = slot_of[id(job)]
+                        yield {"type": "row_done", "item": item, "cand": cand,
+                               "text": texts[id(job)],
+                               "eos_reason": r.get("eos_reason", "unknown")}
+
+                # Heartbeat: throughput + counts every ~2 s so the UI can
+                # show live progress without per-token traffic.
+                now = time.time()
+                if now - t_beat >= 2.0:
+                    t_beat = now
+                    elapsed = now - t_start
+                    yield {"type": "progress",
+                           "done": total - pending, "total": total,
+                           "new_tokens": new_tokens,
+                           "elapsed": round(elapsed, 2),
+                           "tps": round(new_tokens / elapsed, 2)
+                                  if elapsed > 0 else 0}
+                await asyncio.sleep(0)
+
+            # Cancelled jobs never report eos — surface them as empty rows
+            # so the caller's accounting closes out.
+            for job in jobs:
+                if not done_of[id(job)]:
+                    item, cand = slot_of[id(job)]
+                    yield {"type": "row_done", "item": item, "cand": cand,
+                           "text": texts[id(job)], "eos_reason": "cancelled"}
+            elapsed = time.time() - t_start
+            yield {"type": "progress",
+                   "done": total - pending, "total": total,
+                   "new_tokens": new_tokens, "elapsed": round(elapsed, 2),
+                   "tps": round(new_tokens / elapsed, 2) if elapsed > 0 else 0}
 
         except Exception as e:
             yield {"type": "error", "message": str(e)}

@@ -15,7 +15,8 @@ from aiohttp import web
 
 from .inference import ChatEngine, ChatSettings
 from .ratings import (
-    RatingsStore, default_datasets_dir, valid_dataset_name, validate_prompt,
+    RatingsStore, default_datasets_dir, strip_think_text, valid_dataset_name,
+    validate_prompt,
 )
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -72,6 +73,7 @@ def create_app(engine: ChatEngine) -> web.Application:
     app.router.add_post("/api/config", handle_config_set)
     app.router.add_get("/api/ratings", handle_ratings_get)
     app.router.add_post("/api/rate", handle_rate)
+    app.router.add_post("/api/ratings/bulk", handle_ratings_bulk)
     app.router.add_static("/", STATIC_DIR, show_index=False, append_version=True)
 
     return app
@@ -648,11 +650,14 @@ async def handle_rate(request: web.Request) -> web.Response:
 
     Body: {dataset, prompt, kto?: {node_id, completion, label},
            pair?: {chosen: {node_id, content},
-                   rejected: {node_id, content}, remove?}}
+                   rejected: {node_id, content}, remove?},
+           bulk?: {completions: [{node_id, content}], target,
+                   gen_system?, source_row?}}
 
     kto upserts one thumbs row (KTO mode); pair upserts the DPO row for a
-    two-candidate duel (DPO mode), keyed by the unordered node-id duo.
-    Returns the updated ratings snapshot.
+    two-candidate duel (DPO mode), keyed by the unordered node-id duo;
+    bulk appends one row per completion with the generated text on the
+    *target* side (review-flow "Save all"). Returns the updated snapshot.
     """
     engine: ChatEngine = request.app[_KEY_ENGINE]
     data = await request.json()
@@ -664,9 +669,10 @@ async def handle_rate(request: web.Request) -> web.Response:
         )
     kto = data.get("kto")
     pair = data.get("pair")
-    if not (kto or pair):
+    bulk = data.get("bulk")
+    if not (kto or pair or bulk):
         return web.json_response(
-            {"error": "Nothing to record: need kto or pair"},
+            {"error": "Nothing to record: need kto, pair, or bulk"},
             status=400,
         )
     prompt = data.get("prompt")
@@ -705,6 +711,31 @@ async def handle_rate(request: web.Request) -> web.Response:
                     {"error": "gen_system must be a string or null"},
                     status=400,
                 )
+    if bulk is not None:
+        comps = bulk.get("completions")
+        if (not isinstance(comps, list) or not comps
+                or not all(isinstance(c, dict)
+                           and isinstance(c.get("content"), str)
+                           for c in comps)):
+            return web.json_response(
+                {"error": "bulk needs a non-empty completions list "
+                          "of {node_id, content}"}, status=400,
+            )
+        if bulk.get("target") not in ("chosen", "rejected"):
+            return web.json_response(
+                {"error": "bulk target must be 'chosen' or 'rejected'"},
+                status=400,
+            )
+        gs = bulk.get("gen_system")
+        if gs is not None and not isinstance(gs, str):
+            return web.json_response(
+                {"error": "gen_system must be a string or null"}, status=400,
+            )
+        src = bulk.get("source_row")
+        if src is not None and not isinstance(src, dict):
+            return web.json_response(
+                {"error": "source_row must be an object or null"}, status=400,
+            )
 
     # Full model dir as provenance — the basename alone is ambiguous for
     # layouts like .../Llama-3.2-3B-Instruct/4.
@@ -719,6 +750,11 @@ async def handle_rate(request: web.Request) -> web.Response:
             store.rate_dpo_pair(dataset, prompt, pair.get("chosen") or {},
                                 pair.get("rejected") or {}, model,
                                 remove=bool(pair.get("remove")))
+        if bulk is not None:
+            store.add_bulk_rows(dataset, prompt, bulk["completions"],
+                                bulk["target"], model,
+                                source_row=bulk.get("source_row"),
+                                gen_system=bulk.get("gen_system"))
         state = store.state(dataset)
         return {
             "dataset": dataset,
@@ -731,6 +767,155 @@ async def handle_rate(request: web.Request) -> web.Response:
         return web.json_response(await asyncio.to_thread(_apply))
     except (OSError, ValueError) as e:
         return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_ratings_bulk(request: web.Request) -> web.Response:
+    """SSE endpoint: unattended bulk generation into a preference dataset.
+
+    Body: {dataset, rows: [{prompt, chosen?, rejected?, id?}], n,
+           system_prompt?, target, carry?, strip_think?}
+
+    Every row's prompt becomes a fresh single-turn conversation; the
+    engine batches all rows × n jobs across prompts in one generator
+    pool. Each completion is written to <dataset>.dpo.jsonl as it
+    finishes (generated text on the *target* side; with carry=true the
+    opposite side comes from the source row). Streams progress events;
+    POST /api/stop cancels, keeping everything already written.
+    """
+    engine: ChatEngine = request.app[_KEY_ENGINE]
+    data = await request.json()
+
+    dataset = data.get("dataset", "chat")
+    if not valid_dataset_name(dataset):
+        return web.json_response(
+            {"error": f"Invalid dataset name: {dataset!r}"}, status=400,
+        )
+    rows = data.get("rows")
+    if (not isinstance(rows, list) or not rows
+            or not all(isinstance(r, dict)
+                       and isinstance(r.get("prompt"), str)
+                       and r["prompt"].strip()
+                       for r in rows)):
+        return web.json_response(
+            {"error": "rows must be a non-empty list of {prompt, …}"},
+            status=400,
+        )
+    n = data.get("n", 1)
+    if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 8:
+        return web.json_response(
+            {"error": "n must be an integer in 1..8"}, status=400,
+        )
+    target = data.get("target")
+    if target not in ("chosen", "rejected"):
+        return web.json_response(
+            {"error": "target must be 'chosen' or 'rejected'"}, status=400,
+        )
+    system_prompt = data.get("system_prompt")
+    if system_prompt is not None and not isinstance(system_prompt, str):
+        return web.json_response(
+            {"error": "system_prompt must be a string or null"}, status=400,
+        )
+    carry = bool(data.get("carry"))
+    strip = bool(data.get("strip_think"))
+    if not engine.is_loaded:
+        return web.json_response({"error": "Model not loaded"}, status=400)
+
+    # The trained prompt column: main system prompt + the row's user turn.
+    main_sys = (engine.settings.system_prompt or "").strip()
+
+    def _turns_for(prompt_text: str) -> list:
+        turns = []
+        if main_sys:
+            turns.append({"role": "system", "content": main_sys})
+        turns.append({"role": "user", "content": prompt_text})
+        return turns
+
+    # gen_system metadata: recorded only when it differs from the
+    # trained prompt (mirrors duel semantics).
+    gen_system = (system_prompt or "").strip() or None
+
+    model = engine.model_dir or engine.model_name
+    store = await asyncio.to_thread(_ratings_store)
+
+    response = web.StreamResponse(
+        status=200,
+        reason="OK",
+        headers={
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+    await response.prepare(request)
+
+    async def _send(event: dict):
+        await response.write(f"data: {json.dumps(event)}\n\n".encode("utf-8"))
+
+    prompts = [r["prompt"].strip() for r in rows]
+    done_by_item: dict[int, list] = {}
+    saved_items = set()
+    rows_written = 0
+    items_done = 0
+
+    async def _flush_item(i: int):
+        """Write item i's finished completions in one store call."""
+        nonlocal rows_written, items_done
+        comps = [c for c in done_by_item.get(i, []) if c["content"].strip()]
+        saved_items.add(i)
+        items_done += 1
+        if not comps:
+            return
+        written = await asyncio.to_thread(
+            store.add_bulk_rows, dataset, _turns_for(prompts[i]), comps,
+            target, model,
+            source_row=rows[i] if carry else {"id": rows[i].get("id")},
+            gen_system=gen_system,
+        )
+        rows_written += written
+        preview = comps[-1]["content"]
+        await _send({
+            "type": "saved", "item": i, "rows": written,
+            "rows_written": rows_written, "items_done": items_done,
+            "total_items": len(prompts),
+            "preview": preview[:300],
+        })
+
+    async for event in engine.generate_bulk(prompts, n=n,
+                                            system_prompt=system_prompt):
+        et = event.get("type")
+        if et == "row_done":
+            i = event["item"]
+            if event.get("eos_reason") != "cancelled":
+                text = event.get("text", "")
+                if strip:
+                    text = strip_think_text(text)
+                done_by_item.setdefault(i, []).append(
+                    {"content": text.strip(), "node_id": None})
+            else:
+                done_by_item.setdefault(i, [])
+            if (len(done_by_item[i]) >= n
+                    or event.get("eos_reason") == "cancelled") \
+                    and i not in saved_items:
+                await _flush_item(i)
+        elif et == "progress":
+            await _send({**event, "rows_written": rows_written,
+                         "items_done": items_done,
+                         "total_items": len(prompts)})
+        elif et == "error":
+            await _send(event)
+
+    # A cancelled run leaves items with some finished completions but no
+    # flush trigger — save what completed.
+    for i in list(done_by_item):
+        if i not in saved_items:
+            await _flush_item(i)
+
+    await _send({"type": "bulk_done", "rows_written": rows_written,
+                 "items_done": items_done, "total_items": len(prompts)})
+    await response.write(b"data: [DONE]\n\n")
+    await response.write_eof()
+    return response
 
 
 # ---------------------------------------------------------------------------

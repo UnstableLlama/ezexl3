@@ -243,10 +243,34 @@
     </label>
     <div class="sb-hint">Remove thought blocks (<code>&lt;|channel&gt;&hellip;&lt;channel|&gt;</code> / <code>&lt;think&gt;&hellip;&lt;/think&gt;</code>, tags included) from completions and prompt history before writing dataset rows.</div>
     <div class="sb-row">
-      <label class="sb-label">Duel candidates (DPO)</label>
-      <input type="number" id="ratings-batch" min="2" max="8" step="1" value="2">
+      <label class="sb-label">Candidates per prompt (DPO)</label>
+      <input type="number" id="ratings-batch" min="1" max="8" step="1" value="2">
     </div>
-    <div class="sb-hint">Candidates generated side by side each DPO turn. On recurrent/hybrid models (Gemma4, Qwen3.5&hellip;) each extra candidate reserves a cache slot at load, so <strong>reload the model</strong> after changing it; non-recurrent models update immediately.</div>
+    <div class="sb-hint">Replies generated side by side per prompt (duels need 2+; bulk allows 1). On recurrent/hybrid models (Gemma4, Qwen3.5&hellip;) each extra candidate reserves a cache slot at load, so <strong>reload the model</strong> after changing it; non-recurrent models update immediately.</div>
+    <div class="sb-row">
+      <label class="sb-label">Queue mode</label>
+      <select id="ratings-queue-mode">
+        <option value="duel">Judge pairs (duel)</option>
+        <option value="bulk">Bulk generate</option>
+      </select>
+    </div>
+    <div id="ratings-bulk-opts" style="display:none">
+      <div class="sb-row">
+        <label class="sb-label">Save replies as</label>
+        <select id="ratings-bulk-target">
+          <option value="rejected">rejected</option>
+          <option value="chosen">chosen</option>
+        </select>
+      </div>
+      <label class="gpu-auto-label">
+        <input type="checkbox" id="ratings-bulk-carry" checked> Carry source columns (full pairs)
+      </label>
+      <div class="sb-hint">When the loaded rows already hold the other side (e.g. a <code>chosen</code> column), copy it into each saved row so pairs come out trainer-ready. Unchecked: the other side is left <code>""</code> to join later; the source <code>id</code> rides along either way.</div>
+      <label class="gpu-auto-label">
+        <input type="checkbox" id="ratings-queue-review"> Review each batch before saving
+      </label>
+      <div class="sb-hint">Checked: candidates render in the chat &mdash; &#10007; any garbage, then <em>Save all &amp; next</em>. Unchecked: fully unattended &mdash; the server batches prompts together, saves every reply as it finishes, and streams progress below.</div>
+    </div>
     <div class="sb-row">
       <label class="sb-label">Prompt Queue (DPO)</label>
       <textarea class="sb-textarea mono" id="ratings-queue-text" rows="4" placeholder="Paste JSON / JSONL / one prompt per line, or Load a file"></textarea>
@@ -257,7 +281,7 @@
       <button id="queue-stop-btn" class="sb-btn danger" type="button" style="display:none">&#9632; Stop</button>
     </div>
     <div class="sb-hint" id="queue-status" style="display:none"></div>
-    <div class="sb-hint">Accepts a JSON array, JSONL, or plain text (one prompt/line) &mdash; pasted or loaded. JSON rows are reduced to just their user text (<code>prompt</code>, <code>text</code>, <code>messages</code>/<code>conversations</code> turn lists, Alpaca <code>instruction</code>+<code>input</code>, ShareGPT&hellip;), so the model never sees raw JSON. Runs each in a fresh conversation; commit or skip auto-advances. Starts DPO mode automatically.</div>
+    <div class="sb-hint">Accepts a JSON array, JSONL, or plain text (one prompt/line) &mdash; pasted or loaded. JSON rows are reduced to their user text (<code>prompt</code>, <code>text</code>, <code>messages</code>/<code>conversations</code> turn lists, Alpaca <code>instruction</code>+<code>input</code>, ShareGPT&hellip;), so the model never sees raw JSON; <code>chosen</code>/<code>rejected</code>/<code>id</code> columns are kept for bulk mode. Duel/review queues run each prompt in a fresh conversation and auto-advance on commit/save/skip.</div>
     <div class="sb-row">
       <label class="sb-label">System Prompt A (DPO)</label>
       <textarea class="sb-textarea" id="ratings-sys-a" rows="3" placeholder="(main system prompt)"></textarea>
@@ -266,7 +290,7 @@
       <label class="sb-label">System Prompt B (DPO)</label>
       <textarea class="sb-textarea" id="ratings-sys-b" rows="3" placeholder="(main system prompt)"></textarea>
     </div>
-    <div class="sb-hint">Generation-only prompts for duel candidates A and B — e.g. one biasing toward the behavior you want, one against. Blank = main system prompt. The dataset's <code>prompt</code> column always keeps the main system prompt; these are recorded as <code>chosen_system</code>/<code>rejected_system</code> metadata the trainer ignores.</div>
+    <div class="sb-hint">Generation-only prompts. Duels: candidates A and B get these two &mdash; e.g. one biasing toward the behavior you want, one against. Bulk generate: <strong>System Prompt A applies to every candidate</strong> (B is ignored). Blank = main system prompt. The dataset's <code>prompt</code> column always keeps the main system prompt; these are recorded as <code>chosen_system</code>/<code>rejected_system</code> metadata the trainer ignores.</div>
     <div class="sb-hint" id="ratings-info"></div>
     <div class="sb-hint">Mode toggle is in the top bar (Off = normal chat). KTO: &#x1F44D;/&#x1F44E; a reply &rarr; labeled row. DPO: each send generates candidates side by side &mdash; mark &#9650; chosen / &#9660; rejected and commit &rarr; pair. Regenerate replaces every candidate you haven't pinned with &#9650;/&#9660;. Trainer-ready JSONL.</div>
   </div>

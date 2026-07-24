@@ -68,6 +68,24 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# Thought blocks stripped from completions bound for a dataset when the
+# strip-thinking option is on: gemma4 <|channel>…<channel|> and generic
+# <think>…</think>. Mirrors stripThink() in static/js/ratings.js.
+_THINK_RES = (
+    re.compile(r"<\|channel>.*?<channel\|>", re.DOTALL),
+    re.compile(r"<think>.*?</think>", re.DOTALL),
+)
+
+
+def strip_think_text(text: str) -> str:
+    """Remove thought blocks (tags included) and leading whitespace."""
+    if not text:
+        return text
+    for rx in _THINK_RES:
+        text = rx.sub("", text)
+    return text.lstrip()
+
+
 class RatingsStore:
     """JSONL-backed store; one .kto.jsonl + one .dpo.jsonl per dataset.
 
@@ -171,6 +189,61 @@ class RatingsStore:
                 })
             self._write(path, rows)
 
+    def add_bulk_rows(self, dataset: str, prompt: list, completions: list,
+                      target: str, model: str,
+                      source_row: dict | None = None,
+                      gen_system: str | None = None) -> int:
+        """Append one DPO row per generated completion (bulk generation).
+
+        *target* names the side the generated text fills ("chosen" or
+        "rejected"). The opposite column comes from *source_row* — the
+        loaded dataset row this prompt came from, e.g. {"chosen": str,
+        "rejected": str, "id": str} — or "" when absent, leaving a
+        half-pair to be joined later. *completions* is a list of
+        {"content": str, "node_id": str|None}; rows carrying a node id
+        (review-flow saves) upsert — any prior row referencing that node
+        is replaced. *gen_system* is the generation-time system prompt,
+        recorded as metadata on the generated side only.
+
+        Returns the number of rows written.
+        """
+        if target not in ("chosen", "rejected"):
+            raise ValueError(f"invalid bulk target: {target!r}")
+        other = "rejected" if target == "chosen" else "chosen"
+        src = source_row or {}
+        other_text = src.get(other) if isinstance(src.get(other), str) else ""
+        source_row_id = src.get("id")
+
+        path = self._path(dataset, "dpo")
+        ids = {c["node_id"] for c in completions if c.get("node_id")}
+        with _LOCK:
+            rows = [r for r in self._read(path)
+                    if isinstance(r, str)
+                    or not ({r.get("chosen_node_id"),
+                             r.get("rejected_node_id")} & ids)]
+            written = 0
+            for c in completions:
+                content = c.get("content")
+                if not isinstance(content, str) or not content.strip():
+                    continue
+                row = {
+                    "prompt": prompt,
+                    "chosen": content if target == "chosen" else other_text,
+                    "rejected": content if target == "rejected" else other_text,
+                    "chosen_node_id": c.get("node_id") if target == "chosen" else None,
+                    "rejected_node_id": c.get("node_id") if target == "rejected" else None,
+                    "chosen_system": gen_system if target == "chosen" else None,
+                    "rejected_system": gen_system if target == "rejected" else None,
+                    "source": "bulk",
+                    "source_row_id": source_row_id,
+                    "model": model,
+                    "ts": _now(),
+                }
+                rows.append(row)
+                written += 1
+            self._write(path, rows)
+        return written
+
     # ── queries ───────────────────────────────────────────────────
 
     def state(self, dataset: str) -> dict:
@@ -181,9 +254,14 @@ class RatingsStore:
                 kto[r["node_id"]] = bool(r.get("label"))
         dpo = []
         for r in self._read(self._path(dataset, "dpo")):
-            if isinstance(r, dict) and r.get("chosen_node_id"):
+            if not isinstance(r, dict):
+                continue
+            # Bulk rows may carry node ids on one side only (review-flow
+            # saves) or none at all (unattended runs) — they still count.
+            if r.get("chosen_node_id") or r.get("rejected_node_id") \
+                    or r.get("source") == "bulk":
                 dpo.append({
-                    "chosen": r["chosen_node_id"],
+                    "chosen": r.get("chosen_node_id"),
                     "rejected": r.get("rejected_node_id"),
                     "source": r.get("source", "manual"),
                 })

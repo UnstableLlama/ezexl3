@@ -34,7 +34,7 @@ if "exllamav3" not in sys.modules:
     sys.modules["exllamav3"] = MagicMock()
 
 from ezexl3.chat.ratings import (  # noqa: E402
-    RatingsStore, valid_dataset_name, validate_prompt,
+    RatingsStore, strip_think_text, valid_dataset_name, validate_prompt,
 )
 from ezexl3.chat.inference import ChatEngine  # noqa: E402
 from ezexl3.chat.server import create_app  # noqa: E402
@@ -216,6 +216,132 @@ class TestRatingsStore(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Bulk generation rows (queue bulk mode / unattended runs)
+# ---------------------------------------------------------------------------
+
+BULK_PROMPT = [
+    {"role": "system", "content": "Be terse."},
+    {"role": "user", "content": "Only question"},
+]
+
+
+class TestBulkStore(unittest.TestCase):
+
+    def test_one_sided_rows(self):
+        store, root = make_store()
+        n = store.add_bulk_rows("t", BULK_PROMPT, [
+            {"content": "bad reply 1", "node_id": None},
+            {"content": "bad reply 2", "node_id": None},
+        ], "rejected", "FakeModel", gen_system="elicit bad")
+        self.assertEqual(n, 2)
+        rows = [json.loads(l) for l in
+                (root / "t.dpo.jsonl").read_text().splitlines()]
+        self.assertEqual(len(rows), 2)
+        for i, row in enumerate(rows):
+            self.assertEqual(row["prompt"], BULK_PROMPT)
+            self.assertEqual(row["chosen"], "")          # to be joined later
+            self.assertEqual(row["rejected"], f"bad reply {i + 1}")
+            self.assertEqual(row["rejected_system"], "elicit bad")
+            self.assertIsNone(row["chosen_system"])
+            self.assertEqual(row["source"], "bulk")
+            self.assertIsNone(row["source_row_id"])
+            self.assertEqual(row["model"], "FakeModel")
+
+    def test_carried_source_column_makes_full_pairs(self):
+        store, root = make_store()
+        store.add_bulk_rows("t", BULK_PROMPT,
+                            [{"content": "generated bad", "node_id": None}],
+                            "rejected", "m",
+                            source_row={"chosen": "the gold reply",
+                                        "id": "mc-001"})
+        row = json.loads((root / "t.dpo.jsonl").read_text())
+        self.assertEqual(row["chosen"], "the gold reply")
+        self.assertEqual(row["rejected"], "generated bad")
+        self.assertEqual(row["source_row_id"], "mc-001")
+
+    def test_target_chosen_fills_other_side_from_source_rejected(self):
+        store, root = make_store()
+        store.add_bulk_rows("t", BULK_PROMPT,
+                            [{"content": "generated good", "node_id": None}],
+                            "chosen", "m",
+                            source_row={"rejected": "known bad", "id": "r9"})
+        row = json.loads((root / "t.dpo.jsonl").read_text())
+        self.assertEqual(row["chosen"], "generated good")
+        self.assertEqual(row["rejected"], "known bad")
+        self.assertIsNone(row["rejected_system"])
+
+    def test_blank_completions_skipped(self):
+        store, root = make_store()
+        n = store.add_bulk_rows("t", BULK_PROMPT, [
+            {"content": "keep me", "node_id": None},
+            {"content": "   ", "node_id": None},
+        ], "rejected", "m")
+        self.assertEqual(n, 1)
+
+    def test_node_keyed_rows_upsert(self):
+        # Review-flow saves carry node ids; re-saving the same candidate
+        # (e.g. after withdrawing and re-judging) must not duplicate rows.
+        store, root = make_store()
+        store.add_bulk_rows("t", BULK_PROMPT,
+                            [{"content": "v1", "node_id": "n1"}],
+                            "rejected", "m")
+        store.add_bulk_rows("t", BULK_PROMPT,
+                            [{"content": "v2", "node_id": "n1"}],
+                            "rejected", "m")
+        rows = [json.loads(l) for l in
+                (root / "t.dpo.jsonl").read_text().splitlines()]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["rejected"], "v2")
+
+    def test_invalid_target_raises(self):
+        store, _ = make_store()
+        with self.assertRaises(ValueError):
+            store.add_bulk_rows("t", BULK_PROMPT,
+                                [{"content": "x", "node_id": None}],
+                                "best", "m")
+
+    def test_bulk_rows_count_in_state(self):
+        # Unattended bulk rows have no node ids but must show in the
+        # sidebar pair count (state's dpo list length).
+        store, _ = make_store()
+        store.add_bulk_rows("t", BULK_PROMPT, [
+            {"content": "a", "node_id": None},
+            {"content": "b", "node_id": None},
+        ], "rejected", "m")
+        state = store.state("t")
+        self.assertEqual(len(state["dpo"]), 2)
+
+    def test_bulk_and_duel_rows_share_schema(self):
+        # Both row shapes land in the same .dpo.jsonl — HF datasets loads
+        # it via arrow, so bulk rows may only ADD keys, never diverge on
+        # the shared ones.
+        store, root = make_store()
+        store.rate_dpo_pair("t", PROMPT, {"node_id": "a", "content": "A"},
+                            {"node_id": "b", "content": "B"}, "m")
+        store.add_bulk_rows("t", BULK_PROMPT,
+                            [{"content": "c", "node_id": None}],
+                            "rejected", "m")
+        rows = [json.loads(l) for l in
+                (root / "t.dpo.jsonl").read_text().splitlines()]
+        self.assertLessEqual(set(rows[0]), set(rows[1]))
+
+
+class TestStripThink(unittest.TestCase):
+
+    def test_strips_think_blocks(self):
+        self.assertEqual(
+            strip_think_text("<think>secret plan</think>  the answer"),
+            "the answer")
+        self.assertEqual(
+            strip_think_text("<|channel>gemma thoughts<channel|>\nreply"),
+            "reply")
+
+    def test_plain_text_untouched(self):
+        self.assertEqual(strip_think_text("no tags here"), "no tags here")
+        self.assertEqual(strip_think_text(""), "")
+
+
+# ---------------------------------------------------------------------------
 # Route integration
 # ---------------------------------------------------------------------------
 
@@ -344,6 +470,169 @@ class TestRatingRoutes(AioHTTPTestCase):
             "GET", "/api/ratings?dataset=../evil")
         self.assertEqual(resp.status, 400)
 
+    async def test_rate_bulk_saves_all_completions(self):
+        # Review-flow "Save all": several candidates, one prompt, all on
+        # the rejected side, carrying the source row's chosen column.
+        resp = await self.client.request("POST", "/api/rate", json={
+            "dataset": "t", "prompt": PROMPT,
+            "bulk": {
+                "completions": [{"node_id": "n1", "content": "bad 1"},
+                                {"node_id": "n2", "content": "bad 2"}],
+                "target": "rejected",
+                "gen_system": "elicit bad",
+                "source_row": {"chosen": "gold", "id": "src-1"},
+            },
+        })
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(len(data["dpo"]), 2)
+        rows = [json.loads(l) for l in
+                (Path(self.tmpdir) / "t.dpo.jsonl").read_text().splitlines()]
+        self.assertEqual([r["rejected"] for r in rows], ["bad 1", "bad 2"])
+        self.assertTrue(all(r["chosen"] == "gold" for r in rows))
+        self.assertTrue(all(r["source_row_id"] == "src-1" for r in rows))
+        self.assertTrue(all(r["rejected_system"] == "elicit bad" for r in rows))
+
+    async def test_rate_bulk_rejects_bad_input(self):
+        cases = [
+            {"dataset": "t", "prompt": PROMPT,      # empty completions
+             "bulk": {"completions": [], "target": "rejected"}},
+            {"dataset": "t", "prompt": PROMPT,      # bad target
+             "bulk": {"completions": [{"node_id": None, "content": "x"}],
+                      "target": "best"}},
+            {"dataset": "t", "prompt": PROMPT,      # non-string content
+             "bulk": {"completions": [{"node_id": None, "content": 7}],
+                      "target": "chosen"}},
+        ]
+        for body in cases:
+            resp = await self.client.request("POST", "/api/rate", json=body)
+            self.assertEqual(resp.status, 400, body)
+
+
+class TestBulkRunRoute(AioHTTPTestCase):
+    """The unattended bulk runner: /api/ratings/bulk streams SSE progress
+    while writing each finished completion to the dataset."""
+
+    async def get_application(self):
+        self.engine = make_test_engine()
+        self.engine.settings = MagicMock()
+        self.engine.settings.system_prompt = "Be terse."
+        self.tmpdir = tempfile.mkdtemp()
+        self._cfg_patch = patch(
+            "ezexl3.chat.server._load_config",
+            lambda: {"ratings_dir": self.tmpdir},
+        )
+        self._cfg_patch.start()
+        self.addCleanup(self._cfg_patch.stop)
+        return create_app(self.engine)
+
+    def _arm_engine(self, n):
+        # is_loaded reads self.generator; generate_bulk is stubbed with a
+        # deterministic async generator on the instance.
+        self.engine.generator = MagicMock()
+
+        async def fake_bulk(prompts, n=n, system_prompt=None):
+            for i in range(len(prompts)):
+                for j in range(n):
+                    yield {"type": "row_done", "item": i, "cand": j,
+                           "text": f"<think>hmm</think>reply {i}-{j}",
+                           "eos_reason": "stop_string"}
+            yield {"type": "progress", "done": len(prompts) * n,
+                   "total": len(prompts) * n, "new_tokens": 8,
+                   "elapsed": 1.0, "tps": 8.0}
+
+        self.engine.generate_bulk = fake_bulk
+
+    @staticmethod
+    def _events(sse_text):
+        out = []
+        for line in sse_text.splitlines():
+            if line.startswith("data: ") and line != "data: [DONE]":
+                out.append(json.loads(line[6:]))
+        return out
+
+    async def test_bulk_run_writes_rows_and_streams_progress(self):
+        self._arm_engine(n=2)
+        resp = await self.client.request("POST", "/api/ratings/bulk", json={
+            "dataset": "t",
+            "rows": [{"prompt": "Q1", "chosen": "gold1", "id": "r1"},
+                     {"prompt": "Q2"}],
+            "n": 2,
+            "system_prompt": "elicit bad",
+            "target": "rejected",
+            "carry": True,
+            "strip_think": True,
+        })
+        self.assertEqual(resp.status, 200)
+        events = self._events(await resp.text())
+
+        done = [e for e in events if e["type"] == "bulk_done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["rows_written"], 4)
+        self.assertEqual(done[0]["items_done"], 2)
+        self.assertTrue(any(e["type"] == "saved" for e in events))
+
+        rows = [json.loads(l) for l in
+                (Path(self.tmpdir) / "t.dpo.jsonl").read_text().splitlines()]
+        self.assertEqual(len(rows), 4)
+        # Prompt column: main system prompt + the row's user turn — never
+        # the generation prompt.
+        self.assertEqual(rows[0]["prompt"], [
+            {"role": "system", "content": "Be terse."},
+            {"role": "user", "content": "Q1"},
+        ])
+        # strip_think removed the thought block server-side
+        self.assertEqual(rows[0]["rejected"], "reply 0-0")
+        # carry=True: Q1's rows hold the source chosen; Q2's are half-pairs
+        q1 = [r for r in rows if r["source_row_id"] == "r1"]
+        q2 = [r for r in rows if r["source_row_id"] is None]
+        self.assertEqual(len(q1), 2)
+        self.assertTrue(all(r["chosen"] == "gold1" for r in q1))
+        self.assertTrue(all(r["chosen"] == "" for r in q2))
+        self.assertTrue(all(r["rejected_system"] == "elicit bad" for r in rows))
+        self.assertTrue(all(r["source"] == "bulk" for r in rows))
+
+    async def test_bulk_run_without_carry_keeps_id_only(self):
+        self._arm_engine(n=1)
+        resp = await self.client.request("POST", "/api/ratings/bulk", json={
+            "dataset": "t",
+            "rows": [{"prompt": "Q1", "chosen": "gold1", "id": "r1"}],
+            "n": 1, "target": "rejected", "carry": False,
+        })
+        self.assertEqual(resp.status, 200)
+        await resp.text()
+        row = json.loads((Path(self.tmpdir) / "t.dpo.jsonl").read_text())
+        self.assertEqual(row["chosen"], "")            # column not carried
+        self.assertEqual(row["source_row_id"], "r1")   # id still rides along
+
+    async def test_bulk_run_validation(self):
+        self._arm_engine(n=1)
+        cases = [
+            {"dataset": "../evil", "rows": [{"prompt": "q"}],
+             "n": 1, "target": "rejected"},
+            {"dataset": "t", "rows": [], "n": 1, "target": "rejected"},
+            {"dataset": "t", "rows": [{"prompt": "  "}],
+             "n": 1, "target": "rejected"},
+            {"dataset": "t", "rows": [{"prompt": "q"}],
+             "n": 0, "target": "rejected"},
+            {"dataset": "t", "rows": [{"prompt": "q"}],
+             "n": 9, "target": "rejected"},
+            {"dataset": "t", "rows": [{"prompt": "q"}],
+             "n": 1, "target": "best"},
+        ]
+        for body in cases:
+            resp = await self.client.request(
+                "POST", "/api/ratings/bulk", json=body)
+            self.assertEqual(resp.status, 400, body)
+
+    async def test_bulk_run_requires_loaded_model(self):
+        # No _arm_engine: generator stays None
+        resp = await self.client.request("POST", "/api/ratings/bulk", json={
+            "dataset": "t", "rows": [{"prompt": "q"}],
+            "n": 1, "target": "rejected",
+        })
+        self.assertEqual(resp.status, 400)
+
 
 # ---------------------------------------------------------------------------
 # UI wiring
@@ -399,6 +688,28 @@ class TestUiWiring(unittest.TestCase):
         # Duels pass the per-candidate generation prompts to /api/chat
         self.assertIn("duelSystemPrompts", js)
         self.assertIn("system_prompts", js)
+
+    def test_chat_ui_has_bulk_controls(self):
+        html = (REPO_ROOT / "ezexl3/chat/static/index.html").read_text()
+        for el_id in ("ratings-queue-mode", "ratings-bulk-target",
+                      "ratings-bulk-carry", "ratings-queue-review"):
+            self.assertIn(f'id="{el_id}"', html)
+        # Bulk allows a single candidate per prompt
+        self.assertIn('id="ratings-batch" min="1"', html)
+
+    def test_ratings_js_defines_bulk_api(self):
+        js = (REPO_ROOT / "ezexl3/chat/static/js/ratings.js").read_text()
+        for name in ("parseQueueRows", "queueRowFromEntry", "saveAllBulk",
+                     "startBulkRun", "bulkQueueActive", "bulkCount",
+                     "bulkGenSystem"):
+            self.assertIn(name, js)
+        # The unattended runner hits the server-side endpoint
+        self.assertIn("/api/ratings/bulk", js)
+
+    def test_render_js_wires_bulk_save_all(self):
+        js = (REPO_ROOT / "ezexl3/chat/static/js/render.js").read_text()
+        self.assertIn("saveAllBulk", js)
+        self.assertIn("pendingDuel.bulk", js)
 
 
 if __name__ == "__main__":
