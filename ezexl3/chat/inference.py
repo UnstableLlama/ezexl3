@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import os
 import time
@@ -139,6 +140,7 @@ class ChatEngine:
         use_mtp: bool = False,
         ngram_min: int = 0,
         batch_slots: int | None = None,
+        cpu_offload: dict | None = None,
     ):
         if sum([bool(draft_model_dir), bool(use_mtp), bool(ngram_min)]) > 1:
             raise ValueError(
@@ -150,6 +152,7 @@ class ChatEngine:
         self._device_ratios = device_ratios
         self._cache_size = cache_size or self.DEFAULT_CACHE_SIZE
         self._cache_quant = cache_quant or self.DEFAULT_CACHE_QUANT
+        self._cpu_offload = dict(cpu_offload or {})
 
         # Populated by load()
         self.model = None
@@ -215,6 +218,7 @@ class ChatEngine:
             self._cache_size,
             self._cache_quant,
             self.batch_slots,
+            self._cpu_offload,
         )
 
         # Recurrent (hybrid linear-attn) models like Qwen3.5 size their
@@ -306,6 +310,7 @@ class ChatEngine:
         cache_size: int | None = None,
         cache_quant: str | None = None,
         batch_slots: int | None = None,
+        cpu_offload: dict | None = None,
     ):
         """Load a model (callable from the UI after startup)."""
         if use_mtp and draft_model_dir:
@@ -328,6 +333,7 @@ class ChatEngine:
         self._cache_size = cache_size or self.DEFAULT_CACHE_SIZE
         self._cache_quant = cache_quant or self.DEFAULT_CACHE_QUANT
         self.batch_slots = int(batch_slots) if batch_slots else self.BATCH_SLOTS
+        self._cpu_offload = dict(cpu_offload or {})
         self.settings = ChatSettings()
         self.load()
 
@@ -429,6 +435,24 @@ class ChatEngine:
                 f"Wrong base model for this draft?"
             )
 
+    def _apply_draft_cpu_offload(self, config, prefix: str):
+        """Set the draft model's MoE CPU-offload budget on its config.
+
+        exllamav3 mirrors this in model_init when --draft_moe_cpu_layers is
+        used, but we load draft models ourselves, so we write infer_params
+        directly. Silently a no-op on builds predating the fields.
+        """
+        layers = int(self._cpu_offload.get("draft_moe_layers") or 0)
+        if layers <= 0:
+            return
+        ip = getattr(config, "infer_params", None)
+        if ip is None or not hasattr(ip, f"{prefix}_offload"):
+            return
+        setattr(ip, f"{prefix}_offload", layers)
+        threads = int(self._cpu_offload.get("draft_moe_threads") or 0)
+        if threads > 0 and hasattr(ip, f"{prefix}_threads"):
+            setattr(ip, f"{prefix}_threads", threads)
+
     def _load_draft_model(self):
         Config = _import_config()
         Model = _import_model()
@@ -447,11 +471,17 @@ class ChatEngine:
                 )
             self.draft_model_dir = self.model_dir
             self.draft_config = self.config
+            # The MTP head shares the target's config, so its expert budget
+            # rides on the draft_* fields (component != "text").
+            self._apply_draft_cpu_offload(self.draft_config, "draft_moe_cpu")
             self.draft_model = Model.from_config(self.draft_config, component="mtp")
             self.draft_model_name = f"{self.model_name} (MTP)"
         else:
             self._check_draft_compat()
             self.draft_config = Config.from_directory(self.draft_model_dir)
+            # A standalone draft model gets its own config, and its own text
+            # component takes the budget from the plain moe_cpu_* fields.
+            self._apply_draft_cpu_offload(self.draft_config, "moe_cpu")
             self.draft_model = Model.from_config(self.draft_config)
         self.draft_cache = Cache(
             self.draft_model,
@@ -994,12 +1024,40 @@ class ChatEngine:
                 k: v.description for k, v in prompt_formats.items()
             },
             "gpus": self.detect_gpus(),
+            "cpu_cores": os.cpu_count() or 0,
+            "cpu_offload": cpu_offload_support(),
         }
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+@functools.lru_cache(maxsize=1)
+def cpu_offload_support() -> dict:
+    """Which CPU-offload knobs the installed exllamav3 exposes.
+
+    MoE expert offload (-mcl/-mclt) and the second-tier CPU KV cache (-ccs)
+    landed in exllamav3 1.3.0. Older builds don't have them, so the chat UI
+    disables the controls rather than silently dropping the setting. The
+    draft-side knobs live on config.infer_params rather than argparse (we
+    load draft models ourselves), but they shipped in the same release, so
+    -mcl is a sound proxy for both.
+    """
+    try:
+        import argparse
+        model_init = _import_model_init()
+        parser = argparse.ArgumentParser()
+        model_init.add_args(parser, cache=True)
+        opts = {o for a in parser._actions for o in a.option_strings}
+    except Exception:
+        return {"moe": False, "moe_threads": False, "cache": False}
+    return {
+        "moe": "-mcl" in opts,
+        "moe_threads": "-mclt" in opts,
+        "cache": "-ccs" in opts,
+    }
+
 
 def _build_model_args(
     model_dir: str,
@@ -1008,6 +1066,7 @@ def _build_model_args(
     cache_size: int | None,
     cache_quant: str | None,
     batch_slots: int | None = None,
+    cpu_offload: dict | None = None,
 ) -> object:
     """
     Build a namespace object mimicking the argparse args that
@@ -1038,6 +1097,22 @@ def _build_model_args(
     slots = int(batch_slots) if batch_slots else ChatEngine.BATCH_SLOTS
     if any("-ambs" in a.option_strings for a in parser._actions):
         argv += ["-ambs", str(max(1, slots))]
+
+    # CPU offload (exllamav3 >= 1.3.0). Each knob is gated on the running
+    # build actually exposing it, so a stale exllamav3 loads as before
+    # instead of dying in parse_args. The draft-side knobs aren't part of
+    # add_args(cache=True) — those are applied in _load_draft_model().
+    off = cpu_offload or {}
+    opts = {o for a in parser._actions for o in a.option_strings}
+    moe_layers = int(off.get("moe_layers") or 0)
+    if moe_layers > 0 and "-mcl" in opts:
+        argv += ["-mcl", str(moe_layers)]
+        moe_threads = int(off.get("moe_threads") or 0)
+        if moe_threads > 0 and "-mclt" in opts:
+            argv += ["-mclt", str(moe_threads)]
+    cache_gb = float(off.get("cache_gb") or 0)
+    if cache_gb > 0 and "-ccs" in opts:
+        argv += ["-ccs", str(cache_gb)]
 
     args = parser.parse_args(argv)
     # exllamav3 dev reads args.mtp in init() even when draft model args

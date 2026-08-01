@@ -90,6 +90,8 @@ async function initModelPanel(status) {
     updateLoadDraftInputs();
   });
   updateLoadDraftInputs();
+  document.getElementById('cpu-offload-toggle').onclick = toggleCpuOffloadPanel;
+  await initCpuOffload();
 
   if (status.loaded) {
     setModelPanelLoaded(status.model_name);
@@ -113,6 +115,80 @@ function updateLoadDraftInputs() {
   const ngram = document.getElementById('use-ngram-checkbox').checked;
   document.getElementById('draft-model-dir-input').disabled = mtp || ngram;
   document.getElementById('use-ngram-min').disabled = !ngram;
+}
+
+// ── CPU offload ─────────────────────────────────────────────────
+
+// id -> key in the cpu_offload block sent to /api/model/load.
+const CPU_OFFLOAD_FIELDS = {
+  'cpu-moe-layers': 'moe_layers',
+  'cpu-moe-threads': 'moe_threads',
+  'cpu-cache-gb': 'cache_gb',
+  'cpu-draft-moe-layers': 'draft_moe_layers',
+  'cpu-draft-moe-threads': 'draft_moe_threads',
+};
+
+function toggleCpuOffloadPanel() {
+  const body = document.getElementById('cpu-offload-body');
+  const chevron = document.querySelector('#cpu-offload-toggle .chevron');
+  const collapsed = body.style.display === 'none';
+  body.style.display = collapsed ? '' : 'none';
+  chevron.textContent = collapsed ? '▲' : '▼';
+}
+
+// Restore saved values and grey the panel out if the running exllamav3
+// predates CPU offload — better than accepting numbers we'd silently drop.
+async function initCpuOffload() {
+  let support = {};
+  try {
+    const res = await fetch('/api/gpus', { cache: 'no-store' });
+    const data = await res.json();
+    support = data.cpu_offload || {};
+    const cores = data.cpu_cores || 0;
+    if (cores) {
+      document.getElementById('cpu-moe-threads-hint').textContent =
+        `0 = auto (half of ${cores} cores).`;
+    }
+  } catch (_) {}
+
+  try {
+    const cfg = await (await fetch('/api/config')).json();
+    const saved = cfg.cpu_offload || {};
+    for (const [id, key] of Object.entries(CPU_OFFLOAD_FIELDS)) {
+      if (saved[key] != null) document.getElementById(id).value = saved[key];
+    }
+  } catch (_) {}
+
+  const supported = !!(support.moe || support.cache);
+  document.getElementById('cpu-offload-unsupported').style.display =
+    supported ? 'none' : '';
+  document.getElementById('cpu-offload-body').classList.toggle('disabled', !supported);
+  for (const id of Object.keys(CPU_OFFLOAD_FIELDS)) {
+    document.getElementById(id).disabled = !supported;
+  }
+  // The cache knob shipped alongside the MoE knobs, but gate it separately
+  // in case a build ever carries only one of them.
+  if (supported && !support.cache) document.getElementById('cpu-cache-gb').disabled = true;
+  if (supported && !support.moe) {
+    for (const id of ['cpu-moe-layers', 'cpu-moe-threads',
+                      'cpu-draft-moe-layers', 'cpu-draft-moe-threads']) {
+      document.getElementById(id).disabled = true;
+    }
+  }
+
+  // Expand automatically when something is actually configured, so an
+  // active offload setting isn't hidden behind a collapsed header.
+  if (Object.values(getCpuOffload()).some(v => v > 0)) toggleCpuOffloadPanel();
+}
+
+function getCpuOffload() {
+  const out = {};
+  for (const [id, key] of Object.entries(CPU_OFFLOAD_FIELDS)) {
+    const el = document.getElementById(id);
+    const val = el && !el.disabled ? parseFloat(el.value) : 0;
+    out[key] = Number.isFinite(val) && val > 0 ? val : 0;
+  }
+  return out;
 }
 
 // ── Panel toggle ────────────────────────────────────────────────
@@ -316,6 +392,7 @@ async function loadModel() {
   const useNgram = document.getElementById('use-ngram-checkbox')?.checked || false;
   const ngramMin = useNgram
     ? (parseInt(document.getElementById('use-ngram-min')?.value) || 3) : 0;
+  const cpuOffload = getCpuOffload();
 
   try {
     const res = await fetch('/api/model/load', {
@@ -332,6 +409,7 @@ async function loadModel() {
         device_ratios: gpuConfig.device_ratios,
         cache_size: cacheSize,
         cache_quant: cacheQuant,
+        cpu_offload: cpuOffload,
       }),
     });
     const data = await res.json();
@@ -347,6 +425,7 @@ async function loadModel() {
       syncLoraState(data.status);
       showDraftPanel(true);
       syncDraftState(data.status);
+      saveCpuOffload(cpuOffload);
     } else {
       loadingEl.textContent = 'Error: ' + (data.error || 'Unknown error');
       loadBtn.disabled = !browseIsModel;
@@ -355,6 +434,14 @@ async function loadModel() {
     loadingEl.textContent = 'Error: ' + e.message;
     loadBtn.disabled = !browseIsModel;
   }
+}
+
+function saveCpuOffload(cpuOffload) {
+  fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cpu_offload: cpuOffload }),
+  }).catch(() => {});
 }
 
 function saveModelDir(dir) {

@@ -70,6 +70,46 @@
         </div>
       </div>
 
+      <div id="cpu-offload-toggle" class="subsection-header">
+        <span>CPU Offload</span>
+        <span class="chevron">&#9660;</span>
+      </div>
+      <div id="cpu-offload-body" class="subsection-body" style="display:none">
+        <div id="cpu-offload-unsupported" class="sb-hint" style="display:none">
+          This exllamav3 build has no CPU-offload support &mdash; needs 1.3.0 or newer.
+        </div>
+        <label class="sb-label">MoE Expert Layers on CPU</label>
+        <input type="number" id="cpu-moe-layers" value="0" min="0" step="1"
+               title="Run the routed experts of the first N MoE layers on the CPU, with expert weights in system RAM. 0 disables.">
+        <div class="sb-hint">
+          Trades speed for VRAM on block-sparse MoE models. Layer-split only
+          (not tensor-parallel); layers without mul1-codebook experts stay on GPU.
+        </div>
+
+        <label class="sb-label" style="margin-top:8px">Worker Threads</label>
+        <input type="number" id="cpu-moe-threads" value="0" min="0" step="1"
+               title="Threads for CPU expert compute. 0 = exllamav3 default (half the CPU cores).">
+        <div class="sb-hint" id="cpu-moe-threads-hint">0 = auto (half the CPU cores).</div>
+
+        <label class="sb-label" style="margin-top:8px">CPU KV Cache (GB)</label>
+        <input type="number" id="cpu-cache-gb" value="0" min="0" step="0.5"
+               title="Second-tier KV cache in system RAM. 0 disables.">
+        <div class="sb-hint">
+          Spills cache pages to system RAM instead of evicting them &mdash; longer
+          context and better reuse across branches. Independent of expert offload.
+        </div>
+
+        <label class="sb-label" style="margin-top:8px">Draft Model MoE Layers on CPU</label>
+        <input type="number" id="cpu-draft-moe-layers" value="0" min="0" step="1"
+               title="Same as MoE expert offload, but for the draft model or MTP head. 0 disables.">
+        <input type="number" id="cpu-draft-moe-threads" value="0" min="0" step="1"
+               style="margin-top:4px" title="Worker threads for the draft model's CPU experts. 0 = auto.">
+        <div class="sb-hint">
+          Layers, then threads. Only matters when the draft model (or MTP head)
+          is itself a MoE.
+        </div>
+      </div>
+
       <div class="model-actions">
         <button id="load-btn" class="sb-btn" disabled>Load</button>
         <button id="unload-btn" class="sb-btn danger" disabled>Unload</button>

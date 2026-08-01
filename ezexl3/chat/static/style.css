@@ -218,6 +218,27 @@ body { display: flex; overflow: hidden; }
   display: flex; flex-direction: column; gap: 8px;
 }
 
+/* Collapsible group nested inside a section body (e.g. CPU offload) */
+.subsection-header {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 4px; padding: 6px 8px; cursor: pointer;
+  background: var(--bg-primary);
+  border: 1px solid var(--border); border-radius: 4px;
+  user-select: none;
+}
+.subsection-header span:first-child {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--text-muted);
+}
+.subsection-header .chevron {
+  margin-left: auto; font-size: 9px; color: var(--text-dim);
+}
+.subsection-body {
+  padding: 8px 8px 4px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.subsection-body.disabled { opacity: .5; }
+
 /* File browser */
 .path-input-wrap {
   display: flex; gap: 6px;

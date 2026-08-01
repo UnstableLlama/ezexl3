@@ -13,7 +13,7 @@ from pathlib import Path
 
 from aiohttp import web
 
-from .inference import ChatEngine, ChatSettings
+from .inference import ChatEngine, ChatSettings, cpu_offload_support
 from .ratings import (
     RatingsStore, default_datasets_dir, strip_think_text, valid_dataset_name,
     validate_prompt,
@@ -196,9 +196,37 @@ async def handle_session_load(request: web.Request) -> web.Response:
 # Model management routes
 # ---------------------------------------------------------------------------
 
+def _parse_cpu_offload(raw) -> dict:
+    """Coerce the load panel's CPU-offload block into clean numbers.
+
+    Anything missing, negative or unparseable becomes 0, which the engine
+    reads as "don't pass the argument at all".
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out = {}
+    for key, cast in (
+        ("moe_layers", int), ("moe_threads", int),
+        ("draft_moe_layers", int), ("draft_moe_threads", int),
+        ("cache_gb", float),
+    ):
+        try:
+            val = cast(raw.get(key) or 0)
+        except (TypeError, ValueError):
+            val = 0
+        out[key] = max(val, 0)
+    return out
+
+
 async def handle_gpus(request: web.Request) -> web.Response:
     gpus = ChatEngine.detect_gpus()
-    return web.json_response({"gpus": gpus})
+    return web.json_response({
+        "gpus": gpus,
+        "cpu_cores": os.cpu_count() or 0,
+        # Which CPU-offload knobs this exllamav3 build supports, so the load
+        # panel can disable controls it can't honor.
+        "cpu_offload": cpu_offload_support(),
+    })
 
 
 async def handle_browse(request: web.Request) -> web.Response:
@@ -360,6 +388,7 @@ async def handle_model_load(request: web.Request) -> web.Response:
             cache_size=data.get("cache_size"),
             cache_quant=data.get("cache_quant"),
             batch_slots=batch_slots,
+            cpu_offload=_parse_cpu_offload(data.get("cpu_offload")),
         )
         return web.json_response({
             "ok": True,
@@ -497,6 +526,7 @@ async def handle_draft_load(request: web.Request) -> web.Response:
                 cache_size=engine._cache_size,
                 cache_quant=engine._cache_quant,
                 batch_slots=engine.batch_slots,
+                cpu_offload=dict(engine._cpu_offload),
             )
             engine.settings = saved_settings
             reloaded = True
