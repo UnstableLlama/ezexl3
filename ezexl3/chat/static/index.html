@@ -78,6 +78,7 @@
         <div id="cpu-offload-unsupported" class="sb-hint" style="display:none">
           This exllamav3 build has no CPU-offload support &mdash; needs 1.3.0 or newer.
         </div>
+        <div id="cpu-offload-ineligible" class="sb-hint warn" style="display:none"></div>
         <label class="sb-label">MoE Expert Layers on CPU</label>
         <input type="number" id="cpu-moe-layers" value="0" min="0" step="1"
                title="Run the routed experts of the first N MoE layers on the CPU, with expert weights in system RAM. 0 disables.">

@@ -300,6 +300,32 @@ function renderBrowserEntries(data) {
   } else {
     indicator.style.display = 'none';
   }
+  updateOffloadEligibility(data.is_model ? data.moe_offload : null);
+}
+
+// exllamav3 only offloads mul1-codebook experts; anything else falls back to
+// the GPU with a note on the server console, which is indistinguishable from
+// the setting being ignored. Say so next to the control instead.
+function updateOffloadEligibility(info) {
+  const el = document.getElementById('cpu-offload-ineligible');
+  if (!el) return;
+  if (!info || !info.moe) {
+    // Not a MoE model (or unknown): the expert knobs simply don't apply, and
+    // the CPU KV cache still does, so this isn't worth a warning.
+    el.style.display = 'none';
+    return;
+  }
+  if (info.mul1) {
+    el.style.display = '';
+    el.classList.remove('warn');
+    el.textContent = '✓ MoE experts are mul1 — eligible for CPU offload.';
+  } else {
+    el.style.display = '';
+    el.classList.add('warn');
+    el.textContent = 'This model’s experts are not mul1-codebook, so expert '
+      + 'offload will be skipped and the layers stay on GPU. The CPU KV cache '
+      + 'still works.';
+  }
 }
 
 async function pickDirectoryNative() {

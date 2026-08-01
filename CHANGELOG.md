@@ -7,6 +7,20 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **chat: CPU offload controls** (load panel → collapsible *CPU Offload*):
+  exposes exllamav3 1.3.0's MoE expert offload (`-mcl`/`-mclt`), the
+  second-tier CPU KV cache (`-ccs`), and the draft-model/MTP equivalents.
+  Expert weights live in system RAM in a spawned worker process, trading
+  speed for VRAM so a model larger than total VRAM can load at all.
+  Verified end-to-end: Laguna-S-2.1 (59.8 GB) loaded on 48 GB of VRAM with
+  24 of 48 layers offloaded — 30.8 GB VRAM + 29.4 GB RAM, generating at
+  ~1.8 tok/s on 8 cores. Each knob is gated on the running exllamav3
+  actually exposing it, so older builds load exactly as before and the
+  controls grey out with an explanation. Because exllamav3 only offloads
+  **mul1**-codebook experts (others silently fall back to GPU), the panel
+  reads the selected model's safetensors index and says up front whether
+  its experts are eligible. Settings persist in `ui.json`. Note: MoE
+  offload is layer-split only and cannot combine with tensor-parallel.
 - **chat: Off capture mode (new default)**: the top-bar preference-capture
   toggle gains an Off position for normal chat — no rating controls, no
   duels, nothing written. Unknown or unset persisted `ratings_mode` values

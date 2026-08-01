@@ -268,7 +268,31 @@ async def handle_browse(request: web.Request) -> web.Response:
         "parent": parent,
         "entries": entries,
         "is_model": is_model,
+        "moe_offload": _moe_offload_eligible(browse_path) if is_model else None,
     })
+
+
+def _moe_offload_eligible(model_dir: Path) -> dict:
+    """Can this model's experts actually be offloaded to the CPU?
+
+    exllamav3 only offloads mul1-codebook experts — everything else silently
+    falls back to the GPU with a note on the server console, which looks
+    exactly like the setting being ignored. Read the safetensors index
+    (cheap, no weights loaded) so the load panel can say so up front.
+
+    Returns {"moe": bool, "mul1": bool}; "moe" false means the control is
+    irrelevant rather than broken.
+    """
+    try:
+        index = model_dir / "model.safetensors.index.json"
+        if not index.is_file():
+            return {"moe": False, "mul1": False}
+        keys = json.loads(index.read_text("utf-8")).get("weight_map", {}).keys()
+        moe = any("expert" in k.lower() for k in keys)
+        mul1 = any(k.endswith(".mul1") for k in keys)
+        return {"moe": moe, "mul1": mul1}
+    except Exception:
+        return {"moe": False, "mul1": False}
 
 
 async def handle_pick_directory(request: web.Request) -> web.Response:

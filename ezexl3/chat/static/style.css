@@ -238,6 +238,7 @@ body { display: flex; overflow: hidden; }
   display: flex; flex-direction: column; gap: 4px;
 }
 .subsection-body.disabled { opacity: .5; }
+.sb-hint.warn { color: #fbbf24; }
 
 /* File browser */
 .path-input-wrap {
