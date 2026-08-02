@@ -7,6 +7,32 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **chat: Laguna prompt format** (`laguna`, auto-detected from the model
+  name): Poolside's Laguna-S-2.1 wire format —
+  `<system>…</system>\n<user>…</user>\n<assistant>…</assistant>\n`, stopping
+  on `</assistant>`. The load-bearing detail is that *every* assistant turn
+  opens with a think block — an open `<think>` when thinking is on, a bare
+  `</think>` when off — and the no-think render drops reasoning spans from
+  history. Note the format emits no BOS and sets `add_bos` False even though
+  the template opens with `〈|EOS|〉`: this tokenizer's `TemplateProcessing`
+  post-processor prepends that token on every encode, so writing it here as
+  well would tokenize to `[2, 2]`. Verified against the real model's
+  tokenizer to land exactly one.
+- **chat: `jinja` prompt format**: renders through the loaded model's own
+  chat template instead of a hardcoded format — the same file an inference
+  server applies. Resolved the way HF transformers does:
+  `chat_template.jinja`, then `chat_template.json`, then the
+  `chat_template` key of `tokenizer_config.json` (named-template lists
+  supported). Stored replies are split back into `reasoning_content` and
+  `content` at `</think>` so reasoning templates render history correctly,
+  and `enable_thinking` follows the Think toggle. The renderer supports
+  HF's `{% generation %}` tag, which plain jinja2 rejects outright and
+  which Laguna's template uses. A leading BOS written by the template is
+  dropped when the tokenizer is going to prepend one anyway (detected by
+  probing, not assumed) — otherwise Llama 3, Gemma, Mistral and Laguna
+  would all get a doubled BOS from render-then-encode. Opt-in only:
+  auto-detect never selects it, so existing models keep their hardcoded
+  format unless you explicitly pick `jinja`.
 - **chat: CPU offload controls** (load panel → collapsible *CPU Offload*):
   exposes exllamav3 1.3.0's MoE expert offload (`-mcl`/`-mclt`), the
   second-tier CPU KV cache (`-ccs`), and the draft-model/MTP equivalents.

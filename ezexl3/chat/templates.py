@@ -11,6 +11,10 @@
 class PromptFormat:
     description = ""
 
+    # True for formats that can't render anything until set_special() has
+    # handed them the loaded model's directory (see PromptFormat_jinja).
+    requires_model_dir = False
+
     def __init__(self, user_name, bot_name):
         self.user_name = user_name
         self.bot_name = bot_name
@@ -882,6 +886,293 @@ class PromptFormat_gptoss(PromptFormat):
         return None, None
 
 
+class PromptFormat_laguna(PromptFormat):
+    description = "Laguna (Poolside), reasoning-aware"
+
+    def default_system_prompt(self, think):
+        return (
+            "You are a helpful, conversationally-fluent assistant made by "
+            "Poolside. You are here to be helpful to users through natural "
+            "language conversations."
+        )
+
+    def format(self, system_prompt, messages, think):
+        # The template opens with 〈|EOS|〉 (which doubles as BOS), but this
+        # tokenizer's post-processor already prepends it on every encode —
+        # emitting it here too would produce [2, 2]. Hence no literal BOS
+        # and add_bos() False: exactly one lands in the token stream.
+        context = ""
+        if system_prompt and system_prompt.strip():
+            context += f"<system>{system_prompt.rstrip()}</system>\n"
+        for u, a in messages:
+            context += f"<user>{u}</user>\n"
+            context += "<assistant>"
+            if a is not None:
+                # Every assistant turn opens with a think block, even when
+                # empty. Stored replies begin after the prefilled <think>,
+                # so split the reasoning span back out and re-wrap it —
+                # dropped entirely when thinking is off, which is what the
+                # template does.
+                msg = _split_reasoning(a)
+                if think:
+                    context += f"<think>{msg.get('reasoning_content', '')}</think>"
+                else:
+                    context += "</think>"
+                context += f"{msg['content']}</assistant>\n"
+            elif not think:
+                # No-think turns open with a closed, empty think block; the
+                # open <think> for think turns is appended by the caller.
+                context += "</think>"
+        return context
+
+    def add_bos(self):
+        return False
+
+    def stop_conditions(self, tokenizer):
+        return [
+            tokenizer.eos_token_id,
+            tokenizer.single_id("</assistant>"),
+            "</assistant>",
+        ]
+
+    def thinktag(self):
+        return "<think>", "</think>"
+
+
+class PromptFormat_jinja(PromptFormat):
+    """Render through the model's own chat template instead of a hardcoded
+    format — the same Jinja file inference servers apply, resolved from the
+    loaded model directory. Opt-in: auto-detect never selects this."""
+
+    description = "Model's own chat_template.jinja"
+    requires_model_dir = True
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.model_dir = None
+        self._render = None
+        self._tokenizer = None
+        self._auto_bos = None
+
+    def set_special(self, spc: dict):
+        self.model_dir = spc.get("model_dir")
+        self._tokenizer = spc.get("tokenizer")
+
+    def _renderer(self):
+        if self._render is None:
+            if not self.model_dir:
+                raise ValueError(
+                    "prompt format 'jinja' needs a loaded model directory to "
+                    "read the chat template from"
+                )
+            self._render = compile_chat_template(
+                load_chat_template(self.model_dir)
+            )
+        return self._render
+
+    def default_system_prompt(self, think):
+        # Empty means "no system message", which lets the template supply
+        # whatever default it was written with.
+        return ""
+
+    def format(self, system_prompt, messages, think):
+        render = self._renderer()
+        msgs = []
+        if system_prompt and system_prompt.strip():
+            msgs.append({"role": "system", "content": system_prompt})
+        for u, a in messages:
+            msgs.append({"role": "user", "content": u})
+            if a is not None:
+                msgs.append(_split_reasoning(a))
+        return self._strip_auto_bos(render(
+            msgs, add_generation_prompt=True, enable_thinking=bool(think)
+        ))
+
+    def _strip_auto_bos(self, text):
+        """Drop a leading BOS the tokenizer is going to add anyway.
+
+        Fast tokenizers carrying a BOS-adding post-processor (Llama 3, Gemma,
+        Mistral, Laguna…) prepend it on every encode, and those models' chat
+        templates *also* write it literally — rendering to text and then
+        encoding would double it. Detected by probing rather than assumed,
+        so tokenizers without such a post-processor are left alone.
+        """
+        tok = self._tokenizer
+        if tok is None:
+            return text
+        bos = getattr(tok, "bos_token", None)
+        bos_id = getattr(tok, "bos_token_id", None)
+        if not bos or bos_id is None or not text.startswith(bos):
+            return text
+        if self._auto_bos is None:
+            probe = tok.encode("x", add_bos=False, encode_special_tokens=True)
+            self._auto_bos = (probe.numel() > 0
+                              and int(probe[0, 0].item()) == bos_id)
+        return text[len(bos):] if self._auto_bos else text
+
+    def add_bos(self):
+        return False
+
+    def stop_conditions(self, tokenizer):
+        # The caller adds config.eos_token_id_list on top of this.
+        return [tokenizer.eos_token_id]
+
+    def thinktag(self):
+        # add_generation_prompt already emits whatever prefill the template
+        # wants (an open <think>, an empty block, nothing at all) — appending
+        # our own would duplicate it.
+        return None, None
+
+
+def _split_reasoning(text):
+    """Turn a stored assistant reply into an OpenAI-shaped message.
+
+    Replies are captured after the think-tag prefill, so a reasoning turn
+    reads ``<reasoning></think><content>``. Templates want those as separate
+    ``reasoning_content`` and ``content`` fields.
+    """
+    reasoning, sep, content = text.partition("</think>")
+    if not sep:
+        return {"role": "assistant", "content": text}
+    return {
+        "role": "assistant",
+        "reasoning_content": reasoning.lstrip("\n"),
+        "content": content.lstrip("\n"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Jinja chat-template loading and rendering
+# ---------------------------------------------------------------------------
+
+def load_chat_template(model_dir, template_file=None, name=None):
+    """Resolve the Jinja chat-template source for a model directory, in the
+    priority order HF transformers uses: an explicit override file wins; then
+    ``chat_template.jinja`` (the single-file convention newer exports use);
+    then ``chat_template.json`` (the multimodal-processor convention); then
+    the ``"chat_template"`` key of ``tokenizer_config.json``. The stored value
+    is either a template string or a list of ``{"name", "template"}`` dicts —
+    ``name`` picks one, default ``"default"``."""
+    import json
+    import os
+
+    if template_file:
+        with open(os.path.expanduser(template_file), encoding="utf-8") as f:
+            return f.read()
+    p = os.path.join(model_dir, "chat_template.jinja")
+    if os.path.exists(p):
+        with open(p, encoding="utf-8") as f:
+            return f.read()
+    for fn in ("chat_template.json", "tokenizer_config.json"):
+        p = os.path.join(model_dir, fn)
+        if not os.path.exists(p):
+            continue
+        with open(p, encoding="utf-8") as f:
+            tpl = json.load(f).get("chat_template")
+        if tpl is None:
+            continue
+        if isinstance(tpl, str):
+            return tpl
+        if isinstance(tpl, list):
+            want = name or "default"
+            by_name = {t.get("name"): t.get("template") for t in tpl
+                       if isinstance(t, dict)}
+            if by_name.get(want):
+                return by_name[want]
+            raise ValueError(
+                f"{p} holds named chat templates "
+                f"({', '.join(sorted(k for k in by_name if k))}) but none "
+                f"called {want!r}"
+            )
+        raise ValueError(
+            f"unrecognized chat_template value in {p}: {type(tpl).__name__}"
+        )
+    raise ValueError(
+        f"No chat template found in {model_dir} (looked for "
+        f"chat_template.jinja, chat_template.json, and the 'chat_template' "
+        f"key of tokenizer_config.json). Pick one of the built-in prompt "
+        f"formats instead."
+    )
+
+
+def compile_chat_template(source):
+    """Compile a template source to ``render(messages,
+    add_generation_prompt=False, **vars) -> str``, in an environment matching
+    what HF apply_chat_template runs templates in: ImmutableSandboxed,
+    trim_blocks/lstrip_blocks, loopcontrols, the ``tojson`` /
+    ``raise_exception`` / ``strftime_now`` helpers, and the ``{% generation %}``
+    tag (an HF extension marking the supervised span — inert at inference, but
+    templates that use it won't even compile without it)."""
+    import datetime
+    import json
+
+    try:
+        import jinja2
+        from jinja2.ext import Extension
+        from jinja2.nodes import CallBlock
+        from jinja2.sandbox import ImmutableSandboxedEnvironment
+    except ImportError as e:
+        raise ValueError(
+            f"the 'jinja' prompt format needs the jinja2 package, which is "
+            f"not importable ({e}). Install it in this venv."
+        )
+
+    class _GenerationExtension(Extension):
+        """``{% generation %}…{% endgeneration %}`` renders its body verbatim.
+
+        HF uses the tag to locate assistant spans for loss masking; there is
+        nothing to mask at inference, so it just passes through.
+        """
+
+        tags = {"generation"}
+
+        def parse(self, parser):
+            lineno = next(parser.stream).lineno
+            body = parser.parse_statements(
+                ("name:endgeneration",), drop_needle=True
+            )
+            node = CallBlock(self.call_method("_passthrough", []), [], [], body)
+            return node.set_lineno(lineno)
+
+        def _passthrough(self, caller):
+            return caller()
+
+    def raise_exception(message):
+        raise jinja2.exceptions.TemplateError(message)
+
+    env = ImmutableSandboxedEnvironment(
+        trim_blocks=True, lstrip_blocks=True,
+        extensions=["jinja2.ext.loopcontrols", _GenerationExtension])
+    env.filters["tojson"] = (
+        lambda x, ensure_ascii=False, indent=None, separators=None,
+        sort_keys=False: json.dumps(x, ensure_ascii=ensure_ascii,
+                                    indent=indent, separators=separators,
+                                    sort_keys=sort_keys))
+    env.globals["raise_exception"] = raise_exception
+    env.globals["strftime_now"] = (
+        lambda fmt: datetime.datetime.now().strftime(fmt))
+    try:
+        template = env.from_string(source)
+    except jinja2.exceptions.TemplateError as e:
+        raise ValueError(f"Chat template failed to compile: {e}") from e
+
+    def render(messages, add_generation_prompt=False, **kwargs):
+        try:
+            return template.render(
+                messages=messages,
+                add_generation_prompt=add_generation_prompt,
+                **kwargs,
+            )
+        except jinja2.exceptions.TemplateError as e:
+            raise ValueError(f"Chat template failed to render: {e}") from e
+        except (TypeError, AttributeError, KeyError, IndexError) as e:
+            raise ValueError(
+                f"Chat template failed to render ({type(e).__name__}: {e})"
+            ) from e
+
+    return render
+
+
 prompt_formats = {
     "raw": PromptFormat_raw,
     "llama3": PromptFormat_llama3,
@@ -907,6 +1198,8 @@ prompt_formats = {
     "metharme": PromptFormat_metharme,
     "tekken": PromptFormat_tekken,
     "gptoss": PromptFormat_gptoss,
+    "laguna": PromptFormat_laguna,
+    "jinja": PromptFormat_jinja,
 }
 
 
@@ -943,6 +1236,7 @@ _MODE_HINTS = [
     ("gpt-oss", "gptoss"),
     ("gpt_oss", "gptoss"),
     ("gptoss", "gptoss"),
+    ("laguna", "laguna"),
 ]
 
 

@@ -609,6 +609,11 @@ class ChatEngine:
         spc = {}
         if self.settings.think_budget is not None:
             spc["thinking_budget"] = self.settings.think_budget
+        # The 'jinja' format reads the model's own chat template off disk,
+        # and needs the tokenizer to spot a BOS the template writes that
+        # encode() would then add a second time.
+        spc["model_dir"] = self.model_dir
+        spc["tokenizer"] = self.tokenizer
         pf.set_special(spc)
         return pf
 
