@@ -939,6 +939,87 @@ class PromptFormat_laguna(PromptFormat):
         return "<think>", "</think>"
 
 
+class PromptFormat_kimi(PromptFormat):
+    description = "Moonshot ChatML variant (Kimi K2, Moonlight)"
+
+    def default_system_prompt(self, think):
+        return "You are a helpful AI assistant."
+
+    def format(self, system_prompt, messages, think):
+        context = ""
+        if system_prompt:
+            context += f"<|im_system|>system<|im_middle|>{system_prompt}<|im_end|>"
+        for u, a in messages:
+            context += f"<|im_user|>user<|im_middle|>{u}<|im_end|>"
+            context += "<|im_assistant|>assistant<|im_middle|>"
+            if a is not None:
+                context += f"{a}<|im_end|>"
+        return context
+
+    def add_bos(self):
+        return False
+
+    def thinktag(self):
+        return "<think>\n", "</think>"
+
+    def stop_conditions(self, tokenizer):
+        return [
+            tokenizer.eos_token_id,
+            tokenizer.single_id("<|im_end|>"),
+            "<|im_end|>",
+        ]
+
+
+class PromptFormat_ds4(PromptFormat):
+    description = "Deepseek-V4"
+
+    def default_system_prompt(self, think):
+        return "You are a helpful AI assistant."
+
+    def format(self, system_prompt, messages, think):
+        # Note the fullwidth ｜ in the special tokens — the ASCII lookalikes
+        # tokenize as plain text on Deepseek tokenizers.
+        context = ""
+        if system_prompt:
+            context += f"<｜begin▁of▁sentence｜>{system_prompt}"
+        for u, a in messages:
+            context += f"<｜User｜>{u}"
+            context += "<｜Assistant｜>"
+            if a is not None:
+                # Stored replies begin after the prefilled <think>, so split
+                # the reasoning span back out and re-wrap it — replaced by a
+                # closed, empty think block when thinking is off.
+                msg = _split_reasoning(a)
+                if think:
+                    context += f"<think>{msg.get('reasoning_content', '')}</think>"
+                else:
+                    context += "</think>"
+                context += f"{msg['content']}<｜end▁of▁sentence｜>"
+            elif not think:
+                # The open <think> for think turns is appended by the caller.
+                context += "</think>"
+        return context
+
+    def add_bos(self):
+        return False
+
+    def thinktag(self):
+        return "<think>\n", "</think>"
+
+    def stop_conditions(self, tokenizer):
+        return [
+            tokenizer.eos_token_id,
+            tokenizer.single_id("<｜User｜>"),
+            "<｜User｜>",
+        ]
+
+
+class PromptFormat_deepseek(PromptFormat_ds4):
+    # V3.1+ and R1 use the same special tokens and think/no-think prefill
+    # convention as V4, so this only exists as a separately selectable name.
+    description = "Deepseek V3 / R1"
+
+
 class PromptFormat_jinja(PromptFormat):
     """Render through the model's own chat template instead of a hardcoded
     format — the same Jinja file inference servers apply, resolved from the
@@ -1199,6 +1280,9 @@ prompt_formats = {
     "tekken": PromptFormat_tekken,
     "gptoss": PromptFormat_gptoss,
     "laguna": PromptFormat_laguna,
+    "kimi": PromptFormat_kimi,
+    "deepseek": PromptFormat_deepseek,
+    "ds4": PromptFormat_ds4,
     "jinja": PromptFormat_jinja,
 }
 
@@ -1212,6 +1296,14 @@ _MODE_HINTS = [
     ("qwen3.6", "qwen35"),
     ("qwen3.5", "qwen35"),
     ("qwen3-5", "qwen35"),
+    # Before "qwen"/"llama": R1 distills carry those names but use the
+    # Deepseek tokens.
+    ("deepseek-v4", "ds4"),
+    ("deepseek_v4", "ds4"),
+    ("dsv4", "ds4"),
+    ("deepseek", "deepseek"),
+    ("kimi", "kimi"),
+    ("moonlight", "kimi"),
     ("qwen", "chatml"),
     ("llama", "llama3"),
     ("phi", "phi"),
