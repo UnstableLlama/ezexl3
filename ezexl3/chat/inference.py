@@ -402,6 +402,24 @@ class ChatEngine:
         except (OSError, ValueError):
             return {}
 
+    @staticmethod
+    def _dflash_cfg(cfg: dict) -> dict | None:
+        """The DFlash settings of a draft config, flattened, or None when the
+        config isn't a DFlash draft at all.
+
+        The original DFlash release nests these keys under ``dflash_config``;
+        later drafters built on the same architecture (Meta's
+        MuseGlimmerAssistantModel for Muse Glimmer) put them at the top level,
+        so match on the keys DFlashConfig actually requires rather than on
+        the wrapper or the architecture name.
+        """
+        sub = cfg.get("dflash_config")
+        merged = {**cfg, **sub} if isinstance(sub, dict) else cfg
+        if all(k in merged for k in
+               ("mask_token_id", "target_layer_ids", "block_size")):
+            return merged
+        return None
+
     def _draft_len_hint(self, draft_model_dir: str | None = None) -> int:
         """Draft length the recurrent-state history must cover.
 
@@ -410,8 +428,8 @@ class ChatEngine:
         """
         d = draft_model_dir or self.draft_model_dir
         if d:
-            cfg = self._read_json_config(d)
-            if "dflash_config" in cfg and cfg.get("block_size"):
+            cfg = self._dflash_cfg(self._read_json_config(d))
+            if cfg and cfg.get("block_size"):
                 return max(4, int(cfg["block_size"]) - 1)
         return 4
 
@@ -420,8 +438,8 @@ class ChatEngine:
         their hidden size must match the target's. A mismatched pair loads
         cleanly and then dies on the first draft forward with a cryptic
         shape error, so catch it here with a readable message."""
-        dcfg = self._read_json_config(self.draft_model_dir)
-        if "dflash_config" not in dcfg:
+        dcfg = self._dflash_cfg(self._read_json_config(self.draft_model_dir))
+        if dcfg is None:
             return  # regular draft models legitimately differ in size
         tcfg = self._read_json_config(self.model_dir)
         d_hidden = dcfg.get("hidden_size")

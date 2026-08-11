@@ -1020,6 +1020,60 @@ class PromptFormat_deepseek(PromptFormat_ds4):
     description = "Deepseek V3 / R1"
 
 
+class PromptFormat_muse(PromptFormat):
+    description = "Muse Glimmer (Meta)"
+
+    def default_system_prompt(self, think):
+        return "You are a helpful AI assistant."
+
+    def format(self, system_prompt, messages, think):
+        # Harmony-shaped, but a turn is a chain of messages addressed to a
+        # recipient (to=self for reasoning, to=user for the answer) rather
+        # than a chain of named channels.
+        context = "<|begin_of_text|><|start|>system<|message|>"
+        if system_prompt:
+            context += system_prompt.strip() + "\n\n"
+        context += f"Reasoning strength: {'high' if think else 'low'}.\n\n"
+        context += """# Valid recipients: "self", "user".<|eot|>"""
+        for u, a in messages:
+            context += f"<|start|>user<|message|>{u}<|eot|>"
+            context += "<|start|>assistant"
+            if a is not None:
+                if a.startswith("to="):
+                    # Raw recipient chain from a completed turn: reasoning
+                    # addressed to=self, answer to=user, joined by <|eom|>.
+                    # Keep only the final to=user message and drop the
+                    # reasoning from the stored context, like the reference
+                    # template. The closing <|eot|> was consumed as a stop
+                    # condition, so restore it.
+                    tag = "to=user<|message|>"
+                    p = a.rfind(tag)
+                    if p >= 0:
+                        context += f" to=user<|message|>{a[p + len(tag):]}<|eot|>"
+                    else:
+                        # No final message (reasoning truncated?); keep the
+                        # raw chain
+                        context += " " + a + "<|eot|>"
+                else:
+                    context += f" to=user<|message|>{a}<|eot|>"
+        return context
+
+    def add_bos(self):
+        return False
+
+    def thinktag(self):
+        # Recipient chains are structural output, not think tags — the model
+        # opens its own to=self message, so there is no prefill to add.
+        return None, None
+
+    def stop_conditions(self, tokenizer):
+        return [
+            tokenizer.eos_token_id,
+            tokenizer.single_id("<|eot|>"),
+            "<|eot|>",
+        ]
+
+
 class PromptFormat_jinja(PromptFormat):
     """Render through the model's own chat template instead of a hardcoded
     format — the same Jinja file inference servers apply, resolved from the
@@ -1283,6 +1337,7 @@ prompt_formats = {
     "kimi": PromptFormat_kimi,
     "deepseek": PromptFormat_deepseek,
     "ds4": PromptFormat_ds4,
+    "muse": PromptFormat_muse,
     "jinja": PromptFormat_jinja,
 }
 
@@ -1304,6 +1359,9 @@ _MODE_HINTS = [
     ("deepseek", "deepseek"),
     ("kimi", "kimi"),
     ("moonlight", "kimi"),
+    # Before "llama": Meta's repo names prefix these with "meta-llama".
+    ("glimmer", "muse"),
+    ("muse", "muse"),
     ("qwen", "chatml"),
     ("llama", "llama3"),
     ("phi", "phi"),
