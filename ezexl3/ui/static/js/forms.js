@@ -436,7 +436,7 @@ function applyTokenColor(token, flags, paintFlags, pmActive = false) {
 
   token.classList.add("bpw-token-flagged");
 
-  // Separate border-only flags (opt) from stripe flags (hq, hb8)
+  // Separate border-only flags (opt) from stripe flags (hq, sc)
   const hasOpt = flags.has("opt");
   const stripeFlags = [...flags].filter(f => f !== "opt");
 
@@ -457,19 +457,19 @@ function applyTokenColor(token, flags, paintFlags, pmActive = false) {
     if (pf) {
       token.style.color = "#fff";
       // Accessibility: stripe patterns for color-impaired distinction
-      // -hq = horizontal stripes, -hb8 = vertical stripes
+      // -hq = horizontal stripes, -sc = diagonal stripes
       // 1px color, 5px black — thin stripes with breathing room
-      const dir = pf.name === "hq" ? "180deg" : "90deg";
+      const dir = pf.name === "hq" ? "180deg" : pf.name === "sc" ? "45deg" : "90deg";
       token.style.backgroundImage =
         `repeating-linear-gradient(${dir}, ${pf.color} 0px, ${pf.color} 1px, #000 1px, #000 6px)`;
     }
   } else if (stripeFlags.length >= 2) {
-    // Both hq + hb8: teal/cyan with checkerboard (intersection of horizontal + vertical)
+    // Both hq + sc: teal/cyan with cross-hatch (intersection of both stripe directions)
     const c = "#00897b";
     token.style.color = "#fff";
     token.style.backgroundImage =
       `repeating-linear-gradient(180deg, ${c} 0px, ${c} 1px, transparent 1px, transparent 6px), ` +
-      `repeating-linear-gradient(90deg, ${c} 0px, ${c} 1px, transparent 1px, transparent 6px)`;
+      `repeating-linear-gradient(45deg, ${c} 0px, ${c} 1px, transparent 1px, transparent 6px)`;
     token.style.backgroundColor = "#000";
   }
 }
@@ -579,7 +579,7 @@ function collectArgs() {
         if (!csv) continue;
       }
       args.push(field.flag, csv);
-      // Emit per-BPW paint flags (e.g. -hq 4,6 -hb8 8)
+      // Emit per-BPW paint flags (e.g. -hq 4,6 -sc 2.5)
       // and collect any global toggles (e.g. -pm) to append at the end.
       if (field.bpwPaintFlags) {
         const flagState = getBpwFlags(field.name);

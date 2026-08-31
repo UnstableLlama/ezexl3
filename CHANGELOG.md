@@ -7,6 +7,26 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Self-calibrated quants (`-sc`)**: BPWs painted with `-sc` (CLI or the new
+  dashboard paint button) are built through exllamav3's experimental
+  optimization pipeline instead of the uniform allocation: a self-sampled
+  in-domain calibration trace (`sc_trace.py`), per-tensor error anchors from
+  an existing quant (`sc_rfn_probe.py`), shaped-noise sensitivity measurement
+  on the unquantized model (`sc_measure.py`), a per-tensor bitrate recipe per
+  target BPW (`sc_optimize.py`), and conversion with `-rcp`/`-cd`. Works on
+  any BPW, integer or decimal; requires exllamav3 >= 1.4.3 (checked up
+  front). Stages write plain files under `<model>/selfcal/` and resume where
+  they left off. The four `sc_*` scripts (plus `eval/qbench_prompts.py`,
+  which `sc_trace.py` imports) are vendored from upstream since the wheel
+  doesn't ship them.
+- **`-hb`/`--head-bits`**: head bitrate as a real numeric option (1-8) on
+  `repo` and `quantize`, replacing the fixed `-hb 8`-or-default choice. The
+  dashboard's `-hb 8` paint button is now a **Head Bits** number box; the
+  `-hb8` CLI paint flag still works but `-hb` wins when both are given. The
+  value also flows into self-calibrated recipes.
+- **`-vb`/`--vision-bits`**: vision tower bitrate (1-8, or 16 = unquantized)
+  on `repo` and `quantize`, with a matching **Vision Bits** number box in the
+  dashboard.
 - **chat: Laguna prompt format** (`laguna`, auto-detected from the model
   name): Poolside's Laguna-S-2.1 wire format —
   `<system>…</system>\n<user>…</user>\n<assistant>…</assistant>\n`, stopping

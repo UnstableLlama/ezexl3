@@ -108,13 +108,40 @@ ezexl3 upload -m /path/to/base_model
 The dashboard exposes four paint buttons that toggle quantization flags on individual BPW tokens. Click a button, then click a BPW in the parsed-token row to apply it:
 
 - `-hq` — high-quality boost, useful on low BPWs where the head needs the extra precision
-- `-hb 8` — 8-bit head, useful on high BPWs where the rest is small enough to spare the head
+- `-sc` — self-calibrated quants (see below); works on any BPW, integer or decimal
 - `-opt` — opt-in optimized fractional pipeline (only applies to fractional BPWs)
 - `-pm` — global MoE speedup, applies to all BPWs at once
 <p align="center">
   <img src="docs/args2.png" width="45%" />
 </p>
 The same flags work from the CLI via `--quant-args`, but the dashboard is faster for mixing them across BPWs.
+
+Head and vision bitrates are plain numeric options rather than paints:
+
+- `-hb N` / **Head Bits** box — output head layer bitrate, 1-8 (exllamav3 default: 6)
+- `-vb N` / **Vision Bits** box — vision tower bitrate, 1-8, or 16 to store unquantized (vision models only)
+
+(The old `-hb8` paint flag still works from the CLI, but `-hb` takes precedence when both are given.)
+
+### Self-Calibrated Quants (`-sc`)
+BPWs painted with `-sc` are built through exllamav3's experimental optimization pipeline
+(exllamav3 >= 1.4.3 required) instead of the uniform allocation:
+
+1. the model generates its own in-domain calibration trace (using an existing >= 5 bpw quant
+   as the sampler when one is available, otherwise the unquantized model),
+2. an existing integer quant (lowest available) is probed for per-tensor quantization error,
+3. per-tensor sensitivity is measured on the unquantized model with shaped noise injection,
+4. a per-tensor bitrate recipe is compiled for each `-sc` BPW, and
+5. each BPW is converted with the recipe (`-rcp`) and the self-sampled calibration data (`-cd`).
+
+Every stage writes plain files under `<model>/selfcal/` and is skipped on re-runs when its
+output already exists, so interrupted pipelines resume. Sensitivity measurement holds the
+unquantized model plus per-layer Hessians on one GPU, so it needs the most VRAM of any stage.
+
+```bash
+# 2.5 and 3.14 bpw self-calibrated, 4 and 6 bpw standard, 4-bit head everywhere
+ezexl3 repo -m /path/to/base_model -b 2.5,3.14,4,6 -sc 2.5,3.14 -hb 4 -d 0,1
+```
 
 ### Template System
 You can customize the generated README by providing a template name via `--template` or `-t`.

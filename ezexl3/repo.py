@@ -32,6 +32,7 @@ from ezexl3.repo_progress import (
 )
 import ezexl3.repo_measure as repo_measure
 import ezexl3.repo_optimized as repo_optimized
+import ezexl3.repo_selfcal as repo_selfcal
 from ezexl3.repo_subprocess import (
     _run_catbench_subprocess,
     _run_cmd,
@@ -504,13 +505,33 @@ def run_repo(
     hq_bpws: Optional[set] = None,
     hb8_bpws: Optional[set] = None,
     opt_bpws: Optional[set] = None,
+    sc_bpws: Optional[set] = None,
+    head_bits: Optional[int] = None,
 ) -> int:
-    bpw_plan = _plan_repo_bpws(bpws, opt_bpws=opt_bpws)
+    bpw_plan = _plan_repo_bpws(bpws, opt_bpws=opt_bpws, sc_bpws=sc_bpws)
     quant_bpws = bpw_plan["quant_integer_queue"]
     optimized_bpws = bpw_plan["requested_optimizeds"]
+    selfcal_bpws = bpw_plan["requested_selfcal"]
     measure_bpws = bpw_plan["measure_queue"]
 
-    all_requested = set(bpw_plan["requested_integers"] + bpw_plan["requested_optimizeds"])
+    # Fail fast on an exllamav3 that can't do recipe conversion, before any
+    # GPU time is spent on the plain quants.
+    if selfcal_bpws:
+        support_err = repo_selfcal.check_selfcal_support()
+        if support_err:
+            print(f"🔴 {support_err}")
+            return 1
+
+    def _selfcal_forwarded(bpw: str) -> List[str]:
+        return _build_quant_forwarded_for_bpw(
+            quant_args, devices, device_ratios, bpw, hq_bpws, hb8_bpws,
+        )
+
+    all_requested = set(
+        bpw_plan["requested_integers"]
+        + bpw_plan["requested_optimizeds"]
+        + bpw_plan["requested_selfcal"]
+    )
     all_requested.update(_normalize_bpw_str(b) for raw in bpws for b in raw.split(",") if b.strip())
     auto_added = [b for b in quant_bpws if b not in all_requested]
     if auto_added:
@@ -588,6 +609,43 @@ def run_repo(
                 )
                 verify_failures.append(str(bpw))
 
+        # Stage 1.5: self-calibrated quants (trace donor / probe anchor can
+        # reuse the integer quants built above when any were requested)
+        if selfcal_bpws:
+            repo_selfcal.run_selfcal_stage(
+                model_dir=model_dir,
+                sc_bpws=selfcal_bpws,
+                devices=devices,
+                forwarded_for_bpw=_selfcal_forwarded,
+                head_bits=head_bits,
+                write_logs=write_logs,
+            )
+            # Verify each self-calibrated BPW
+            for sc_bpw in selfcal_bpws:
+                rc = run_measure_single_bpw(
+                    model_dir=model_dir,
+                    bpw=str(sc_bpw),
+                    devices=measure_devices,
+                    db_path=db_path,
+                    ppl_rows=ppl_rows,
+                    write_logs=write_logs,
+                    include_base_ppl=(not first_verify_passed and not quant_bpws),
+                )
+                if rc == 0:
+                    first_verify_passed = True
+                else:
+                    if not first_verify_passed:
+                        print(
+                            f"🔴 Verification failed for first (self-calibrated) "
+                            f"BPW {sc_bpw} — halting"
+                        )
+                        return 1
+                    print(
+                        f"⚠️  Verification failed for self-calibrated BPW {sc_bpw} "
+                        f"— continuing (first verify already passed)"
+                    )
+                    verify_failures.append(str(sc_bpw))
+
         # Stage 2: optimized optimize (needs all integer quants done)
         if optimized_bpws:
             _run_optimized_opt_stage(
@@ -663,6 +721,17 @@ def run_repo(
             )
             if rc != 0:
                 return rc
+
+        # Stage 1.5: self-calibrated quants
+        if do_quant and selfcal_bpws:
+            repo_selfcal.run_selfcal_stage(
+                model_dir=os.path.abspath(model_dir),
+                sc_bpws=selfcal_bpws,
+                devices=devices,
+                forwarded_for_bpw=_selfcal_forwarded,
+                head_bits=head_bits,
+                write_logs=write_logs,
+            )
 
         # Stage 2: optimized optimize
         if do_quant and optimized_bpws:

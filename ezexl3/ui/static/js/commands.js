@@ -13,13 +13,15 @@ const COMMANDS = {
       { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "1-8, comma separated, decimals ok (e.g. 2,3,4.5,6)",
         bpwPaintFlags: [
           { name: "hq", flag: "-hq", label: "-hq", color: "#4a90d9", tooltip: "use on low bpws" },
-          { name: "hb8", flag: "-hb8", label: "-hb 8", color: "#43a047", tooltip: "use on high bpws" },
+          { name: "sc", flag: "-sc", label: "-sc", color: "#9b6dd6", tooltip: "self-calibrated quants (any bpw, slow)" },
           { name: "opt", flag: "-opt", label: "-opt", color: "#d94a4a", borderOnly: true, fractionalOnly: true, tooltip: "use on decimal bpws" },
           { name: "pm", flag: "-pm", label: "-pm", color: "#ffffff", isGlobal: true, tooltip: "use on MoEs" },
         ]
       },
       { name: "devices", flag: "-d", type: "csv", default: "0", label: "CUDA Devices", placeholder: "0,1", help: "GPUs used, comma separated (e.g. 0,1)" },
       { name: "device_ratios", flag: "-r", type: "csv", label: "Device Ratios", placeholder: "1,1", help: "VRAM split ratio per device when GPUs are uneven" },
+      { name: "head_bits", flag: "-hb", type: "number", default: "6", label: "Head Bits", help: "Output head layer bitrate, 1-8 (exllamav3 default: 6)", toggleable: true },
+      { name: "vision_bits", flag: "-vb", type: "number", default: "6", label: "Vision Bits", help: "Vision tower bitrate, 1-8, or 16 = unquantized (vision models only)", toggleable: true },
       { name: "template", flag: "-t", type: "template", label: "Template", help: "README template style" },
       { name: "layers", flag: "-l", type: "select", choices: ["1", "2", "3"], default: "2", label: "Optimization Depth", help: "1-3, 3 = longer optimization (2 default)", toggleable: true },
       // Boolean flags
@@ -47,13 +49,15 @@ const COMMANDS = {
       { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "1-8, comma separated, decimals ok (e.g. 2,3,4.5,6)",
         bpwPaintFlags: [
           { name: "hq", flag: "-hq", label: "-hq", color: "#4a90d9", tooltip: "use on low bpws" },
-          { name: "hb8", flag: "-hb8", label: "-hb 8", color: "#43a047", tooltip: "use on high bpws" },
+          { name: "sc", flag: "-sc", label: "-sc", color: "#9b6dd6", tooltip: "self-calibrated quants (any bpw, slow)" },
           { name: "opt", flag: "-opt", label: "-opt", color: "#d94a4a", borderOnly: true, fractionalOnly: true, tooltip: "use on decimal bpws" },
           { name: "pm", flag: "-pm", label: "-pm", color: "#ffffff", isGlobal: true, tooltip: "use on MoEs" },
         ]
       },
       { name: "devices", flag: "-d", type: "csv", default: "0", label: "CUDA Devices", placeholder: "0,1", help: "GPUs used, comma separated (e.g. 0,1)" },
       { name: "device_ratios", flag: "-r", type: "csv", label: "Device Ratios", placeholder: "1,1", help: "VRAM split ratio per device when GPUs are uneven" },
+      { name: "head_bits", flag: "-hb", type: "number", default: "6", label: "Head Bits", help: "Output head layer bitrate, 1-8 (exllamav3 default: 6)", toggleable: true },
+      { name: "vision_bits", flag: "-vb", type: "number", default: "6", label: "Vision Bits", help: "Vision tower bitrate, 1-8, or 16 = unquantized (vision models only)", toggleable: true },
       { name: "out_template", flag: "--out-template", type: "text", default: "{model}/{bpw}", label: "Output Template", help: "Fields: {model}, {model_name}, {bpw}" },
       { name: "w_template", flag: "--w-template", type: "text", default: "{model}/w-{bpw}", label: "Work Dir Template", help: "Fields: {model}, {model_name}, {bpw}" },
       { name: "layers", flag: "-l", type: "select", choices: ["1", "2", "3"], default: "2", label: "Optimization Depth", help: "1-3, 3 = longer optimization (2 default)", toggleable: true },

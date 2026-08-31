@@ -182,6 +182,20 @@ def build_parser() -> argparse.ArgumentParser:
                            help="Use 8-bit head quantization (exllamav3 -hb 8) instead of default 6. "
                                 "Bare flag applies to all BPWs; with args applies to listed BPWs only. "
                                 "Example: -hb8 6,8")
+        p_sub.add_argument("-hb", "--head-bits", type=int, default=None,
+                           help="Head (output layer) bitrate for all BPWs, 1-8 (exllamav3 default: 6). "
+                                "Takes precedence over -hb8 paints. Example: -hb 4")
+        p_sub.add_argument("-vb", "--vision-bits", type=int, default=None,
+                           help="Vision tower bitrate for all BPWs, 1-8, or 16 to store unquantized "
+                                "(default: architecture's default). Requires a recent exllamav3. "
+                                "Example: -vb 8")
+        p_sub.add_argument("-sc", nargs="*", default=None,
+                           help="Build self-calibrated quants (exllamav3 sc_* pipeline): the model "
+                                "generates its own in-domain calibration trace, per-tensor sensitivity "
+                                "is measured on the unquantized model, and each BPW is converted with "
+                                "an optimized per-tensor bitrate recipe. Works on any BPW (integer or "
+                                "decimal); requires exllamav3 >= 1.4.3. Bare flag applies to all BPWs; "
+                                "with args applies to listed BPWs only. Example: -sc 2.5,3.14")
         p_sub.add_argument("-opt", nargs="*", default=None,
                            help="Use optimized quantization pipeline for fractional BPWs. "
                                 "Compares neighboring integer quants to find optimal mix. "
@@ -242,6 +256,16 @@ def build_parser() -> argparse.ArgumentParser:
                         "Bare flag applies to all BPWs; with args applies to listed BPWs only.")
     q.add_argument("-hb8", nargs="*", default=None,
                    help="Use 8-bit head quantization (exllamav3 -hb 8) instead of default 6. "
+                        "Bare flag applies to all BPWs; with args applies to listed BPWs only.")
+    q.add_argument("-hb", "--head-bits", type=int, default=None,
+                   help="Head (output layer) bitrate for all BPWs, 1-8 (exllamav3 default: 6). "
+                        "Takes precedence over -hb8 paints.")
+    q.add_argument("-vb", "--vision-bits", type=int, default=None,
+                   help="Vision tower bitrate for all BPWs, 1-8, or 16 to store unquantized "
+                        "(default: architecture's default). Requires a recent exllamav3.")
+    q.add_argument("-sc", nargs="*", default=None,
+                   help="Build self-calibrated quants (self-sampled trace + per-tensor recipe). "
+                        "Works on any BPW; requires exllamav3 >= 1.4.3. "
                         "Bare flag applies to all BPWs; with args applies to listed BPWs only.")
     q.add_argument("-opt", nargs="*", default=None,
                    help="Use optimized quantization pipeline for fractional BPWs. "
@@ -463,12 +487,38 @@ def main(argv: Optional[List[str]] = None) -> int:
     if getattr(args, "pm", False) and "-pm" not in pt.quant_args:
         pt.quant_args = list(pt.quant_args) + ["-pm"]
 
-    # Build per-BPW flag sets from -hq, -hb8, and -opt
+    # Build per-BPW flag sets from -hq, -hb8, -sc, and -opt
     hq_bpws = _parse_per_bpw_flag(getattr(args, "hq", None), args.bpws)
     hb8_bpws = _parse_per_bpw_flag(getattr(args, "hb8", None), args.bpws)
+    sc_bpws = _parse_per_bpw_flag(getattr(args, "sc", None), args.bpws)
     opt_bpws = _parse_per_bpw_flag(getattr(args, "opt", None), args.bpws)
     # -opt only applies to fractional BPWs; silently drop any integers
     opt_bpws = {b for b in opt_bpws if "." in b}
+
+    conflict = {b for b in sc_bpws if b in opt_bpws}
+    if conflict:
+        raise SystemExit(
+            "BPW(s) painted with both -sc and -opt: "
+            + ", ".join(sorted(conflict, key=float))
+            + ". A BPW is built by one pipeline or the other — pick one."
+        )
+
+    # Global head/vision bitrates ride along as real exllamav3 convert flags
+    # via the quant_args passthrough, so every conversion picks them up.
+    head_bits = getattr(args, "head_bits", None)
+    if head_bits is not None:
+        if not (1 <= head_bits <= 8):
+            raise SystemExit(f"--head-bits must be 1-8, got {head_bits}")
+        if hb8_bpws:
+            print("⚠️  Both -hb and -hb8 given: -hb takes precedence for all BPWs")
+        if "-hb" not in pt.quant_args:
+            pt.quant_args = list(pt.quant_args) + ["-hb", str(head_bits)]
+    vision_bits = getattr(args, "vision_bits", None)
+    if vision_bits is not None:
+        if not (1 <= vision_bits <= 8 or vision_bits == 16):
+            raise SystemExit(f"--vision-bits must be 1-8 or 16, got {vision_bits}")
+        if "-vb" not in pt.quant_args:
+            pt.quant_args = list(pt.quant_args) + ["-vb", str(vision_bits)]
 
     # When a fractional BPW is painted with -opt, the actual quantization
     # happens on its integer neighbors (e.g. 4.5 → quantize 4 and 5, then
@@ -532,6 +582,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     hq_bpws=hq_bpws,
                     hb8_bpws=hb8_bpws,
                     opt_bpws=opt_bpws,
+                    sc_bpws=sc_bpws,
+                    head_bits=head_bits,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
@@ -549,16 +601,31 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     if cmd in ("quant", "quantize"):
-        from ezexl3.repo import _plan_repo_bpws, _run_optimized_opt_stage
+        from ezexl3.repo import (
+            _build_quant_forwarded_for_bpw,
+            _plan_repo_bpws,
+            _run_optimized_opt_stage,
+        )
+        from ezexl3 import repo_selfcal
 
-        bpw_plan = _plan_repo_bpws(args.bpws, opt_bpws=opt_bpws)
+        try:
+            bpw_plan = _plan_repo_bpws(args.bpws, opt_bpws=opt_bpws, sc_bpws=sc_bpws)
+        except ValueError as e:
+            raise SystemExit(str(e))
         quant_bpws = bpw_plan["quant_integer_queue"]
         optimized_bpws = bpw_plan["requested_optimizeds"]
+        selfcal_bpws = bpw_plan["requested_selfcal"]
 
-        if optimized_bpws and args.out_template != "{model}/{bpw}":
-            print("Error: --out-template cannot be customized when using decimal BPWs.")
-            print("The optimized quantization stage requires outputs at {model}/{bpw}.")
+        if (optimized_bpws or selfcal_bpws) and args.out_template != "{model}/{bpw}":
+            print("Error: --out-template cannot be customized when using -opt or -sc BPWs.")
+            print("These pipeline stages require outputs at {model}/{bpw}.")
             return 1
+
+        if selfcal_bpws:
+            support_err = repo_selfcal.check_selfcal_support()
+            if support_err:
+                print(f"Error: {support_err}")
+                return 1
 
         all_requested = set(bpw_plan["requested_integers"] + bpw_plan.get("requested_optimizeds", []))
         # Also exclude standard fractional BPWs (in quant queue but explicitly requested)
@@ -591,6 +658,19 @@ def main(argv: Optional[List[str]] = None) -> int:
                 if rc != 0:
                     failed_models.append(model_dir)
                     continue
+
+                if selfcal_bpws and not args.dry:
+                    repo_selfcal.run_selfcal_stage(
+                        model_dir=os.path.abspath(model_dir),
+                        sc_bpws=selfcal_bpws,
+                        devices=devices_i,
+                        forwarded_for_bpw=lambda b: _build_quant_forwarded_for_bpw(
+                            pt.quant_args, devices_i, device_ratios_str, b,
+                            hq_bpws, hb8_bpws,
+                        ),
+                        head_bits=head_bits,
+                        write_logs=not args.no_logs,
+                    )
 
                 if optimized_bpws and not args.dry:
                     _run_optimized_opt_stage(

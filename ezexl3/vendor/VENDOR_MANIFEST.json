@@ -37,5 +37,25 @@
     "sha256": "d28c5e0d81e9505a2d4fdbb03a8af33d11e7d33865fda3e04bab85df28bdf007",
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/dev/eval/ppl.py",
     "note": "dev-for-v1.0.0: temporary dev pin; revert to master after v1.0.0"
+  },
+  "sc_trace.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/sc_trace.py",
+    "sha256": "5866e8bda4b3b58bed5b2681fe1e0c5244f775202d89b51ff536f234cd2ee8f9"
+  },
+  "sc_rfn_probe.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/sc_rfn_probe.py",
+    "sha256": "008dc10c0ec67e579d618cd9589f34a350d5798eb0541c62d4fde892d27e9ae4"
+  },
+  "sc_measure.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/sc_measure.py",
+    "sha256": "6d9b79c62b7d1099e6ab1b7fa90aeb04a57f5e0c1b924d796e8842ed9306c513"
+  },
+  "sc_optimize.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/sc_optimize.py",
+    "sha256": "9702b68ad7df8dfd9c287f80d811740269a262b831900a356424bc172a5acdfe"
+  },
+  "eval/qbench_prompts.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench_prompts.py",
+    "sha256": "7c6b511f22b22641409d6d67319037e0b7a9d4349f2fb6437f98ba5bc9b1e047"
   }
 }

@@ -52,10 +52,25 @@ def _dedupe_preserve_order(items: List[str]) -> List[str]:
 
 
 def _plan_repo_bpws(
-    bpws: List[str], opt_bpws: Optional[set] = None,
+    bpws: List[str], opt_bpws: Optional[set] = None, sc_bpws: Optional[set] = None,
 ) -> Dict[str, List[str]]:
     ints, fracs = _split_integer_optimized_bpws(bpws)
     opt_bpws = opt_bpws or set()
+    sc_set = {_normalize_bpw_str(b) for b in (sc_bpws or set())}
+
+    conflict = sc_set & {_normalize_bpw_str(b) for b in opt_bpws}
+    if conflict:
+        raise ValueError(
+            "BPW(s) painted with both -sc and -opt: "
+            + ", ".join(sorted(conflict, key=float))
+            + " — a BPW is built by one pipeline or the other, not both"
+        )
+
+    # -sc painted BPWs (integer or fractional) leave the plain quant queue
+    # entirely; they are built by the self-calibration pipeline instead.
+    selfcal_targets = [b for b in _dedupe_preserve_order(ints + fracs) if b in sc_set]
+    ints = [b for b in ints if b not in sc_set]
+    fracs = [b for b in fracs if b not in sc_set]
 
     # Only fractionals painted with -opt need the optimization pipeline;
     # the rest are quantized directly like integer BPWs.
@@ -69,6 +84,16 @@ def _plan_repo_bpws(
         high = math.ceil(frac_val)
         required_neighbors.extend([str(low), str(high)])
 
+    # An -opt target needs its plain integer neighbors at <model>/<bpw>; an
+    # -sc paint on such a neighbor would build a different quant at the same
+    # path. Refuse the ambiguity instead of silently picking one.
+    neighbor_conflict = sc_set & set(required_neighbors)
+    if neighbor_conflict:
+        raise ValueError(
+            "BPW(s) painted with -sc are required as plain integer donors "
+            "for -opt targets: " + ", ".join(sorted(neighbor_conflict, key=float))
+        )
+
     requested_ints = _dedupe_preserve_order(ints)
     requested_fracs = _dedupe_preserve_order(fracs)
     # Quant queue: integers + integer neighbors of -opt targets + standard
@@ -79,18 +104,19 @@ def _plan_repo_bpws(
         _dedupe_preserve_order(requested_ints + standard_fracs + required_neighbors),
         key=float,
     )
-    # Measure queue: everything in the quant queue plus the -opt targets,
-    # also in numeric order. Optimized fracs can be interleaved here
-    # because the measure stage always runs after optimize.py has produced
-    # the corresponding BPW directories.
+    # Measure queue: everything in the quant queue plus the -opt and -sc
+    # targets, also in numeric order. Both can be interleaved here because
+    # the measure stage always runs after their pipelines have produced the
+    # corresponding BPW directories.
     measure_targets = sorted(
-        _dedupe_preserve_order(quant_queue + optimized_fracs),
+        _dedupe_preserve_order(quant_queue + optimized_fracs + selfcal_targets),
         key=float,
     )
 
     return {
         "requested_integers": requested_ints,
         "requested_optimizeds": optimized_fracs,
+        "requested_selfcal": selfcal_targets,
         "quant_integer_queue": quant_queue,
         "measure_queue": measure_targets,
     }
