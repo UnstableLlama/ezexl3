@@ -48,6 +48,8 @@ Supports multi-GPU (`-d 0,1`), configurable sequence length (cache is sized 2x b
 
 Speculative decoding is available through the draft model field (DFlash or any smaller draft model), or via the MTP checkbox for models with a built-in MTP head (Qwen3.5+, requires an exllamav3 build with MTP support) — equivalent to exllamav3's `--mtp` flag.
 
+For PLE models with a hashed n-gram embedding table (e.g. Qwen3.8-Flash-Next), the **N-gram table in RAM** checkbox (CLI: `-ngr`) loads the table fully into system RAM instead of streaming rows from disk per token — tens of GB of RAM in exchange for avoiding per-token disk reads. Equivalent to exllamav3's `-ngr` flag; needs exllamav3 >= 1.4.5.
+
 <p align="center">
   <img src="docs/chat.png" width="65%" />
 </p>
@@ -91,6 +93,11 @@ ezexl3 repo -m /path/to/base_model -b 4.07 -d 0
 
 # Measure only
 ezexl3 measure -m /path/to/base_model -b 2,3,4,5,6 -d 0,1
+
+# Compare quants against the BF16 reference (exllamav3 qbench: cached
+# reference logits, self-noise floor, KLD mean/median/p90 + plots).
+# BPWs auto-detected; results and plots land in <model>/qbench/
+ezexl3 qbench -m /path/to/base_model
 
 # Generate README only (from existing CSV)
 ezexl3 readme -m /path/to/base_model -t fire
@@ -148,6 +155,30 @@ unquantized model plus per-layer Hessians on one GPU, so it needs the most VRAM 
 # 2.5 and 3.14 bpw self-calibrated, 4 and 6 bpw standard, 4-bit head everywhere
 ezexl3 repo -m /path/to/base_model -b 2.5,3.14,4,6 -sc 2.5,3.14 -hb 4 -d 0,1
 ```
+
+### QBench (`ezexl3 qbench`)
+Runs exllamav3's qbench harness (the replacement for `compare_q.py`) against an ezexl3 model
+directory: the BF16 reference's logits are computed once and cached to disk, then every quant
+streams through the same test data against the cache — adding one BPW later only measures that
+BPW. A second reference pass with BF16-rounding noise measures the model's *self-noise floor*:
+the KLD any lossless-equivalent kernel change would show, which contextualizes small
+differences between quants. KLD is reported as mean/median/p90 plus buckets by reference
+confidence (the mean is dominated by tokens where the reference itself is undecided; the
+median and high-confidence buckets isolate actual quantization damage).
+
+```bash
+# Auto-detects <bpw>/ quant subdirs; writes results + plots to <model>/qbench/
+ezexl3 qbench -m /path/to/base_model
+
+# In-domain testset instead of wiki2, chat-template framing, specific BPWs
+ezexl3 qbench -m /path/to/base_model -b 3,4,5 --template chat
+```
+
+The generated `<model>/qbench/project.yml` is reused on later runs (hand-edits survive;
+`--regen` rewrites it), so you can add GGUF entries (`engine: llamacpp`) or HF checkpoints
+(`engine: transformers`) for cross-format comparisons — cached results make each addition
+cheap. Outputs: `qb_results.json` plus PPL/KLD scatter, KLD spread, and per-token KLD
+histogram plots. Requires seaborn and pyyaml (installed with ezexl3) and a recent exllamav3.
 
 ### Template System
 You can customize the generated README by providing a template name via `--template` or `-t`.

@@ -144,6 +144,12 @@ async function initCpuOffload() {
     const res = await fetch('/api/gpus', { cache: 'no-store' });
     const data = await res.json();
     support = data.cpu_offload || {};
+    // -ngr (n-gram table in RAM) shares the same support probe round-trip
+    const ngramRamEl = document.getElementById('ngram-ram-checkbox');
+    if (ngramRamEl && !data.ngram_ram) {
+      ngramRamEl.disabled = true;
+      document.getElementById('ngram-ram-unsupported').style.display = '';
+    }
     const cores = data.cpu_cores || 0;
     if (cores) {
       document.getElementById('cpu-moe-threads-hint').textContent =
@@ -436,6 +442,7 @@ async function loadModel() {
         cache_size: cacheSize,
         cache_quant: cacheQuant,
         cpu_offload: cpuOffload,
+        ngram_ram: document.getElementById('ngram-ram-checkbox')?.checked || false,
       }),
     });
     const data = await res.json();

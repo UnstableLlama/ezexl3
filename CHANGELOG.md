@@ -7,6 +7,29 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`ezexl3 qbench`**: exllamav3's qbench quant-comparison harness (the
+  upstream replacement for `compare_q.py`), vendored (`eval/qbench.py` plus
+  the `qbench/` package) and driven from the ezexl3 directory layout. A
+  project YAML is generated at `<model>/qbench/project.yml` — reference =
+  the base model, one entry per `<bpw>/` quant subdir (auto-detected when
+  `-b` is omitted) — and reused on later runs so hand-edits survive
+  (`--regen` rewrites it; add GGUF/`llamacpp` or HF/`transformers` entries
+  for cross-format comparisons). Reference logits are computed once and
+  cached (`--cache-gb` cap), a BF16-noise pass measures the self-noise
+  floor (`--no-noise-floor` skips it), and KLD comes back as
+  mean/median/p90 + confidence buckets with scatter/spread/histogram plots
+  in `<model>/qbench/`. Options: `--rows`, `--length`, `--dataset`
+  (wiki2/openwebtext), `--template` (none/chat/assistant), `--trace`
+  (in-domain testset from qbench_prompts.py), `--ref-engine`
+  (exllamav3/transformers). New **QBench** form in the dashboard. Adds
+  seaborn + pyyaml as dependencies.
+- **chat: `-ngr`/`--ngram-ram`** (CLI flag and load-panel checkbox): load a
+  PLE model's hashed n-gram embedding table fully into system RAM instead
+  of streaming rows from disk per forward (exllamav3's `-ngr`, needs
+  1.4.5+; e.g. Qwen3.8-Flash-Next). Gated on the installed build actually
+  exposing the flag — the checkbox is disabled with a hint on older builds,
+  and the flag is dropped rather than crashing `parse_args`.
+
 - **`-ngb`/`--ngram-bits` and `-ngf`/`--ngram-file`**: n-gram table controls
   on `repo` and `quantize` for PLE models with hashed n-gram embedding tables
   (e.g. Qwen3.8-Flash-Next). `-ngb` sets bits per weight for the table (1-8,
@@ -22,6 +45,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   MTP layers: attention, shared experts). The default output filename gains
   an `_hq` suffix so plain and `-hq` runs don't collide. Exposed as a
   **High Quality** toggle on the dashboard's MTP form.
+
+### Fixed
+- `ezexl3 readme` without `-b` crashed with a TypeError instead of
+  auto-detecting BPW subdirectories (None was passed to the CSV list
+  normalizer). Auto-detection now actually happens, and `qbench` relies on
+  the same path.
 
 ### Changed
 - **Vendored `convert_mtp.py` re-synced with upstream** (now tracked from

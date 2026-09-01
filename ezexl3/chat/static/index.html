@@ -70,6 +70,14 @@
         </div>
       </div>
 
+      <label class="gpu-auto-label" style="margin-top:8px">
+        <input type="checkbox" id="ngram-ram-checkbox"
+               title="Load a PLE model's hashed n-gram embedding table fully into system RAM (tens of GB) instead of streaming rows from disk per token. Ignored by models without a table."> N-gram table in RAM (PLE models)
+      </label>
+      <div class="sb-hint" id="ngram-ram-unsupported" style="display:none">
+        This exllamav3 build has no n-gram table support &mdash; needs 1.4.5 or newer.
+      </div>
+
       <div id="cpu-offload-toggle" class="subsection-header">
         <span>CPU Offload</span>
         <span class="chevron">&#9660;</span>

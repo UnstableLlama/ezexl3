@@ -295,6 +295,43 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
     q.add_argument("-l", "--layers", type=int, default=2, choices=[1, 2, 3], help="Layers used by optimized comparative measure stage (1-3, default: 2)")
 
+    # --- qbench ---
+    qb = sub.add_parser(
+        "qbench",
+        help="Compare quants against the BF16 reference (vendored exllamav3 qbench: "
+             "cached reference logits, noise floor, KLD median/p90 + plots)",
+    )
+    qb.add_argument("-m", "--models", nargs="+", required=True,
+                    help="One or more base model directories with <bpw>/ quant subdirs")
+    qb.add_argument("-b", "--bpws", nargs="+", default=None,
+                    help="BPWs to include (default: auto-detect quant subdirectories)")
+    qb.add_argument("-d", "--device", type=int, default=0,
+                    help="Single CUDA device index (default: 0)")
+    qb.add_argument("--rows", type=int, default=10,
+                    help="Test rows (default: 10)")
+    qb.add_argument("--length", type=int, default=2048,
+                    help="Tokens per row (default: 2048)")
+    qb.add_argument("--dataset", choices=["wiki2", "openwebtext"], default="wiki2",
+                    help="Test dataset (default: wiki2)")
+    qb.add_argument("--template", choices=["none", "chat", "assistant"], default="none",
+                    help="Apply the model's chat template to test rows "
+                         "(none = raw text, default)")
+    qb.add_argument("--trace", default=None,
+                    help="In-domain test trace JSON from qbench_prompts.py "
+                         "(replaces --dataset/--rows/--length)")
+    qb.add_argument("--ref-engine", choices=["exllamav3", "transformers"],
+                    default="exllamav3",
+                    help="Engine for the BF16 reference pass (transformers needs "
+                         "the transformers+accelerate packages)")
+    qb.add_argument("--cache-gb", type=float, default=50.0,
+                    help="Logit cache size limit in GB (default: 50)")
+    qb.add_argument("--no-noise-floor", action="store_true",
+                    help="Skip the BF16-noise self-floor pass (faster; disables "
+                         "histogram plots)")
+    qb.add_argument("--regen", action="store_true",
+                    help="Regenerate qbench/project.yml instead of reusing it "
+                         "(cached results survive)")
+
     # --- measure ---
     m = sub.add_parser("measure", help="Measure only (vendored quantMeasure)")
     m.add_argument("-m", "--models", nargs="+", required=True, help="One or more model directories")
@@ -342,6 +379,11 @@ def build_parser() -> argparse.ArgumentParser:
                          "like Qwen3.5/3.6). Needs -m.")
     ch.add_argument("--mtp", action="store_true",
                     help="MTP drafting via the model's built-in MTP head. Needs -m.")
+    ch.add_argument("-ngr", "--ngram-ram", action="store_true",
+                    help="Load a PLE model's hashed n-gram embedding table fully "
+                         "into system RAM instead of streaming rows from disk "
+                         "(tens of GB of RAM; exllamav3 >= 1.4.5, e.g. "
+                         "Qwen3.8-Flash-Next)")
     ch.add_argument("--ngram", type=int, default=0, metavar="MIN",
                     help="N-gram drafting (no draft model) with minimum match length MIN. Needs -m.")
 
@@ -419,7 +461,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Normalize lists
     if hasattr(args, "models"):
         args.models = _csv_or_space_list(args.models)
-    if hasattr(args, "bpws"):
+    if hasattr(args, "bpws") and args.bpws is not None:
         args.bpws = _csv_or_space_list(args.bpws)
     if hasattr(args, "devices"):
         args.devices = [d.strip() for d in str(args.devices).split(",") if d.strip()]
@@ -456,6 +498,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             draft_model_dir=args.draft_model,
             use_mtp=args.mtp,
             ngram_min=args.ngram,
+            ngram_ram=args.ngram_ram,
             host=args.host,
             port=args.port,
             open_browser=not args.no_browser,
@@ -490,6 +533,35 @@ def main(argv: Optional[List[str]] = None) -> int:
                     failed_models.append(model_dir)
             except Exception as e:
                 print(f"Error converting MTP for {model_dir}: {e}")
+                import traceback
+                traceback.print_exc()
+                failed_models.append(model_dir)
+        return 1 if failed_models else 0
+
+    if cmd == "qbench":
+        from ezexl3.qbench import run_qbench
+        failed_models: List[str] = []
+        for model_dir in args.models:
+            print(f"\nRunning qbench: {model_dir}")
+            try:
+                rc = run_qbench(
+                    model_dir=model_dir,
+                    bpws=args.bpws,
+                    device=args.device,
+                    rows=args.rows,
+                    length=args.length,
+                    dataset=args.dataset,
+                    template=args.template,
+                    trace=args.trace,
+                    ref_engine=args.ref_engine,
+                    cache_gb=args.cache_gb,
+                    noise_floor=not args.no_noise_floor,
+                    regen=args.regen,
+                )
+                if rc != 0:
+                    failed_models.append(model_dir)
+            except Exception as e:
+                print(f"Error running qbench for {model_dir}: {e}")
                 import traceback
                 traceback.print_exc()
                 failed_models.append(model_dir)

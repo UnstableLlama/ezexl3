@@ -141,6 +141,7 @@ class ChatEngine:
         ngram_min: int = 0,
         batch_slots: int | None = None,
         cpu_offload: dict | None = None,
+        ngram_ram: bool = False,
     ):
         if sum([bool(draft_model_dir), bool(use_mtp), bool(ngram_min)]) > 1:
             raise ValueError(
@@ -153,6 +154,10 @@ class ChatEngine:
         self._cache_size = cache_size or self.DEFAULT_CACHE_SIZE
         self._cache_quant = cache_quant or self.DEFAULT_CACHE_QUANT
         self._cpu_offload = dict(cpu_offload or {})
+        # Load the hashed n-gram embedding table of PLE models (e.g.
+        # Qwen3.8-Flash-Next) fully into system RAM instead of streaming
+        # rows from disk per forward (exllamav3 -ngr, needs >= 1.4.5).
+        self.ngram_ram = bool(ngram_ram)
 
         # Populated by load()
         self.model = None
@@ -219,6 +224,7 @@ class ChatEngine:
             self._cache_quant,
             self.batch_slots,
             self._cpu_offload,
+            self.ngram_ram,
         )
 
         # Recurrent (hybrid linear-attn) models like Qwen3.5 size their
@@ -311,6 +317,7 @@ class ChatEngine:
         cache_quant: str | None = None,
         batch_slots: int | None = None,
         cpu_offload: dict | None = None,
+        ngram_ram: bool = False,
     ):
         """Load a model (callable from the UI after startup)."""
         if use_mtp and draft_model_dir:
@@ -334,6 +341,7 @@ class ChatEngine:
         self._cache_quant = cache_quant or self.DEFAULT_CACHE_QUANT
         self.batch_slots = int(batch_slots) if batch_slots else self.BATCH_SLOTS
         self._cpu_offload = dict(cpu_offload or {})
+        self.ngram_ram = bool(ngram_ram)
         self.settings = ChatSettings()
         self.load()
 
@@ -1082,6 +1090,21 @@ def cpu_offload_support() -> dict:
     }
 
 
+def ngram_ram_support() -> bool:
+    """Whether the installed exllamav3 exposes -ngr (n-gram table in RAM,
+    PLE models; landed in 1.4.5). The chat UI disables the toggle on older
+    builds rather than silently dropping the setting."""
+    try:
+        import argparse
+        model_init = _import_model_init()
+        parser = argparse.ArgumentParser()
+        model_init.add_args(parser, cache=True)
+        opts = {o for a in parser._actions for o in a.option_strings}
+    except Exception:
+        return False
+    return "-ngr" in opts
+
+
 def _build_model_args(
     model_dir: str,
     devices: list[int],
@@ -1090,6 +1113,7 @@ def _build_model_args(
     cache_quant: str | None,
     batch_slots: int | None = None,
     cpu_offload: dict | None = None,
+    ngram_ram: bool = False,
 ) -> object:
     """
     Build a namespace object mimicking the argparse args that
@@ -1136,6 +1160,11 @@ def _build_model_args(
     cache_gb = float(off.get("cache_gb") or 0)
     if cache_gb > 0 and "-ccs" in opts:
         argv += ["-ccs", str(cache_gb)]
+
+    # N-gram table in RAM (exllamav3 >= 1.4.5). Gated the same way; only
+    # matters for PLE models, which older builds can't load anyway.
+    if ngram_ram and "-ngr" in opts:
+        argv += ["-ngr"]
 
     args = parser.parse_args(argv)
     # exllamav3 dev reads args.mtp in init() even when draft model args

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from aiohttp import web
 
-from .inference import ChatEngine, ChatSettings, cpu_offload_support
+from .inference import ChatEngine, ChatSettings, cpu_offload_support, ngram_ram_support
 from .ratings import (
     RatingsStore, default_datasets_dir, strip_think_text, valid_dataset_name,
     validate_prompt,
@@ -226,6 +226,8 @@ async def handle_gpus(request: web.Request) -> web.Response:
         # Which CPU-offload knobs this exllamav3 build supports, so the load
         # panel can disable controls it can't honor.
         "cpu_offload": cpu_offload_support(),
+        # Whether this build can load a PLE model's n-gram table into RAM (-ngr)
+        "ngram_ram": ngram_ram_support(),
     })
 
 
@@ -413,6 +415,7 @@ async def handle_model_load(request: web.Request) -> web.Response:
             cache_quant=data.get("cache_quant"),
             batch_slots=batch_slots,
             cpu_offload=_parse_cpu_offload(data.get("cpu_offload")),
+            ngram_ram=bool(data.get("ngram_ram")),
         )
         return web.json_response({
             "ok": True,
@@ -551,6 +554,7 @@ async def handle_draft_load(request: web.Request) -> web.Response:
                 cache_quant=engine._cache_quant,
                 batch_slots=engine.batch_slots,
                 cpu_offload=dict(engine._cpu_offload),
+                ngram_ram=engine.ngram_ram,
             )
             engine.settings = saved_settings
             reloaded = True
@@ -1010,6 +1014,7 @@ def run_server(
     draft_model_dir: str | None = None,
     use_mtp: bool = False,
     ngram_min: int = 0,
+    ngram_ram: bool = False,
     host: str = "127.0.0.1",
     port: int = 8800,
     open_browser: bool = True,
@@ -1024,6 +1029,7 @@ def run_server(
         draft_model_dir=draft_model_dir,
         use_mtp=use_mtp,
         ngram_min=ngram_min,
+        ngram_ram=ngram_ram,
     )
 
     # Warn if binding to a non-loopback address (no auth layer).

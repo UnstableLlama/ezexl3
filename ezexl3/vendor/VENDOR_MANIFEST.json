@@ -57,5 +57,29 @@
   "eval/qbench_prompts.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench_prompts.py",
     "sha256": "7c6b511f22b22641409d6d67319037e0b7a9d4349f2fb6437f98ba5bc9b1e047"
+  },
+  "eval/qbench.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench.py",
+    "sha256": "4ffd23d59fdae82270d3ce6a662841e9d095e9c2f57bcba31090d47f6679631c"
+  },
+  "eval/qbench/__init__.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench/__init__.py",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "eval/qbench/data.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench/data.py",
+    "sha256": "b6c79d06e9a0f4977981d727b71772e2fe7a770412054d35c67411dd7001e0e8"
+  },
+  "eval/qbench/engines.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench/engines.py",
+    "sha256": "2cef5f32ab45685f8a88bcd55a3accaf812234e1696ebc49dc9a51379d0ca2d9"
+  },
+  "eval/qbench/measure.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench/measure.py",
+    "sha256": "4ada99e11f998719aa77db249b7ef994fd1b217206efe54870fcadd2e829c111"
+  },
+  "eval/qbench/plot.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench/plot.py",
+    "sha256": "3df7474a4fa0dcefeb5365407240f0662d1a60f2e4ede5d271b3cc13ae48d919"
   }
 }

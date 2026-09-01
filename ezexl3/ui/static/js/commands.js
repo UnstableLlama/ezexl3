@@ -90,6 +90,26 @@ const COMMANDS = {
     ],
   },
 
+  qbench: {
+    label: "QBench",
+    subtitle: "Quant Compare",
+    description: "Compare quants against the BF16 reference: cached logits, noise floor, KLD median/p90 + plots",
+    fields: [
+      { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "Base model directory with <bpw>/ quant subdirs" },
+      { name: "bpws", flag: "-b", type: "csv", label: "BPWs", placeholder: "(auto-detect)", help: "BPWs to include; leave empty to auto-detect quant subdirectories" },
+      { name: "device", flag: "-d", type: "number", default: "0", label: "CUDA Device", help: "Single GPU index" },
+      { name: "rows", flag: "--rows", type: "number", default: "10", label: "Test Rows", help: "Number of test rows" },
+      { name: "length", flag: "--length", type: "number", default: "2048", label: "Row Length", help: "Tokens per row" },
+      { name: "dataset", flag: "--dataset", type: "select", choices: ["wiki2", "openwebtext"], default: "wiki2", label: "Dataset" },
+      { name: "template", flag: "--template", type: "select", choices: ["none", "chat", "assistant"], default: "none", label: "Chat Template", help: "Apply the model's chat template to test rows" },
+      { name: "trace", flag: "--trace", type: "text", label: "Test Trace", placeholder: "(optional) qbench_prompts.py JSON", help: "In-domain test trace; replaces dataset/rows/length" },
+      { name: "ref_engine", flag: "--ref-engine", type: "select", choices: ["exllamav3", "transformers"], default: "exllamav3", label: "Reference Engine", help: "Engine for the BF16 reference pass (transformers needs transformers+accelerate)" },
+      { name: "cache_gb", flag: "--cache-gb", type: "number", default: "50", label: "Logit Cache (GB)", help: "Cache size limit; oldest entries evicted" },
+      { name: "no_noise_floor", flag: "--no-noise-floor", type: "boolean", label: "Skip Noise Floor", help: "Faster, but disables histogram plots and the floor line" },
+      { name: "regen", flag: "--regen", type: "boolean", label: "Regenerate Project", help: "Rewrite qbench/project.yml instead of reusing it (cached results survive)" },
+    ],
+  },
+
   measure: {
     label: "Measure",
     subtitle: "Measure Only",
