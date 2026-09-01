@@ -8,6 +8,9 @@ const COMMANDS = {
     subtitle: "Full Pipeline",
     description: "Quantize \u2192 Measure KL+PPL \u2192 README",
     hasMetadata: true,
+    groups: {
+      ngram: { label: "N-gram", help: "Hashed n-gram embedding tables (PLE models, e.g. Qwen3.8-Flash-Next). Requires exllamav3 \u2265 1.4.5; ignored by models without a table." },
+    },
     fields: [
       { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "BF16/base model directory" },
       { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "1-8, comma separated, decimals ok (e.g. 2,3,4.5,6)",
@@ -22,6 +25,8 @@ const COMMANDS = {
       { name: "device_ratios", flag: "-r", type: "csv", label: "Device Ratios", placeholder: "1,1", help: "VRAM split ratio per device when GPUs are uneven" },
       { name: "head_bits", flag: "-hb", type: "number", default: "6", label: "Head Bits", help: "Output head layer bitrate, 1-8 (exllamav3 default: 6)", toggleable: true },
       { name: "vision_bits", flag: "-vb", type: "number", default: "6", label: "Vision Bits", help: "Vision tower bitrate, 1-8, or 16 = unquantized (vision models only)", toggleable: true },
+      { name: "ngram_bits", flag: "-ngb", type: "number", default: "4", label: "N-gram Bits", help: "Bits per weight for the hashed n-gram embedding table, 1-8 (exllamav3 default: target BPW rounded)", toggleable: true, group: "ngram" },
+      { name: "ngram_file", flag: "-ngf", type: "text", label: "N-gram File", placeholder: "/path/to/ngram_embedding.safetensors", help: "Pre-quantized n-gram table (from exllamav3 util/convert_ngram.py) reused instead of quantizing the table", group: "ngram" },
       { name: "template", flag: "-t", type: "template", label: "Template", help: "README template style" },
       { name: "layers", flag: "-l", type: "select", choices: ["1", "2", "3"], default: "2", label: "Optimization Depth", help: "1-3, 3 = longer optimization (2 default)", toggleable: true },
       // Boolean flags
@@ -44,6 +49,9 @@ const COMMANDS = {
     label: "Quantize",
     subtitle: "Quantize Only",
     description: "Run quantization without measurement or README",
+    groups: {
+      ngram: { label: "N-gram", help: "Hashed n-gram embedding tables (PLE models, e.g. Qwen3.8-Flash-Next). Requires exllamav3 ≥ 1.4.5; ignored by models without a table." },
+    },
     fields: [
       { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "BF16/base model directory" },
       { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "1-8, comma separated, decimals ok (e.g. 2,3,4.5,6)",
@@ -58,6 +66,8 @@ const COMMANDS = {
       { name: "device_ratios", flag: "-r", type: "csv", label: "Device Ratios", placeholder: "1,1", help: "VRAM split ratio per device when GPUs are uneven" },
       { name: "head_bits", flag: "-hb", type: "number", default: "6", label: "Head Bits", help: "Output head layer bitrate, 1-8 (exllamav3 default: 6)", toggleable: true },
       { name: "vision_bits", flag: "-vb", type: "number", default: "6", label: "Vision Bits", help: "Vision tower bitrate, 1-8, or 16 = unquantized (vision models only)", toggleable: true },
+      { name: "ngram_bits", flag: "-ngb", type: "number", default: "4", label: "N-gram Bits", help: "Bits per weight for the hashed n-gram embedding table, 1-8 (exllamav3 default: target BPW rounded)", toggleable: true, group: "ngram" },
+      { name: "ngram_file", flag: "-ngf", type: "text", label: "N-gram File", placeholder: "/path/to/ngram_embedding.safetensors", help: "Pre-quantized n-gram table (from exllamav3 util/convert_ngram.py) reused instead of quantizing the table", group: "ngram" },
       { name: "out_template", flag: "--out-template", type: "text", default: "{model}/{bpw}", label: "Output Template", help: "Fields: {model}, {model_name}, {bpw}" },
       { name: "w_template", flag: "--w-template", type: "text", default: "{model}/w-{bpw}", label: "Work Dir Template", help: "Fields: {model}, {model_name}, {bpw}" },
       { name: "layers", flag: "-l", type: "select", choices: ["1", "2", "3"], default: "2", label: "Optimization Depth", help: "1-3, 3 = longer optimization (2 default)", toggleable: true },
@@ -74,6 +84,7 @@ const COMMANDS = {
     fields: [
       { name: "models", flag: "-m", type: "path", required: true, label: "Model Directory", help: "Original HF checkpoint containing the MTP head (Qwen3.5+)" },
       { name: "mtp_bits", flag: "-mb", type: "number", default: "4", label: "MTP Bits", help: "Bitrate for the MTP tensors (16 = unquantized)" },
+      { name: "hq", flag: "-hq", type: "boolean", label: "High Quality", help: "Increase bitrate of select MTP layers (attention, shared experts), matching the integrated conversion's -hq" },
       { name: "out_file", flag: "-o", type: "text", label: "Output File", placeholder: "(default: <model>/mtp-quant/mtp_<bits>bpw.safetensors)", help: "Output .safetensors — copy it alongside a legacy quant's .safetensors files" },
       { name: "device", flag: "-d", type: "number", default: "0", label: "CUDA Device", help: "Single GPU index used for quantization" },
     ],

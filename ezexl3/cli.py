@@ -189,6 +189,14 @@ def build_parser() -> argparse.ArgumentParser:
                            help="Vision tower bitrate for all BPWs, 1-8, or 16 to store unquantized "
                                 "(default: architecture's default). Requires a recent exllamav3. "
                                 "Example: -vb 8")
+        p_sub.add_argument("-ngb", "--ngram-bits", type=int, default=None,
+                           help="Bits per weight for hashed n-gram embedding tables, 1-8 "
+                                "(PLE models, e.g. Qwen3.8-Flash-Next; exllamav3 default: "
+                                "target BPW rounded). Requires exllamav3 >= 1.4.5. Example: -ngb 4")
+        p_sub.add_argument("-ngf", "--ngram-file", default=None,
+                           help="Pre-quantized n-gram table .safetensors (from exllamav3 "
+                                "util/convert_ngram.py) to reuse instead of quantizing the "
+                                "table. Requires exllamav3 >= 1.4.5")
         p_sub.add_argument("-sc", nargs="*", default=None,
                            help="Build self-calibrated quants (exllamav3 sc_* pipeline): the model "
                                 "generates its own in-domain calibration trace, per-tensor sensitivity "
@@ -263,6 +271,14 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("-vb", "--vision-bits", type=int, default=None,
                    help="Vision tower bitrate for all BPWs, 1-8, or 16 to store unquantized "
                         "(default: architecture's default). Requires a recent exllamav3.")
+    q.add_argument("-ngb", "--ngram-bits", type=int, default=None,
+                   help="Bits per weight for hashed n-gram embedding tables, 1-8 "
+                        "(PLE models, e.g. Qwen3.8-Flash-Next; exllamav3 default: "
+                        "target BPW rounded). Requires exllamav3 >= 1.4.5.")
+    q.add_argument("-ngf", "--ngram-file", default=None,
+                   help="Pre-quantized n-gram table .safetensors (from exllamav3 "
+                        "util/convert_ngram.py) to reuse instead of quantizing the "
+                        "table. Requires exllamav3 >= 1.4.5")
     q.add_argument("-sc", nargs="*", default=None,
                    help="Build self-calibrated quants (self-sampled trace + per-tensor recipe). "
                         "Works on any BPW; requires exllamav3 >= 1.4.3. "
@@ -336,6 +352,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mt.add_argument("-m", "--models", nargs="+", required=True,
                     help="One or more base model directories (original HF checkpoint with MTP head)")
+    mt.add_argument("-hq", action="store_true",
+                    help="Increase bitrate of select MTP layers (attention, shared experts), "
+                         "matching the integrated conversion's -hq")
     mt.add_argument("-mb", "--mtp-bits", type=int, default=4,
                     help="MTP tensor bitrate (16 = unquantized, default: 4)")
     mt.add_argument("-o", "--out-file", default=None,
@@ -465,6 +484,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     mtp_bits=args.mtp_bits,
                     out_file=args.out_file,
                     device=args.device,
+                    hq=args.hq,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
@@ -519,6 +539,18 @@ def main(argv: Optional[List[str]] = None) -> int:
             raise SystemExit(f"--vision-bits must be 1-8 or 16, got {vision_bits}")
         if "-vb" not in pt.quant_args:
             pt.quant_args = list(pt.quant_args) + ["-vb", str(vision_bits)]
+    ngram_bits = getattr(args, "ngram_bits", None)
+    if ngram_bits is not None:
+        if not (1 <= ngram_bits <= 8):
+            raise SystemExit(f"--ngram-bits must be 1-8, got {ngram_bits}")
+        if "-ngb" not in pt.quant_args:
+            pt.quant_args = list(pt.quant_args) + ["-ngb", str(ngram_bits)]
+    ngram_file = getattr(args, "ngram_file", None)
+    if ngram_file is not None:
+        if not os.path.isfile(ngram_file):
+            raise SystemExit(f"--ngram-file not found: {ngram_file}")
+        if "-ngf" not in pt.quant_args:
+            pt.quant_args = list(pt.quant_args) + ["-ngf", os.path.abspath(ngram_file)]
 
     # When a fractional BPW is painted with -opt, the actual quantization
     # happens on its integer neighbors (e.g. 4.5 → quantize 4 and 5, then

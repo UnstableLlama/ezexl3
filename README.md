@@ -96,6 +96,7 @@ ezexl3 measure -m /path/to/base_model -b 2,3,4,5,6 -d 0,1
 ezexl3 readme -m /path/to/base_model -t fire
 
 # Quantize just the MTP tensors (adds speculative decoding to legacy quants)
+# -hq raises the bitrate of select MTP layers, matching the integrated conversion's -hq
 ezexl3 mtp -m /path/to/base_model -mb 4 -d 0
 
 # Upload to HuggingFace (dry-run by default)
@@ -122,6 +123,11 @@ Head and vision bitrates are plain numeric options rather than paints:
 - `-vb N` / **Vision Bits** box — vision tower bitrate, 1-8, or 16 to store unquantized (vision models only)
 
 (The old `-hb8` paint flag still works from the CLI, but `-hb` takes precedence when both are given.)
+
+For PLE models with a hashed n-gram embedding table (e.g. Qwen3.8-Flash-Next), the dashboard's collapsed **N-gram** block (and the matching CLI flags) controls how the table is quantized (exllamav3 >= 1.4.5 required; ignored by models without a table):
+
+- `-ngb N` / **N-gram Bits** box — bits per weight for the n-gram table, 1-8 (exllamav3 default: target BPW rounded)
+- `-ngf FILE` / **N-gram File** box — reuse a pre-quantized table (from exllamav3's `util/convert_ngram.py`) instead of quantizing it again; handy when producing several BPWs that should share one table
 
 ### Self-Calibrated Quants (`-sc`)
 BPWs painted with `-sc` are built through exllamav3's experimental optimization pipeline

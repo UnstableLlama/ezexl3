@@ -1,5 +1,5 @@
-# convert_mtp.py - Vendored from turboderp-org/exllamav3 (dev branch)
-# Source: https://raw.githubusercontent.com/turboderp-org/exllamav3/dev/util/convert_mtp.py
+# convert_mtp.py - Vendored from turboderp-org/exllamav3
+# Source: https://raw.githubusercontent.com/turboderp-org/exllamav3/master/util/convert_mtp.py
 # Vendored for pip-installable distribution (util/ is not included in exllamav3 wheel)
 
 import sys, os
@@ -22,9 +22,10 @@ file from this script alongside the model's other .safetensors files.
 """
 
 
-def quantize_linears_single(bitrate, device, linears, config):
+def quantize_linears_single(bitrate, hq, device, linears, config):
     for linear in linears:
-        if bitrate == 16:
+        k = bitrate if not hq or bitrate > 8 else min(bitrate + linear.select_hq_bits, 8)
+        if k == 16:
             print(
                 f" -- Unquantized: {linear.key:{config.stc.max_key_len() + 6}}"
                 f"  bpw: {16:5.2f}",
@@ -34,7 +35,7 @@ def quantize_linears_single(bitrate, device, linears, config):
             quant_args = {
                 "seed": 0,
                 "mul1": True,
-                "K": bitrate,
+                "K": k,
                 "devices": [device],
                 "device_ratios": None,
                 "apply_out_scales": "always",
@@ -91,6 +92,7 @@ def main(args):
         assert module.num_slices <= 1
         start_module_time = time.time()
 
+        module_bytes_before = dsize(q_tensors)
         print(f" -- Loading unquantized module: {module.key}")
         module.load(torch.device("cpu" if module.caps.get("prefer_cpu") else args.device))
         for m in module:
@@ -106,7 +108,7 @@ def main(args):
             linear.inner.swap_cpu()
 
         # Quantize
-        quantize_linears_single(args.mtp_bits, args.device, linears, config)
+        quantize_linears_single(args.mtp_bits, args.hq, args.device, linears, config)
 
         # Collect converted module tensors
         for m in module:
@@ -116,8 +118,8 @@ def main(args):
         module.unload()
         config.stc.close()
 
-        # Output final bpw for layer
-        num_bytes = dsize(q_tensors)
+        # Output final bpw for layer (bytes added by THIS module; q_tensors is cumulative)
+        num_bytes = dsize(q_tensors) - module_bytes_before
         num_bits = num_bytes * 8
         final_bpw = num_bits / module.weights_numel() if module.weights_numel() else None
 
@@ -137,9 +139,10 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(allow_abbrev = False)
     parser.add_argument("-m", "--model_dir", type = str, help = "Input model directory", required = True)
     parser.add_argument("-mb", "--mtp_bits", type = int, help = "MTP model bitrate, default: 4", default = 4)
+    parser.add_argument("-hq", "--hq", action = "store_true", help = "Increase bitrate of select layers (attention, shared experts), matching the integrated conversion's --hq")
     parser.add_argument("-o", "--out_file", type = str, help = "Output .safetensors file to contain quantized MTP tensors")
     parser.add_argument("-d", "--device", type = int, help = "Device index to use for quantization, default: 0", default = 0)
     _args = parser.parse_args()

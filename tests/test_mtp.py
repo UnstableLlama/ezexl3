@@ -46,7 +46,14 @@ class MtpCliDispatchTests(unittest.TestCase):
             mtp_bits=3,
             out_file=None,
             device=1,
+            hq=False,
         )
+
+    def test_cli_dispatch_passes_hq(self):
+        with patch("ezexl3.mtp.run_mtp", return_value=0) as mock_run:
+            rc = cli.main(["mtp", "-m", "/tmp/model", "-hq"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(mock_run.call_args.kwargs["hq"])
 
     def test_out_file_rejected_with_multiple_models(self):
         with self.assertRaises(SystemExit):
@@ -80,6 +87,20 @@ class MtpRunnerTests(unittest.TestCase):
         self.assertEqual(
             out, os.path.join("/tmp/model", "mtp-quant", "mtp_4bpw.safetensors")
         )
+
+    def test_default_out_file_hq_suffix(self):
+        out = mtp.default_mtp_out_file("/tmp/model", 4, hq=True)
+        self.assertEqual(
+            out, os.path.join("/tmp/model", "mtp-quant", "mtp_4bpw_hq.safetensors")
+        )
+
+    def test_hq_flag_appended_to_vendored_command(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as model_dir:
+            with patch("ezexl3.mtp.run_cmd_capture", return_value="") as mock_cmd:
+                mtp.run_mtp(model_dir, mtp_bits=4, hq=True)
+            cmd = mock_cmd.call_args[0][0]
+            self.assertIn("-hq", cmd)
 
     def test_skips_when_output_exists(self):
         import tempfile

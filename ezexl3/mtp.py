@@ -18,12 +18,13 @@ from ezexl3.measure import run_cmd_capture
 _CONVERT_MTP_SCRIPT = os.path.join(os.path.dirname(__file__), "vendor", "convert_mtp.py")
 
 
-def default_mtp_out_file(model_dir: str, mtp_bits: int) -> str:
+def default_mtp_out_file(model_dir: str, mtp_bits: int, hq: bool = False) -> str:
     """Default output path: a subdirectory of the model dir, so the quantized
     MTP tensors never sit next to the base model's own .safetensors files
     (duplicate tensor keys would break loading the base model)."""
+    suffix = "_hq" if hq else ""
     return os.path.join(
-        os.path.abspath(model_dir), "mtp-quant", f"mtp_{mtp_bits}bpw.safetensors"
+        os.path.abspath(model_dir), "mtp-quant", f"mtp_{mtp_bits}bpw{suffix}.safetensors"
     )
 
 
@@ -32,6 +33,7 @@ def run_mtp(
     mtp_bits: int = 4,
     out_file: str | None = None,
     device: int = 0,
+    hq: bool = False,
 ) -> int:
     """Quantize the MTP component of *model_dir* to *mtp_bits* and write the
     tensors to *out_file*. Skips if the output file already exists."""
@@ -40,7 +42,7 @@ def run_mtp(
         raise FileNotFoundError(f"Model dir not found: {model_dir}")
 
     if out_file is None:
-        out_file = default_mtp_out_file(model_dir, mtp_bits)
+        out_file = default_mtp_out_file(model_dir, mtp_bits, hq)
     out_file = os.path.abspath(out_file)
 
     if os.path.exists(out_file):
@@ -58,6 +60,8 @@ def run_mtp(
         "-o", out_file,
         "-d", str(device),
     ]
+    if hq:
+        cmd.append("-hq")
     run_cmd_capture(cmd)
 
     print(f"\n -- MTP tensors written: {out_file}")

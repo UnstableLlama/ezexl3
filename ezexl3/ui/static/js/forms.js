@@ -7,9 +7,10 @@ function renderForm(commandKey) {
   const container = document.getElementById("form-fields");
   container.innerHTML = "";
 
-  const required = cmd.fields.filter(f => f.required && f.type !== "boolean" && !f.section);
-  const optional = cmd.fields.filter(f => !f.required && !f.section && (f.type !== "boolean" || f.toggleable));
-  const booleans = cmd.fields.filter(f => f.type === "boolean" && !f.toggleable && !f.section);
+  const required = cmd.fields.filter(f => f.required && f.type !== "boolean" && !f.section && !f.group);
+  const optional = cmd.fields.filter(f => !f.required && !f.section && !f.group && (f.type !== "boolean" || f.toggleable));
+  const booleans = cmd.fields.filter(f => f.type === "boolean" && !f.toggleable && !f.section && !f.group);
+  const grouped = cmd.fields.filter(f => f.group && !f.section);
   const evals = cmd.fields.filter(f => f.section === "evals");
 
   // Required fields
@@ -28,6 +29,11 @@ function renderForm(commandKey) {
     for (const field of optional) {
       container.appendChild(createFieldEl(field));
     }
+  }
+
+  // Collapsed subsections for rarely-used field groups (e.g. N-gram)
+  for (const gid of [...new Set(grouped.map(f => f.group))]) {
+    container.appendChild(createGroupEl(cmd, gid, grouped.filter(f => f.group === gid)));
   }
 
   // Boolean flags in a compact grid
@@ -52,6 +58,46 @@ function renderForm(commandKey) {
   const rightPanels = document.getElementById("right-panels");
   const hasRight = cmd.hasMetadata || evals.length > 0;
   rightPanels.style.display = hasRight ? "" : "none";
+}
+
+
+function createGroupEl(cmd, groupId, fields) {
+  const meta = (cmd.groups || {})[groupId] || { label: groupId };
+  const wrap = document.createElement("div");
+  wrap.className = "form-group-collapsible";
+
+  const header = document.createElement("div");
+  header.className = "subsection-header";
+  const title = document.createElement("span");
+  title.textContent = meta.label;
+  header.appendChild(title);
+  const chevron = document.createElement("span");
+  chevron.className = "chevron";
+  chevron.innerHTML = "&#9660;";
+  header.appendChild(chevron);
+  wrap.appendChild(header);
+
+  const body = document.createElement("div");
+  body.className = "subsection-body";
+  body.style.display = "none";
+  if (meta.help) {
+    const help = document.createElement("div");
+    help.className = "form-help";
+    help.textContent = meta.help;
+    body.appendChild(help);
+  }
+  for (const field of fields) {
+    body.appendChild(createFieldEl(field));
+  }
+  wrap.appendChild(body);
+
+  header.addEventListener("click", () => {
+    const open = body.style.display === "none";
+    body.style.display = open ? "" : "none";
+    chevron.innerHTML = open ? "&#9650;" : "&#9660;";
+  });
+
+  return wrap;
 }
 
 

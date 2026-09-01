@@ -7,6 +7,27 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`-ngb`/`--ngram-bits` and `-ngf`/`--ngram-file`**: n-gram table controls
+  on `repo` and `quantize` for PLE models with hashed n-gram embedding tables
+  (e.g. Qwen3.8-Flash-Next). `-ngb` sets bits per weight for the table (1-8,
+  exllamav3 default: target BPW rounded); `-ngf` reuses a pre-quantized table
+  produced by exllamav3's `util/convert_ngram.py` instead of quantizing it
+  again. Both ride the quant-args passthrough, so they reach plain, painted
+  and self-calibrated conversions alike. Requires exllamav3 >= 1.4.5 —
+  checked up front with a friendly error instead of an argparse crash. In the
+  dashboard the two fields live in a collapsed **N-gram** mini block on the
+  Repo and Quantize forms (rarely needed, so folded away by default).
+- **`mtp -hq`**: high-quality flag for the MTP-only quantization stage,
+  matching the integrated conversion's `-hq` (raises the bitrate of select
+  MTP layers: attention, shared experts). The default output filename gains
+  an `_hq` suffix so plain and `-hq` runs don't collide. Exposed as a
+  **High Quality** toggle on the dashboard's MTP form.
+
+### Changed
+- **Vendored `convert_mtp.py` re-synced with upstream** (now tracked from
+  `master`): picks up the `-hq` argument and the per-layer bpw reporting fix
+  (bytes were previously accumulated across modules, inflating the reported
+  bpw of later layers).
 - **Self-calibrated quants (`-sc`)**: BPWs painted with `-sc` (CLI or the new
   dashboard paint button) are built through exllamav3's experimental
   optimization pipeline instead of the uniform allocation: a self-sampled

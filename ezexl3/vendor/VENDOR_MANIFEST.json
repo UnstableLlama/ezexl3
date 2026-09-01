@@ -1,7 +1,7 @@
 {
   "convert_mtp.py": {
-    "sha256": "334eea29ce8352a614f104ed2d193b86ab42bdf12f6f9366aadc7dbbdc49053f",
-    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/dev/util/convert_mtp.py"
+    "sha256": "133ef2573e7d19395317ac361c1f9f9f8e3d57541e1d7a005a5671aa58fdca9f",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/util/convert_mtp.py"
   },
   "eval_diversity.py": {
     "sha256": "180ca8e39dc90a3c8f9ffe5453b8680eaae678522fa78c7f40b88fc0a1389144",
