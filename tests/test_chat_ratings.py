@@ -644,8 +644,12 @@ class TestUiWiring(unittest.TestCase):
         html = (REPO_ROOT / "ezexl3/chat/static/index.html").read_text()
         self.assertIn('id="ratings-dataset"', html)
         self.assertIn('id="ratings-dir"', html)
-        self.assertIn('id="rating-mode-toggle"', html)
-        self.assertIn('data-mode="off"', html)
+        # Two-level top-bar toggle: Chat/Preference picks the scope, then
+        # DPO/KTO picks the format once Preference is on.
+        self.assertIn('id="chat-mode-toggle"', html)
+        self.assertIn('id="pref-kind-toggle"', html)
+        self.assertIn('data-scope="chat"', html)
+        self.assertIn('data-scope="pref"', html)
         self.assertIn('data-mode="kto"', html)
         self.assertIn('data-mode="dpo"', html)
         self.assertIn('id="ratings-sys-a"', html)
@@ -653,12 +657,28 @@ class TestUiWiring(unittest.TestCase):
         self.assertIn('js/ratings.js', html)
 
     def test_capture_defaults_to_off(self):
-        # Off (normal chat) is the default: the toggle pre-selects it and
-        # the JS falls back to it for unknown/unset persisted modes.
+        # Chat (no capture) is the default: the scope toggle pre-selects
+        # it and the JS falls back to 'off' for unknown/unset persisted
+        # modes. DPO is the format Preference opens on first use.
         html = (REPO_ROOT / "ezexl3/chat/static/index.html").read_text()
-        self.assertIn('data-mode="off" class="active"', html)
+        self.assertIn('data-scope="chat" class="active"', html)
+        self.assertIn('data-mode="dpo" class="active"', html)
         js = (REPO_ROOT / "ezexl3/chat/static/js/ratings.js").read_text()
         self.assertIn("let ratingsMode = 'off'", js)
+        self.assertIn("let lastPrefKind = 'dpo'", js)
+
+    def test_preference_controls_hide_until_enabled(self):
+        # The decluttering contract: the whole Preference Data block is
+        # hidden in Chat mode, and the DPO-only group inside it hides
+        # under KTO, where none of those controls do anything.
+        html = (REPO_ROOT / "ezexl3/chat/static/index.html").read_text()
+        self.assertIn('id="pref-panel" hidden', html)
+        self.assertIn('id="pref-dpo-only"', html)
+        js = (REPO_ROOT / "ezexl3/chat/static/js/ratings.js").read_text()
+        self.assertIn("function syncModeToggles()", js)
+        # syncModeToggles owns all three visibility decisions.
+        for target in ("pref-panel", "pref-dpo-only", "pref-kind-toggle"):
+            self.assertIn(target, js)
 
     def test_render_wires_rating_controls(self):
         js = (REPO_ROOT / "ezexl3/chat/static/js/render.js").read_text()

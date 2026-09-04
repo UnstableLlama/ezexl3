@@ -38,7 +38,7 @@ body { display: flex; overflow: hidden; }
 #header {
   height: 48px; display: flex; align-items: center;
   padding: 0 16px; border-bottom: 1px solid var(--border);
-  gap: 12px; flex-shrink: 0;
+  gap: 12px; flex-shrink: 0; position: relative;
 }
 #toggle-sidebar {
   background: none; border: none; color: var(--text-muted);
@@ -47,20 +47,30 @@ body { display: flex; overflow: hidden; }
 #header-title { font-weight: 600; font-size: 14px; }
 #header-model { color: var(--text-dim); font-size: 12px; margin-left: auto; font-family: var(--mono); }
 
-/* Preference-capture mode toggle (KTO / DPO) */
-#rating-mode-toggle {
-  display: flex; margin-left: 14px;
+/* Capture-mode toggles: Chat/Preference, then DPO/KTO once Preference is
+   on. Centered on the header rather than flowed after the title, so the
+   pair stays put as the model name on the right changes width. */
+#mode-toggles {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px;
+}
+.seg-toggle {
+  display: flex;
   border: 1px solid var(--border-light); border-radius: var(--radius-sm);
   overflow: hidden;
 }
-#rating-mode-toggle button {
+.seg-toggle[hidden] { display: none; }
+.seg-toggle button {
   background: transparent; border: none; cursor: pointer;
   color: var(--text-dim); font-size: 11px; font-weight: 600;
   padding: 4px 12px; letter-spacing: 0.04em;
 }
-#rating-mode-toggle button + button { border-left: 1px solid var(--border-light); }
-#rating-mode-toggle button:hover { color: var(--text-muted); }
-#rating-mode-toggle button.active { background: var(--accent); color: #fff; }
+.seg-toggle button + button { border-left: 1px solid var(--border-light); }
+.seg-toggle button:hover { color: var(--text-muted); }
+.seg-toggle button.active { background: var(--accent); color: #fff; }
+/* The sub-toggle takes the lighter accent — it refines the Preference
+   choice rather than sitting at the same level as it. */
+#pref-kind-toggle button.active { background: var(--accent-hover); }
 
 #chat-area {
   flex: 1; overflow-y: auto; scroll-behavior: smooth;

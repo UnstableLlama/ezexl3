@@ -110,10 +110,15 @@ async function refreshRatings() {
 
 // ── Capture mode ────────────────────────────────────────────────
 
+// Which preference format the Preference tab returns to. Seeded from
+// whatever mode we restore at load, so a KTO session survives a reload
+// and a round-trip through Chat; DPO is only the cold-start default.
+let lastPrefKind = 'dpo';
+
 function setRatingsMode(mode, persist = true) {
   ratingsMode = (mode === 'dpo' || mode === 'kto') ? mode : 'off';
-  document.querySelectorAll('#rating-mode-toggle button').forEach(b =>
-    b.classList.toggle('active', b.dataset.mode === ratingsMode));
+  if (ratingsMode !== 'off') lastPrefKind = ratingsMode;
+  syncModeToggles();
   // A queue/duel can't outlive a switch away from DPO. Stop the queue
   // first so the skip below doesn't auto-advance it.
   if (ratingsMode !== 'dpo') {
@@ -128,6 +133,24 @@ function setRatingsMode(mode, persist = true) {
     }).catch(() => {});
   }
   renderActiveTree();
+}
+
+// Paint both header toggles and the sidebar from ratingsMode. The whole
+// Preference Data block hides in Chat mode; inside it, the DPO-only
+// group (candidates, queue, system prompts A/B) hides under KTO, where
+// none of those controls do anything.
+function syncModeToggles() {
+  const onPref = ratingsMode !== 'off';
+  document.querySelectorAll('#chat-mode-toggle button').forEach(b =>
+    b.classList.toggle('active', (b.dataset.scope === 'pref') === onPref));
+  document.querySelectorAll('#pref-kind-toggle button').forEach(b =>
+    b.classList.toggle('active', b.dataset.mode === (onPref ? ratingsMode : lastPrefKind)));
+  const kindToggle = document.getElementById('pref-kind-toggle');
+  if (kindToggle) kindToggle.hidden = !onPref;
+  const panel = document.getElementById('pref-panel');
+  if (panel) panel.hidden = !onPref;
+  const dpoOnly = document.getElementById('pref-dpo-only');
+  if (dpoOnly) dpoOnly.hidden = ratingsMode !== 'dpo';
 }
 
 // ── Row construction ────────────────────────────────────────────
@@ -824,7 +847,12 @@ async function initRatings() {
       });
     }
 
-    document.querySelectorAll('#rating-mode-toggle button').forEach(btn =>
+    // Chat/Preference picks the scope; entering Preference restores the
+    // last format used rather than always snapping back to DPO.
+    document.querySelectorAll('#chat-mode-toggle button').forEach(btn =>
+      btn.addEventListener('click', () =>
+        setRatingsMode(btn.dataset.scope === 'pref' ? lastPrefKind : 'off')));
+    document.querySelectorAll('#pref-kind-toggle button').forEach(btn =>
       btn.addEventListener('click', () => setRatingsMode(btn.dataset.mode)));
 
     nameInput.addEventListener('change', async () => {
