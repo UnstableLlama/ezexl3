@@ -12,6 +12,7 @@ import shutil
 import signal
 import sys
 import tempfile
+import threading
 import traceback
 import uuid
 import webbrowser
@@ -714,20 +715,67 @@ def _config_path() -> Path:
     return base / "ezexl3" / "ui.json"
 
 
-def _load_config() -> dict:
+_CONFIG_LOCK = threading.Lock()
+
+
+def _read_config() -> dict:
+    """Strict read: {} only when the file genuinely isn't there.
+
+    Raises on an existing-but-unparseable file, so a read-modify-write
+    can tell "nothing saved yet" from "couldn't read what's saved" —
+    conflating the two is how a whole config gets replaced by one key.
+    """
     p = _config_path()
-    if p.is_file():
-        try:
-            return json.loads(p.read_text("utf-8"))
-        except Exception:
-            pass
-    return {}
+    if not p.is_file():
+        return {}
+    return json.loads(p.read_text("utf-8"))
+
+
+def _load_config() -> dict:
+    """Best-effort read for display. Never raises."""
+    try:
+        return _read_config()
+    except Exception:
+        return {}
 
 
 def _save_config(data: dict) -> None:
+    # Write a temp file and rename it over the target: a reader sees
+    # either the old file or the new one, never a half-written one. The
+    # dashboard and the chat server share this file and do run at once
+    # (the dashboard switch spawns one from the other), and a plain
+    # write_text left a window where a reader caught the truncated file,
+    # parsed it as {}, and then persisted that back over everything.
     p = _config_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, indent=2), "utf-8")
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".ui.json.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, p)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def _update_config(incoming: dict) -> None:
+    """Merge incoming keys into the saved config and write it back."""
+    with _CONFIG_LOCK:
+        try:
+            cfg = _read_config()
+        except Exception:
+            # Corrupt or unreadable. Keep a copy instead of letting the
+            # merge below silently overwrite it with near-nothing.
+            p = _config_path()
+            try:
+                p.replace(p.with_suffix(".json.corrupt"))
+            except OSError:
+                pass
+            cfg = {}
+        cfg.update(incoming)
+        _save_config(cfg)
 
 
 async def handle_config_get(request: web.Request) -> web.Response:
@@ -736,9 +784,7 @@ async def handle_config_get(request: web.Request) -> web.Response:
 
 async def handle_config_set(request: web.Request) -> web.Response:
     incoming = await request.json()
-    cfg = await asyncio.to_thread(_load_config)
-    cfg.update(incoming)
-    await asyncio.to_thread(_save_config, cfg)
+    await asyncio.to_thread(_update_config, incoming)
     return web.json_response({"ok": True})
 
 

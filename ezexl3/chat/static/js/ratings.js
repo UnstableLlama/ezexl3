@@ -688,6 +688,17 @@ function updateRatingsSidebar(datasets) {
 }
 
 async function initRatings() {
+  // Bind the mode toggles before anything is awaited. Everything below
+  // hangs on /api/config, and a page that loads faster than the server
+  // answers used to leave the top bar inert until a manual reload.
+  // Chat/Preference picks the scope; entering Preference restores the
+  // last format used rather than always snapping back to DPO.
+  document.querySelectorAll('#chat-mode-toggle button').forEach(btn =>
+    btn.addEventListener('click', () =>
+      setRatingsMode(btn.dataset.scope === 'pref' ? lastPrefKind : 'off')));
+  document.querySelectorAll('#pref-kind-toggle button').forEach(btn =>
+    btn.addEventListener('click', () => setRatingsMode(btn.dataset.mode)));
+
   try {
     const cfgRes = await fetch('/api/config');
     const cfg = await cfgRes.json();
@@ -846,14 +857,6 @@ async function initRatings() {
         }).catch(() => {});
       });
     }
-
-    // Chat/Preference picks the scope; entering Preference restores the
-    // last format used rather than always snapping back to DPO.
-    document.querySelectorAll('#chat-mode-toggle button').forEach(btn =>
-      btn.addEventListener('click', () =>
-        setRatingsMode(btn.dataset.scope === 'pref' ? lastPrefKind : 'off')));
-    document.querySelectorAll('#pref-kind-toggle button').forEach(btn =>
-      btn.addEventListener('click', () => setRatingsMode(btn.dataset.mode)));
 
     nameInput.addEventListener('change', async () => {
       const name = nameInput.value.trim() || 'chat';
