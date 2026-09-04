@@ -688,22 +688,22 @@ body.data-splitter-active { cursor: col-resize !important; user-select: none; }
       var(--paint-color) 0px, var(--paint-color) 1px,
       #000 1px, #000 6px);
 }
-.bpw-paint-btn.active[data-paint-flag="opt"] {
-  background: transparent;
-  border-color: var(--paint-color);
-  outline: 3px solid var(--paint-color);
-  outline-offset: -1px;
-  color: var(--paint-color);
+.bpw-paint-btn.active[data-paint-flag="sc"] {
+  background:
+    repeating-linear-gradient(45deg,
+      var(--paint-color) 0px, var(--paint-color) 1px,
+      #000 1px, #000 6px);
 }
-/* Global toggle button (e.g. -pm): inverts on click instead of paint mode */
-.bpw-paint-btn-global.active {
+/* -pm is the one flag with no token stripe (it's a glow), so its button
+   inverts to white instead of picking up a pattern. */
+.bpw-paint-btn.active[data-paint-flag="pm"] {
   background: #fff;
   color: #000;
   border-color: #fff;
 }
-/* Token glow for active -pm is set inline by applyTokenColor in forms.js,
-   so it always survives rebuilds and stacks cleanly with -opt outlines
-   and -hq/-hb8 stripes. */
+/* Token colors are set inline by applyTokenColor in forms.js, so they
+   always survive rebuilds and the -pm glow stacks cleanly over the
+   -hq/-sc stripe patterns. */
 
 /* ── BPW Token Display ─────────────────────────────────────────── */
 .bpw-token-wrap {

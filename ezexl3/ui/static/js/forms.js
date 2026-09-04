@@ -50,6 +50,12 @@ function renderForm(commandKey) {
     container.appendChild(grid);
   }
 
+  // BPW fields render their tokens on input, but the flag buttons live in
+  // the same container — build them once now so they show on an empty form.
+  for (const field of cmd.fields) {
+    if (field.bpwPaintFlags) rebuildBpwTokens(field.name, field.bpwPaintFlags);
+  }
+
   // Side panels (right column)
   renderEvalsPanel(commandKey);
   renderMetadataPanel(commandKey);
@@ -339,11 +345,12 @@ function rebuildBpwTokens(fieldName, paintFlags) {
 
   display.innerHTML = "";
 
-  // Global toggles (e.g. -pm) apply universally to every token. We pass
-  // the resolved set into applyTokenColor so the visual flag (white glow)
-  // is set as an inline style and survives any CSS specificity quirks.
+  // Global toggles apply to every token rather than being painted on one
+  // at a time: -pm shows as a white glow, the rest (e.g. -sc) fold into
+  // each token's stripe pattern alongside whatever was painted on it.
   const globalSet = bpwGlobalState[fieldName] || new Set();
   const pmActive = globalSet.has("pm");
+  const globalStripes = [...globalSet].filter(n => n !== "pm");
 
   const validParts = parts.filter(isValidBpw);
   validParts.forEach((bpw, idx) => {
@@ -353,8 +360,8 @@ function rebuildBpwTokens(fieldName, paintFlags) {
     token.dataset.bpw = bpw;
     token.title = "click a color then click me";
 
-    // Apply flag colors
-    const flags = bpwFlagState[fieldName][bpw] || new Set();
+    // Apply flag colors — painted flags plus any global stripe flags
+    const flags = new Set([...(bpwFlagState[fieldName][bpw] || []), ...globalStripes]);
     applyTokenColor(token, flags, paintFlags, pmActive);
 
     token.addEventListener("mousedown", (e) => {
@@ -373,53 +380,53 @@ function rebuildBpwTokens(fieldName, paintFlags) {
     }
   });
 
-  // Append paint buttons inline after the tokens
-  if (validParts.length > 0) {
-    const paintWrap = document.createElement("div");
-    paintWrap.className = "bpw-paint-buttons";
-    for (const pf of paintFlags) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "bpw-paint-btn";
-      if (pf.isGlobal) btn.classList.add("bpw-paint-btn-global");
-      btn.dataset.paintFlag = pf.name;
-      btn.dataset.paintColor = pf.color;
-      btn.textContent = pf.label;
-      btn.style.setProperty("--paint-color", pf.color);
-      if (pf.tooltip) btn.title = pf.tooltip;
-      if (jobRunning) btn.disabled = true;
-      if (pf.isGlobal) {
-        // Global toggle (e.g. -pm) — independent on/off, not paint mode.
-        if (bpwGlobalState[fieldName]?.has(pf.name)) {
-          btn.classList.add("active");
-        }
-        btn.addEventListener("mousedown", (e) => {
-          if (jobRunning) return;
-          e.preventDefault();
-          if (!bpwGlobalState[fieldName]) bpwGlobalState[fieldName] = new Set();
-          const set = bpwGlobalState[fieldName];
-          if (set.has(pf.name)) set.delete(pf.name);
-          else set.add(pf.name);
-          // Rebuild so the token glow + button active state stay in sync
-          rebuildBpwTokens(fieldName, paintFlags);
-        });
-      } else {
-        // Restore active state if this paint mode is currently on
-        if (activePaint && activePaint.fieldName === fieldName && activePaint.flagName === pf.name) {
-          btn.classList.add("active");
-        }
-        // Use mousedown so the click isn't eaten by the BPW input's blur
-        // when the user clicks straight from typing into the entry field.
-        btn.addEventListener("mousedown", (e) => {
-          if (jobRunning) return;
-          e.preventDefault();
-          togglePaintMode(fieldName, pf.name, btn);
-        });
+  // Paint buttons render inline after the tokens, always — they're the
+  // legend for the colors as much as the control, so they shouldn't
+  // vanish just because no BPW has been typed yet.
+  const paintWrap = document.createElement("div");
+  paintWrap.className = "bpw-paint-buttons";
+  for (const pf of paintFlags) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "bpw-paint-btn";
+    if (pf.isGlobal) btn.classList.add("bpw-paint-btn-global");
+    btn.dataset.paintFlag = pf.name;
+    btn.dataset.paintColor = pf.color;
+    btn.textContent = pf.label;
+    btn.style.setProperty("--paint-color", pf.color);
+    if (pf.tooltip) btn.title = pf.tooltip;
+    if (jobRunning) btn.disabled = true;
+    if (pf.isGlobal) {
+      // Global toggle (e.g. -pm) — independent on/off, not paint mode.
+      if (bpwGlobalState[fieldName]?.has(pf.name)) {
+        btn.classList.add("active");
       }
-      paintWrap.appendChild(btn);
+      btn.addEventListener("mousedown", (e) => {
+        if (jobRunning) return;
+        e.preventDefault();
+        if (!bpwGlobalState[fieldName]) bpwGlobalState[fieldName] = new Set();
+        const set = bpwGlobalState[fieldName];
+        if (set.has(pf.name)) set.delete(pf.name);
+        else set.add(pf.name);
+        // Rebuild so the token glow + button active state stay in sync
+        rebuildBpwTokens(fieldName, paintFlags);
+      });
+    } else {
+      // Restore active state if this paint mode is currently on
+      if (activePaint && activePaint.fieldName === fieldName && activePaint.flagName === pf.name) {
+        btn.classList.add("active");
+      }
+      // Use mousedown so the click isn't eaten by the BPW input's blur
+      // when the user clicks straight from typing into the entry field.
+      btn.addEventListener("mousedown", (e) => {
+        if (jobRunning) return;
+        e.preventDefault();
+        togglePaintMode(fieldName, pf.name, btn);
+      });
     }
-    display.appendChild(paintWrap);
+    paintWrap.appendChild(btn);
   }
+  display.appendChild(paintWrap);
 }
 
 function onTokenClick(fieldName, bpw, paintFlags) {
@@ -429,12 +436,6 @@ function onTokenClick(fieldName, bpw, paintFlags) {
   const flags = bpwFlagState[fieldName][bpw];
 
   if (activePaint && activePaint.fieldName === fieldName) {
-    // -opt can only be painted on fractional BPWs
-    const paintDef = paintFlags.find(p => p.name === activePaint.flagName);
-    if (paintDef && paintDef.fractionalOnly && !bpw.includes(".")) {
-      // Silently ignore click on non-fractional BPW for fractional-only flags
-      return;
-    }
     // Toggle the active paint flag on this BPW
     if (flags.has(activePaint.flagName)) {
       flags.delete(activePaint.flagName);
@@ -482,22 +483,7 @@ function applyTokenColor(token, flags, paintFlags, pmActive = false) {
 
   token.classList.add("bpw-token-flagged");
 
-  // Separate border-only flags (opt) from stripe flags (hq, sc)
-  const hasOpt = flags.has("opt");
-  const stripeFlags = [...flags].filter(f => f !== "opt");
-
-  // Apply red outline for -opt (additive — stacks with stripe patterns)
-  if (hasOpt) {
-    token.style.outline = "3px solid #d94a4a";
-    token.style.outlineOffset = "-1px";
-  }
-
-  if (stripeFlags.length === 0) {
-    // -opt only: red border, no stripe fill
-    if (hasOpt) token.style.color = "";
-    return;
-  }
-
+  const stripeFlags = [...flags];
   if (stripeFlags.length === 1) {
     const pf = paintFlags.find(p => p.name === stripeFlags[0]);
     if (pf) {

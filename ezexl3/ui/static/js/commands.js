@@ -16,8 +16,7 @@ const COMMANDS = {
       { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "1-8, comma separated, decimals ok (e.g. 2,3,4.5,6)",
         bpwPaintFlags: [
           { name: "hq", flag: "-hq", label: "-hq", color: "#4a90d9", tooltip: "use on low bpws" },
-          { name: "sc", flag: "-sc", label: "-sc", color: "#9b6dd6", tooltip: "self-calibrated quants (any bpw, slow)" },
-          { name: "opt", flag: "-opt", label: "-opt", color: "#d94a4a", borderOnly: true, fractionalOnly: true, tooltip: "use on decimal bpws" },
+          { name: "sc", flag: "-sc", label: "-sc", color: "#9b6dd6", isGlobal: true, tooltip: "self-calibrated quants (all bpws, slow)" },
           { name: "pm", flag: "-pm", label: "-pm", color: "#ffffff", isGlobal: true, tooltip: "use on MoEs" },
         ]
       },
@@ -28,7 +27,6 @@ const COMMANDS = {
       { name: "ngram_bits", flag: "-ngb", type: "number", default: "4", label: "N-gram Bits", help: "Bits per weight for the hashed n-gram embedding table, 1-8 (exllamav3 default: target BPW rounded)", toggleable: true, group: "ngram" },
       { name: "ngram_file", flag: "-ngf", type: "text", label: "N-gram File", placeholder: "/path/to/ngram_embedding.safetensors", help: "Pre-quantized n-gram table (from exllamav3 util/convert_ngram.py) reused instead of quantizing the table", group: "ngram" },
       { name: "template", flag: "-t", type: "template", label: "Template", help: "README template style" },
-      { name: "layers", flag: "-l", type: "select", choices: ["1", "2", "3"], default: "2", label: "Optimization Depth", help: "1-3, 3 = longer optimization (2 default)", toggleable: true },
       // Boolean flags
       { name: "no_verify", flag: "-nv", type: "boolean", label: "No Verify", help: "Batch mode: all quants then all measures" },
       { name: "no_cleanup", flag: "-nc", type: "boolean", label: "Keep Work Dirs", help: "Keep w-* working directories and logs" },
@@ -57,8 +55,7 @@ const COMMANDS = {
       { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "1-8, comma separated, decimals ok (e.g. 2,3,4.5,6)",
         bpwPaintFlags: [
           { name: "hq", flag: "-hq", label: "-hq", color: "#4a90d9", tooltip: "use on low bpws" },
-          { name: "sc", flag: "-sc", label: "-sc", color: "#9b6dd6", tooltip: "self-calibrated quants (any bpw, slow)" },
-          { name: "opt", flag: "-opt", label: "-opt", color: "#d94a4a", borderOnly: true, fractionalOnly: true, tooltip: "use on decimal bpws" },
+          { name: "sc", flag: "-sc", label: "-sc", color: "#9b6dd6", isGlobal: true, tooltip: "self-calibrated quants (all bpws, slow)" },
           { name: "pm", flag: "-pm", label: "-pm", color: "#ffffff", isGlobal: true, tooltip: "use on MoEs" },
         ]
       },
@@ -70,7 +67,6 @@ const COMMANDS = {
       { name: "ngram_file", flag: "-ngf", type: "text", label: "N-gram File", placeholder: "/path/to/ngram_embedding.safetensors", help: "Pre-quantized n-gram table (from exllamav3 util/convert_ngram.py) reused instead of quantizing the table", group: "ngram" },
       { name: "out_template", flag: "--out-template", type: "text", default: "{model}/{bpw}", label: "Output Template", help: "Fields: {model}, {model_name}, {bpw}" },
       { name: "w_template", flag: "--w-template", type: "text", default: "{model}/w-{bpw}", label: "Work Dir Template", help: "Fields: {model}, {model_name}, {bpw}" },
-      { name: "layers", flag: "-l", type: "select", choices: ["1", "2", "3"], default: "2", label: "Optimization Depth", help: "1-3, 3 = longer optimization (2 default)", toggleable: true },
       { name: "dry", flag: "--dry", type: "boolean", label: "Dry Run", help: "Print commands without executing" },
       { name: "continue_on_error", flag: "--continue-on-error", type: "boolean", label: "Continue on Error" },
       { name: "no_logs", flag: "--no-logs", type: "boolean", label: "No Logs" },
