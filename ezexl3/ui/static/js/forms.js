@@ -483,27 +483,26 @@ function applyTokenColor(token, flags, paintFlags, pmActive = false) {
 
   token.classList.add("bpw-token-flagged");
 
-  const stripeFlags = [...flags];
-  if (stripeFlags.length === 1) {
-    const pf = paintFlags.find(p => p.name === stripeFlags[0]);
-    if (pf) {
-      token.style.color = "#fff";
-      // Accessibility: stripe patterns for color-impaired distinction
-      // -hq = horizontal stripes, -sc = diagonal stripes
-      // 1px color, 5px black — thin stripes with breathing room
-      const dir = pf.name === "hq" ? "180deg" : pf.name === "sc" ? "45deg" : "90deg";
-      token.style.backgroundImage =
-        `repeating-linear-gradient(${dir}, ${pf.color} 0px, ${pf.color} 1px, #000 1px, #000 6px)`;
-    }
-  } else if (stripeFlags.length >= 2) {
-    // Both hq + sc: teal/cyan with cross-hatch (intersection of both stripe directions)
-    const c = "#00897b";
-    token.style.color = "#fff";
-    token.style.backgroundImage =
-      `repeating-linear-gradient(180deg, ${c} 0px, ${c} 1px, transparent 1px, transparent 6px), ` +
-      `repeating-linear-gradient(45deg, ${c} 0px, ${c} 1px, transparent 1px, transparent 6px)`;
-    token.style.backgroundColor = "#000";
-  }
+  // One stripe layer per flag, each keeping its own color and angle, so a
+  // token carrying two flags reads as both patterns crossing rather than
+  // as some third color. Layers stack over black; gaps are transparent so
+  // the ones underneath show through.
+  const layers = [...flags]
+    .map(name => paintFlags.find(p => p.name === name))
+    .filter(Boolean)
+    .map(pf => `repeating-linear-gradient(${stripeAngle(pf.name)}, ` +
+               `${pf.color} 0px, ${pf.color} 1px, transparent 1px, transparent 6px)`);
+  if (!layers.length) return;
+
+  token.style.color = "#fff";
+  token.style.backgroundImage = layers.join(", ");
+  token.style.backgroundColor = "#000";
+}
+
+// Accessibility: stripe angle distinguishes the flags without relying on
+// color alone. -hq = horizontal, -sc = diagonal.
+function stripeAngle(flagName) {
+  return flagName === "hq" ? "180deg" : flagName === "sc" ? "45deg" : "90deg";
 }
 
 function getBpwFlags(fieldName) {
