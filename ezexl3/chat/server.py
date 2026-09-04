@@ -8,8 +8,6 @@ import json
 import os
 import signal
 import sys
-import tempfile
-import threading
 import webbrowser
 from pathlib import Path
 
@@ -640,74 +638,12 @@ async def handle_ui_launch(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 # Persistent user config (shared with dashboard: ~/.config/ezexl3/ui.json)
 # ---------------------------------------------------------------------------
+# Implementation lives in ezexl3.userconfig because the dashboard writes
+# the same file concurrently. Bound to the old private names so existing
+# call sites — and the tests that patch _load_config — keep working.
 
-def _config_path() -> Path:
-    xdg = os.environ.get("XDG_CONFIG_HOME", "")
-    base = Path(xdg) if xdg else Path.home() / ".config"
-    return base / "ezexl3" / "ui.json"
-
-
-_CONFIG_LOCK = threading.Lock()
-
-
-def _read_config() -> dict:
-    """Strict read: {} only when the file genuinely isn't there.
-
-    Raises on an existing-but-unparseable file, so a read-modify-write
-    can tell "nothing saved yet" from "couldn't read what's saved" —
-    conflating the two is how a whole config gets replaced by one key.
-    """
-    p = _config_path()
-    if not p.is_file():
-        return {}
-    return json.loads(p.read_text("utf-8"))
-
-
-def _load_config() -> dict:
-    """Best-effort read for display. Never raises."""
-    try:
-        return _read_config()
-    except Exception:
-        return {}
-
-
-def _save_config(data: dict) -> None:
-    # Write a temp file and rename it over the target: a reader sees
-    # either the old file or the new one, never a half-written one. The
-    # chat server and the dashboard share this file and do run at once
-    # (the dashboard switch spawns one from the other), and a plain
-    # write_text left a window where a reader caught the truncated file,
-    # parsed it as {}, and then persisted that back over everything.
-    p = _config_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".ui.json.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, p)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
-
-
-def _update_config(incoming: dict) -> None:
-    """Merge incoming keys into the saved config and write it back."""
-    with _CONFIG_LOCK:
-        try:
-            cfg = _read_config()
-        except Exception:
-            # Corrupt or unreadable. Keep a copy instead of letting the
-            # merge below silently overwrite it with near-nothing.
-            p = _config_path()
-            try:
-                p.replace(p.with_suffix(".json.corrupt"))
-            except OSError:
-                pass
-            cfg = {}
-        cfg.update(incoming)
-        _save_config(cfg)
+from ..userconfig import load_config as _load_config      # noqa: E402
+from ..userconfig import update_config as _update_config  # noqa: E402
 
 
 async def handle_config_get(request: web.Request) -> web.Response:
