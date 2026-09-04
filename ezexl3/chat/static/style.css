@@ -88,6 +88,7 @@ body { display: flex; overflow: hidden; }
   outline: none; width: 100%;
 }
 .sb-textarea:focus, #sidebar input:focus { border-color: var(--accent); }
+.sb-textarea.invalid, .sb-textarea.invalid:focus { border-color: var(--red); }
 .sb-textarea { resize: vertical; min-height: 60px; line-height: 1.4; }
 .sb-textarea.mono { font-family: var(--mono); font-size: 12px; }
 .sb-hint { font-size: 11px; color: var(--text-dim); line-height: 1.35; }
@@ -467,6 +468,8 @@ body { display: flex; overflow: hidden; }
   overflow-wrap: break-word;
   min-width: 0;
 }
+/* Strip-formatting view: raw text, wrapping the only thing left */
+.msg-body.plain { white-space: pre-wrap; }
 .msg-body p { margin: 0 0 8px; }
 .msg-body p:last-child { margin-bottom: 0; }
 .msg-body ul, .msg-body ol { margin: 4px 0 8px 20px; }

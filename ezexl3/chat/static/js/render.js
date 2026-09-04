@@ -42,7 +42,23 @@ function renderThinkContent(text, isOpen) {
     `</div>`;
 }
 
+// Muse recipient chains stream with literal special-token text
+// ("to=self<|message|>…<|eom|><|start|>assistant to=user<|message|>…").
+// Map them onto the <think> markup processThinkTags already folds.
+function normalizeMuseChain(text) {
+  return text
+    .replace(/^\s*to=self<\|message\|>/, '<think>')
+    .replace(/<\|eom\|><\|start\|>assistant to=self<\|message\|>/g, '\n\n')
+    .replace(/<\|eom\|><\|start\|>assistant to=user<\|message\|>/, '</think>')
+    .replace(/^\s*to=user<\|message\|>/, '')
+    .replace(/<\|eot\|>\s*$/, '');
+}
+
 function processThinkTags(text) {
+  if (typeof settings !== 'undefined' && settings &&
+      (settings.mode || '').startsWith('muse')) {
+    text = normalizeMuseChain(text);
+  }
   let html = '';
   let remaining = text;
   let thinkOpen = false;
@@ -79,14 +95,50 @@ function processThinkTags(text) {
   return {html, thinkOpen};
 }
 
+// ── Strip-formatting mode ───────────────────────────────────────
+// View-only toggle: show message text exactly as it came off the model —
+// no markdown, no dialogue quoting, no <think> folding — soft-wrapped at
+// the column edge. Every rendered body keeps its source text so the
+// toggle can re-render in place, including a body that's mid-stream.
+let stripFormatting = false;
+
+function renderPlain(el, text, cursor) {
+  el.classList.add('plain');
+  el.textContent = text;
+  if (cursor) {
+    const c = document.createElement('span');
+    c.className = 'cursor';
+    el.appendChild(c);
+  }
+}
+
 function renderStreaming(el, text) {
+  el._srcText = text;
+  if (stripFormatting) return renderPlain(el, text, true);
+  el.classList.remove('plain');
   const {html, thinkOpen} = processThinkTags(text);
   el.innerHTML = html + '<span class="cursor"></span>';
 }
 
 function renderFinal(el, text) {
+  el._srcText = text;
+  if (stripFormatting) return renderPlain(el, text, false);
+  el.classList.remove('plain');
   const {html} = processThinkTags(text);
   el.innerHTML = html;
+}
+
+// Re-render every message body in place under the new mode. Deliberately
+// not a renderActiveTree() call: an in-flight generation holds a direct
+// reference to its body element, and rebuilding the tree would orphan it
+// so the rest of the stream lands in a detached node.
+function setStripFormatting(on) {
+  stripFormatting = !!on;
+  for (const el of document.querySelectorAll('.msg-body')) {
+    if (el._srcText == null) continue;  // e.g. an unstarted duel candidate
+    if (el.querySelector('.cursor')) renderStreaming(el, el._srcText);
+    else renderFinal(el, el._srcText);
+  }
 }
 
 function createMsgEl(role, text) {

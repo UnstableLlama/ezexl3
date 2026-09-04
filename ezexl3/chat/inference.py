@@ -99,6 +99,9 @@ class ChatSettings:
     think_budget: Optional[int] = None
     amnesia: bool = False
     banned_strings: List[str] = field(default_factory=list)
+    # Extra chat-template variables (e.g. {"reasoning_strength": "low"}),
+    # consumed by the jinja mode and the muse presets.
+    template_kwargs: dict = field(default_factory=dict)
     mode: str = "chatml"
     user_name: str = "User"
     bot_name: str = "Assistant"
@@ -640,6 +643,8 @@ class ChatEngine:
         # encode() would then add a second time.
         spc["model_dir"] = self.model_dir
         spc["tokenizer"] = self.tokenizer
+        if isinstance(self.settings.template_kwargs, dict):
+            spc["template_kwargs"] = dict(self.settings.template_kwargs)
         pf.set_special(spc)
         return pf
 

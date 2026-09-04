@@ -291,9 +291,12 @@ class TestAutoDetectCoverage(unittest.TestCase):
         #     the "mistral" hint string routes to mistral3 for all modern models.
         #   - "gemma4-nothink": manual alternative to "gemma4" (same models,
         #     thinking suppressed); auto-detect must keep picking "gemma4".
+        #   - "muse-nothink": same deal for "muse" — the prefilled empty
+        #     to=self turn is an opt-in, so auto-detect must keep picking
+        #     "muse" for Muse Glimmer models.
         #   - "jinja": renders the model's own chat template; deliberately
         #     opt-in, so auto-detect must never select it by model name.
-        exempt = {"raw", "mistral", "gemma4-nothink", "jinja"}
+        exempt = {"raw", "mistral", "gemma4-nothink", "muse-nothink", "jinja"}
 
         missing = set(prompt_formats.keys()) - reachable_modes - exempt
         self.assertEqual(

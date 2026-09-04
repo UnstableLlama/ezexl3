@@ -18,9 +18,13 @@ class PromptFormat:
     def __init__(self, user_name, bot_name):
         self.user_name = user_name
         self.bot_name = bot_name
+        # Extra chat-template variables from the UI's "Template kwargs"
+        # field (e.g. {"reasoning_strength": "low"}). Formats that support
+        # them read what they want; the rest ignore them.
+        self.template_kwargs = {}
 
     def set_special(self, spc: dict):
-        pass
+        self.template_kwargs = spc.get("template_kwargs") or {}
 
     def default_system_prompt(self, think):
         raise NotImplementedError()
@@ -549,6 +553,7 @@ class PromptFormat_seed(PromptFormat):
         self.thinking_budget = 1024
 
     def set_special(self, spc: dict):
+        super().set_special(spc)
         self.thinking_budget = spc.get("thinking_budget", self.thinking_budget)
 
     def default_system_prompt(self, think):
@@ -1021,41 +1026,67 @@ class PromptFormat_deepseek(PromptFormat_ds4):
 
 
 class PromptFormat_muse(PromptFormat):
-    description = "Muse Glimmer (Meta)"
+    description = "Muse Glimmer (Meta), reasoning on"
+
+    # Matches the reference template's auto-injected system block.
+    KNOWLEDGE_CUTOFF = "2026-01-04"
+    REASONING_LEVELS = ("low", "medium", "high", "xhigh")
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        from datetime import datetime
+        self.today_str = datetime.today().strftime("%Y-%m-%d")
 
     def default_system_prompt(self, think):
         return "You are a helpful AI assistant."
 
+    def _reasoning_strength(self):
+        # The official knob (template kwarg, rendered into the system block).
+        # Anything unrecognized falls back to the template default.
+        rs = self.template_kwargs.get("reasoning_strength")
+        return rs if rs in self.REASONING_LEVELS else "high"
+
+    def _system_block(self, system_prompt):
+        context = "<|begin_of_text|><|start|>system<|message|>"
+        if system_prompt:
+            context += system_prompt.strip()
+        else:
+            context += "You are a helpful AI assistant."
+        context += f"\nKnowledge cutoff: {self.KNOWLEDGE_CUTOFF}."
+        context += f"\nCurrent date: {self.today_str}.\n\n"
+        context += f"Reasoning strength: {self._reasoning_strength()}.\n\n"
+        context += """# Valid recipients: "self", "user".<|eot|>"""
+        return context
+
+    @staticmethod
+    def _final_answer(a):
+        # A finished reasoning turn's stored reply is the raw recipient
+        # chain, e.g. "to=self<|message|>{reasoning}<|eom|><|start|>assistant
+        # to=user<|message|>{answer}" (this tokenizer's streaming path keeps
+        # the special tokens' literal text). Keep only the final answer and
+        # drop the reasoning from the stored context, like the reference
+        # template does. Splitting on the plain "to=user" also repairs
+        # replies whose markers were stripped by other decode paths.
+        if a.startswith("to="):
+            p = a.rfind("to=user")
+            if p >= 0:
+                tail = a[p + len("to=user"):]
+                if tail.startswith("<|message|>"):
+                    tail = tail[len("<|message|>"):]
+                return tail.lstrip()
+        return a
+
     def format(self, system_prompt, messages, think):
         # Harmony-shaped, but a turn is a chain of messages addressed to a
         # recipient (to=self for reasoning, to=user for the answer) rather
-        # than a chain of named channels.
-        context = "<|begin_of_text|><|start|>system<|message|>"
-        if system_prompt:
-            context += system_prompt.strip() + "\n\n"
-        context += f"Reasoning strength: {'high' if think else 'low'}.\n\n"
-        context += """# Valid recipients: "self", "user".<|eot|>"""
+        # than a chain of named channels. The model opens its own to=self
+        # message, so the open turn ends at the bare assistant header.
+        context = self._system_block(system_prompt)
         for u, a in messages:
             context += f"<|start|>user<|message|>{u}<|eot|>"
             context += "<|start|>assistant"
             if a is not None:
-                if a.startswith("to="):
-                    # Raw recipient chain from a completed turn: reasoning
-                    # addressed to=self, answer to=user, joined by <|eom|>.
-                    # Keep only the final to=user message and drop the
-                    # reasoning from the stored context, like the reference
-                    # template. The closing <|eot|> was consumed as a stop
-                    # condition, so restore it.
-                    tag = "to=user<|message|>"
-                    p = a.rfind(tag)
-                    if p >= 0:
-                        context += f" to=user<|message|>{a[p + len(tag):]}<|eot|>"
-                    else:
-                        # No final message (reasoning truncated?); keep the
-                        # raw chain
-                        context += " " + a + "<|eot|>"
-                else:
-                    context += f" to=user<|message|>{a}<|eot|>"
+                context += f" to=user<|message|>{self._final_answer(a)}<|eot|>"
         return context
 
     def add_bos(self):
@@ -1071,6 +1102,41 @@ class PromptFormat_muse(PromptFormat):
             tokenizer.eos_token_id,
             tokenizer.single_id("<|eot|>"),
             "<|eot|>",
+        ]
+
+
+class PromptFormat_muse_nothink(PromptFormat_muse):
+    description = "Muse Glimmer, thinking disabled (pre-filled empty to=self turn)"
+
+    # Exactly what the community no-think template (enable_thinking=false)
+    # prefills before every assistant reply: a closed, empty to=self turn,
+    # then the answer header. Generation starts at the answer content, so
+    # the stream and the stored reply are clean text with no recipient tags.
+    NOTHINK_PREFILL = (
+        "<|start|>assistant to=self<|message|><|eom|>"
+        "<|start|>assistant to=user<|message|>"
+    )
+
+    def format(self, system_prompt, messages, think):
+        context = self._system_block(system_prompt)
+        for u, a in messages:
+            context += f"<|start|>user<|message|>{u}<|eot|>"
+            context += self.NOTHINK_PREFILL
+            if a is not None:
+                # _final_answer also cleans replies captured before the
+                # prefill existed (raw "to=self...to=user..." chains).
+                context += f"{self._final_answer(a)}<|eot|>"
+        return context
+
+    def stop_conditions(self, tokenizer):
+        # <|eom|> shouldn't appear in a prefilled answer; stop rather than
+        # let the model ramble into a new to=self message if it does.
+        return [
+            tokenizer.eos_token_id,
+            tokenizer.single_id("<|eot|>"),
+            "<|eot|>",
+            tokenizer.single_id("<|eom|>"),
+            "<|eom|>",
         ]
 
 
@@ -1090,6 +1156,7 @@ class PromptFormat_jinja(PromptFormat):
         self._auto_bos = None
 
     def set_special(self, spc: dict):
+        super().set_special(spc)
         self.model_dir = spc.get("model_dir")
         self._tokenizer = spc.get("tokenizer")
 
@@ -1119,8 +1186,12 @@ class PromptFormat_jinja(PromptFormat):
             msgs.append({"role": "user", "content": u})
             if a is not None:
                 msgs.append(_split_reasoning(a))
+        kw = {"enable_thinking": bool(think)}
+        kw.update(self.template_kwargs)
+        for k in ("messages", "add_generation_prompt"):
+            kw.pop(k, None)
         return self._strip_auto_bos(render(
-            msgs, add_generation_prompt=True, enable_thinking=bool(think)
+            msgs, add_generation_prompt=True, **kw
         ))
 
     def _strip_auto_bos(self, text):
@@ -1338,6 +1409,7 @@ prompt_formats = {
     "deepseek": PromptFormat_deepseek,
     "ds4": PromptFormat_ds4,
     "muse": PromptFormat_muse,
+    "muse-nothink": PromptFormat_muse_nothink,
     "jinja": PromptFormat_jinja,
 }
 

@@ -72,8 +72,11 @@ stopBtn.onclick = () => stopGeneration();
 
 // ── Settings event listeners ────────────────────────────────────
 document.getElementById('s-system').addEventListener('input', syncSettings);
+document.getElementById('s-tplkwargs').addEventListener('input', syncSettings);
 document.getElementById('s-mode').addEventListener('change', syncSettings);
 document.getElementById('s-thinkbudget').addEventListener('input', syncSettings);
+document.getElementById('strip-formatting').addEventListener('change',
+  e => setStripFormatting(e.target.checked));
 document.getElementById('banned-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); addBan(); }
 });

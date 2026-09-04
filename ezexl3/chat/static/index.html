@@ -186,6 +186,20 @@
       <label class="sb-label">System Prompt</label>
       <textarea class="sb-textarea" id="s-system" rows="4"></textarea>
     </div>
+    <div class="sb-row">
+      <label class="sb-label">Template kwargs (JSON)</label>
+      <textarea class="sb-textarea mono" id="s-tplkwargs" rows="2"
+                placeholder='{"reasoning_strength": "low"}'></textarea>
+      <div class="sb-hint">Extra chat-template variables, passed to the jinja
+        mode and the muse presets (reasoning_strength:
+        low/medium/high/xhigh).</div>
+    </div>
+    <label class="gpu-auto-label">
+      <input type="checkbox" id="strip-formatting"> Strip formatting
+    </label>
+    <div class="sb-hint">View-only: show every message as raw text — no
+      markdown, no dialogue highlighting, no folded thought blocks, just
+      line wrapping. Toggle any time, even mid-generation.</div>
   </div>
 
   <h2>Sampling</h2>
