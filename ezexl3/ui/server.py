@@ -70,12 +70,45 @@ class Job:
 
 
 class JobManager:
+    # Finished jobs are kept so a reconnecting browser can still replay their output,
+    # but each one pins a 50k-event deque, so only keep a handful.
+    MAX_FINISHED = 8
+
     def __init__(self):
         self.current: Job | None = None
+        self.jobs: dict[str, Job] = {}
+
+    def live_job(self) -> Job | None:
+        """The job still holding the GPUs, or None.
+
+        Liveness is the subprocess's own exit state, never the cached `status`.
+        The two disagree exactly when it matters: stop() sets "stopped" up front,
+        and a job whose process outlived its parent reads as finished while it is
+        still very much running. Trusting `status` is what let a second job start
+        on the same GPUs and the same work dir.
+        """
+        for job in self.jobs.values():
+            if job.process is None:
+                # Slot claimed by start() but the process is not spawned yet.
+                if job.status == "starting":
+                    return job
+            elif job.process.returncode is None:
+                return job
+        return None
+
+    def _prune(self) -> None:
+        # dicts keep insertion order, so this drops the oldest finished jobs first.
+        finished = [
+            j for j in self.jobs.values()
+            if j.process is not None and j.process.returncode is not None
+        ]
+        for job in finished[:max(0, len(finished) - self.MAX_FINISHED)]:
+            self.jobs.pop(job.id, None)
 
     async def start(self, subcommand: str, args: list[str]) -> Job:
-        if self.current and self.current.status in ("starting", "running"):
-            raise RuntimeError("A job is already running")
+        live = self.live_job()
+        if live is not None:
+            raise RuntimeError(f"A job is already running: {' '.join(live.cmd)}")
 
         job_id = uuid.uuid4().hex[:12]
         # Prefer the installed entry-point script; fall back to python -m
@@ -85,15 +118,32 @@ class JobManager:
         else:
             cmd = [sys.executable, "-m", "ezexl3", subcommand] + args
         job = Job(job_id, cmd)
+        # Claim the slot before the await, so a second request landing while this one is
+        # still spawning loses the race instead of starting a concurrent job.
+        self.jobs[job_id] = job
         self.current = job
+        self._prune()
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
-        )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                # Own process group, so stop() can signal the whole tree. Quantization runs
+                # in a spawned grandchild, and signalling just the CLI leaves that worker
+                # orphaned and still writing to the work dir — where it collides with
+                # whatever job starts next.
+                start_new_session=True,
+            )
+        except BaseException:
+            # Never leave a "starting" job wedged in the map; it would block every
+            # subsequent start with a job that does not exist.
+            job.status = "done"
+            self.jobs.pop(job_id, None)
+            raise
+
         job.process = proc
         job.status = "running"
 
@@ -134,16 +184,33 @@ class JobManager:
         job.notify()
 
     async def stop(self, job_id: str):
-        job = self.current
-        if not job or job.id != job_id:
+        job = self.jobs.get(job_id)
+        if not job:
             return
         if job.process and job.process.returncode is None:
             job.status = "stopped"
-            job.process.terminate()
+            self._signal_tree(job, signal.SIGTERM)
             try:
-                await asyncio.wait_for(job.process.wait(), timeout=5)
+                # A quantize worker in the middle of a 10 GB checkpoint write needs longer than
+                # a couple of seconds to unwind, and SIGKILLing it there leaves a torn ckpt.
+                await asyncio.wait_for(job.process.wait(), timeout=30)
             except asyncio.TimeoutError:
-                job.process.kill()
+                self._signal_tree(job, signal.SIGKILL)
+                # SIGKILL cannot be caught, so this cannot hang. Without it stop() would
+                # return while the process is still being reaped, and the job would keep
+                # reading as live to the start guard.
+                await job.process.wait()
+
+    @staticmethod
+    def _signal_tree(job: Job, sig: int):
+        """Signal the job's whole process group, falling back to the direct child."""
+        try:
+            os.killpg(os.getpgid(job.process.pid), sig)
+        except (ProcessLookupError, PermissionError):
+            try:
+                job.process.send_signal(sig)
+            except ProcessLookupError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -255,8 +322,11 @@ async def handle_run(request: web.Request) -> web.Response:
     if subcommand not in valid_commands:
         return web.json_response({"error": f"Invalid command: {subcommand}"}, status=400)
 
-    if manager.current and manager.current.status in ("starting", "running"):
-        return web.json_response({"error": "A job is already running"}, status=409)
+    live = manager.live_job()
+    if live is not None:
+        return web.json_response(
+            {"error": f"A job is already running: {' '.join(live.cmd)}"}, status=409
+        )
 
     try:
         job = await manager.start(subcommand, args)
@@ -273,8 +343,8 @@ async def handle_run_stream(request: web.Request) -> web.Response:
     manager: JobManager = request.app["job_manager"]
     job_id = request.match_info["job_id"]
 
-    job = manager.current
-    if not job or job.id != job_id:
+    job = manager.jobs.get(job_id)
+    if not job:
         return web.json_response({"error": "Job not found"}, status=404)
 
     response = web.StreamResponse(
@@ -349,7 +419,9 @@ async def handle_run_stop(request: web.Request) -> web.Response:
 
 async def handle_run_status(request: web.Request) -> web.Response:
     manager: JobManager = request.app["job_manager"]
-    job = manager.current
+    # Prefer whatever is actually holding the GPUs over whatever started most recently,
+    # so the UI can never report "done" while a run is still going.
+    job = manager.live_job() or manager.current
     if not job:
         return web.json_response({"status": "idle"})
     return web.json_response({
