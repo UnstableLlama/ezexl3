@@ -251,7 +251,7 @@ async def handle_run(request: web.Request) -> web.Response:
     if not subcommand:
         return web.json_response({"error": "No command specified"}, status=400)
 
-    valid_commands = {"repo", "quantize", "quant", "mtp", "qbench", "measure", "readme", "upload"}
+    valid_commands = {"repo", "quantize", "quant", "qbench", "measure", "readme", "upload"}
     if subcommand not in valid_commands:
         return web.json_response({"error": f"Invalid command: {subcommand}"}, status=400)
 
@@ -432,7 +432,7 @@ async def handle_graph(request: web.Request) -> web.Response:
         # Need at least 2 numeric rows to draw
         rows = await asyncio.to_thread(read_all_rows, db_path)
         numeric = [r for r in rows.values()
-                   if r.get("KL Div") and r.get("PPL r-100") and r.get("GiB")]
+                   if r.get("KL Div") and r.get("PPL") and r.get("GiB")]
         if len(numeric) < 2:
             return web.json_response({"error": "Need at least 2 completed measurements"}, status=404)
 

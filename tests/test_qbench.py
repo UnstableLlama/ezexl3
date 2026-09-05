@@ -200,14 +200,72 @@ class QbenchUiWiringTests(unittest.TestCase):
         src = (REPO_ROOT / "ezexl3" / "ui" / "server.py").read_text()
         self.assertRegex(src, r'valid_commands = \{[^}]*"qbench"')
 
-    def test_commands_js_has_qbench_schema(self):
+    def test_commands_js_folds_qbench_into_the_evals_form(self):
         src = (REPO_ROOT / "ezexl3" / "ui" / "static" / "js" / "commands.js").read_text()
-        self.assertIn("qbench: {", src)
-        self.assertIn('flag: "--ref-engine"', src)
+        # No standalone qbench command any more — its knobs live in the
+        # measure ("Evals") form's collapsed qbench group.
+        self.assertNotIn("qbench: {\n    label:", src)
+        self.assertIn('label: "Evals"', src)
+        self.assertIn('subtitle: "Measure"', src)
+        for flag in ("--rows", "--length", "--dataset", "--trace",
+                     "--ref-engine", "--cache-gb", "--no-noise-floor", "--regen"):
+            self.assertIn(f'flag: "{flag}"', src)
+            line = next(ln for ln in src.splitlines() if f'flag: "{flag}"' in ln)
+            self.assertIn('group: "qbench"', line, f"{flag} is not in the qbench group")
 
-    def test_index_html_has_qbench_nav_button(self):
+    def test_index_html_drops_the_qbench_nav_button(self):
         src = (REPO_ROOT / "ezexl3" / "ui" / "static" / "index.html").read_text()
-        self.assertIn('data-cmd="qbench"', src)
+        self.assertNotIn('data-cmd="qbench"', src)
+        self.assertIn('data-cmd="measure"', src)
+
+    def test_results_tab_offers_kl_ppl_alongside_the_other_evals(self):
+        src = (REPO_ROOT / "ezexl3" / "ui" / "static" / "index.html").read_text()
+        self.assertIn('data-tab="results"', src)
+        for kind in ("klppl", "perf", "catbench"):
+            self.assertIn(f'<option value="{kind}">', src)
+
+
+class MeasureQbenchTuningTests(unittest.TestCase):
+    """`measure` forwards only the qbench knobs the user actually typed."""
+
+    UI_FLAGS = ["--rows", "50", "--length", "4096", "--dataset", "openwebtext",
+                "--template", "chat", "--trace", "/t.json",
+                "--ref-engine", "transformers", "--cache-gb", "20",
+                "--no-noise-floor", "--regen"]
+
+    def test_untouched_flags_are_not_forwarded(self):
+        parser = cli.build_parser()
+        args = parser.parse_args(["measure", "-m", "/m", "-b", "4"])
+        self.assertEqual(cli._collect_qbench_opts(args), {})
+
+    def test_typed_flags_map_onto_run_qbench_kwargs(self):
+        parser = cli.build_parser()
+        args = parser.parse_args(["measure", "-m", "/m", "-b", "4"] + self.UI_FLAGS)
+        self.assertEqual(cli._collect_qbench_opts(args), {
+            "rows": 50, "length": 4096, "dataset": "openwebtext",
+            "template": "chat", "trace": "/t.json",
+            "ref_engine": "transformers", "cache_gb": 20.0,
+            "regen": True, "noise_floor": False,
+        })
+
+    def test_collected_opts_are_all_real_run_qbench_kwargs(self):
+        import inspect
+        parser = cli.build_parser()
+        args = parser.parse_args(["measure", "-m", "/m", "-b", "4"] + self.UI_FLAGS)
+        accepted = set(inspect.signature(qbench.run_qbench).parameters)
+        self.assertEqual(set(cli._collect_qbench_opts(args)) - accepted, set())
+
+    def test_measure_dispatch_passes_opts_to_the_stage(self):
+        with patch("ezexl3.repo.run_measure_stage", return_value=0) as mock_stage:
+            rc = cli.main(["measure", "-m", "/m", "-b", "4", "--rows", "50"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(mock_stage.call_args.kwargs["qbench_opts"], {"rows": 50})
+
+    def test_measure_dispatch_passes_none_when_untouched(self):
+        with patch("ezexl3.repo.run_measure_stage", return_value=0) as mock_stage:
+            rc = cli.main(["measure", "-m", "/m", "-b", "4"])
+        self.assertEqual(rc, 0)
+        self.assertIsNone(mock_stage.call_args.kwargs["qbench_opts"])
 
 
 if __name__ == "__main__":

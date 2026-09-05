@@ -90,6 +90,10 @@ tags:
     border: 1px solid rgba(0, 255, 159, 0.3);
   }
 
+  .repo-graph + .repo-graph {
+    margin-top: 1.25rem;
+  }
+
   .table-wrapper {
     display: inline-block;
     margin: 0 auto;
@@ -171,15 +175,13 @@ tags:
   <div class="content-panel">
     <div class="panel-title">// Repo Data</div>
     <div class="panel-body repo-data-body repo-data-panel">
-      <img class="repo-graph" src="{{GRAPH_FILE}}" alt="Quantization graph">
+      {{QBENCH_CHARTS}}
       <div class="table-wrapper">
         <table class="data-table">
           <thead>
             <tr>
               <th>[Revision]</th>
               <th>[GiB]</th>
-              <th>[KL Div]</th>
-              <th>[PPL]</th>
             </tr>
           </thead>
           <tbody>

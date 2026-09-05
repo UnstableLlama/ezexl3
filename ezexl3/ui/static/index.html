@@ -24,17 +24,9 @@
       <span class="nav-icon">&#9638;</span> Quantize
       <span class="nav-sub">Quantize Only</span>
     </button>
-    <button class="nav-btn" data-cmd="mtp">
-      <span class="nav-icon">&#9670;</span> MTP
-      <span class="nav-sub">MTP Tensors</span>
-    </button>
     <button class="nav-btn" data-cmd="measure">
-      <span class="nav-icon">&#9636;</span> Measure
-      <span class="nav-sub">Evaluation</span>
-    </button>
-    <button class="nav-btn" data-cmd="qbench">
-      <span class="nav-icon">&#9878;</span> QBench
-      <span class="nav-sub">Quant Compare</span>
+      <span class="nav-icon">&#9878;</span> Evals
+      <span class="nav-sub">Measure</span>
     </button>
     <button class="nav-btn" data-cmd="readme">
       <span class="nav-icon">&#9998;</span> README
@@ -76,8 +68,7 @@
           <button class="tab-btn active" data-tab="command">
             <span id="tab-command-label">Repo</span>
           </button>
-          <button class="tab-btn" data-tab="data">KL / PPL</button>
-          <button class="tab-btn" data-tab="evals">Evals</button>
+          <button class="tab-btn" data-tab="results">Results</button>
         </div>
         <p id="command-desc" class="tab-bar-desc">Quantize &rarr; Measure KL+PPL &rarr; README</p>
       </div>
@@ -120,39 +111,14 @@
         </div>
       </div>
 
-      <!-- Data tab -->
-      <div id="data-panel" class="tab-content">
-        <div id="data-content">
-          <div id="data-table-wrap">
-            <table id="data-table">
-              <thead>
-                <tr>
-                  <th>BPW</th>
-                  <th>KL Div</th>
-                  <th>PPL</th>
-                  <th>GiB</th>
-                </tr>
-              </thead>
-              <tbody id="data-table-body">
-              </tbody>
-            </table>
-            <div id="data-empty" class="data-empty">No measurement data yet. Run a repo or measure command to begin.</div>
-          </div>
-          <div id="data-splitter" class="data-splitter"><div class="data-splitter-grip"></div></div>
-          <div id="data-graph-wrap">
-            <div id="data-graph-placeholder" class="data-graph-placeholder">Graph will appear after 2+ measurements</div>
-            <div id="data-graph"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Evals tab -->
+      <!-- Results tab: one view per eval, picked from the Eval dropdown -->
       <div id="evals-tab-panel" class="tab-content">
         <div id="evals-tab-content">
           <div id="evals-toolbar">
             <div class="evals-toolbar-group">
               <label for="evals-kind-select">Eval:</label>
               <select id="evals-kind-select">
+                <option value="klppl">KL / PPL</option>
                 <option value="perf">Performance</option>
                 <option value="catbench">Catbench</option>
               </select>
@@ -192,6 +158,29 @@
             </div>
           </div>
           <div id="evals-catbench-grid" class="evals-catbench-grid" style="display:none"></div>
+          <!-- KL / PPL view: measurement table + bpw-vs-KL graph -->
+          <div id="data-content" style="display:none">
+            <div id="data-table-wrap">
+              <table id="data-table">
+                <thead>
+                  <tr>
+                    <th>BPW</th>
+                    <th>KL Div</th>
+                    <th>PPL</th>
+                    <th>GiB</th>
+                  </tr>
+                </thead>
+                <tbody id="data-table-body">
+                </tbody>
+              </table>
+              <div id="data-empty" class="data-empty">No measurement data yet. Run a repo or evals command to begin.</div>
+            </div>
+            <div id="data-splitter" class="data-splitter"><div class="data-splitter-grip"></div></div>
+            <div id="data-graph-wrap">
+              <div id="data-graph-placeholder" class="data-graph-placeholder">Graph will appear after 2+ measurements</div>
+              <div id="data-graph"></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

@@ -116,8 +116,8 @@ class MeasureCheckpointingTests(unittest.TestCase):
 
     def test_run_measure_stage_returns_early_when_all_rows_measured(self):
         full_rows = {
-            "2": {"weights": "2", "KL Div": "0.1", "PPL r-100": "11.0", "GiB": "4.2"},
-            "bf16": {"weights": "bf16", "KL Div": "0.0", "PPL r-100": "10.0", "GiB": "12.3"},
+            "2": {"weights": "2", "KL Div": "0.1", "PPL": "11.0", "GiB": "4.2"},
+            "bf16": {"weights": "bf16", "KL Div": "0.0", "PPL": "10.0", "GiB": "12.3"},
         }
         with patch("ezexl3.repo._read_db_rows", return_value=full_rows), \
              patch("ezexl3.repo.migrate_csv_to_db"), \
@@ -167,7 +167,7 @@ class MeasureCheckpointingTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["weights"], "4")
         self.assertEqual(rows[0]["KL Div"], "0.05")
-        self.assertEqual(rows[0]["PPL r-100"], "9.8")
+        self.assertEqual(rows[0]["PPL"], "9.8")
 
     def test_upsert_overwrites_with_newer_values(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -180,13 +180,14 @@ class MeasureCheckpointingTests(unittest.TestCase):
 
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows["2"]["KL Div"], "0.2")
-        self.assertEqual(rows["2"]["PPL r-100"], "12.0")
+        self.assertEqual(rows["2"]["PPL"], "12.0")
 
     def test_migrate_csv_to_db(self):
         """Legacy CSV data is imported into the database."""
         with tempfile.TemporaryDirectory() as tmp:
             csv_path = os.path.join(tmp, "ModelMeasured.csv")
             db_path = os.path.join(tmp, "ModelMeasured.db")
+            # Pre-qbench header: the perplexity column was "PPL r-100".
             fields = ["weights", "KL Div", "PPL r-100", "GiB"]
 
             with open(csv_path, "w", newline="") as f:
@@ -531,8 +532,8 @@ class GiBGapFillTests(unittest.TestCase):
     def test_gib_gaps_filled_before_measurement(self):
         """Missing GiB values are filled from filesystem before GPU work starts."""
         full_rows = {
-            "2": {"weights": "2", "KL Div": "0.1", "PPL r-100": "11.0", "GiB": ""},
-            "bf16": {"weights": "bf16", "KL Div": "0.0", "PPL r-100": "10.0", "GiB": "12.3"},
+            "2": {"weights": "2", "KL Div": "0.1", "PPL": "11.0", "GiB": ""},
+            "bf16": {"weights": "bf16", "KL Div": "0.0", "PPL": "10.0", "GiB": "12.3"},
         }
         with patch("ezexl3.repo._read_db_rows", return_value=full_rows), \
              patch("ezexl3.repo.migrate_csv_to_db"), \
@@ -555,8 +556,8 @@ class GiBGapFillTests(unittest.TestCase):
     def test_gib_gaps_not_filled_when_present(self):
         """No upsert when GiB values are already present."""
         full_rows = {
-            "2": {"weights": "2", "KL Div": "0.1", "PPL r-100": "11.0", "GiB": "4.2"},
-            "bf16": {"weights": "bf16", "KL Div": "0.0", "PPL r-100": "10.0", "GiB": "12.3"},
+            "2": {"weights": "2", "KL Div": "0.1", "PPL": "11.0", "GiB": "4.2"},
+            "bf16": {"weights": "bf16", "KL Div": "0.0", "PPL": "10.0", "GiB": "12.3"},
         }
         with patch("ezexl3.repo._read_db_rows", return_value=full_rows), \
              patch("ezexl3.repo.migrate_csv_to_db"), \

@@ -1,8 +1,12 @@
-// ── Data tab: live measurement table + SVG graph ─────────────────
+// ── Results tab: live measurement table + SVG graph ──────────────
+//
+// The KL/PPL table+graph is one of the views in the Results tab, picked
+// from the same "Eval:" dropdown as Performance and Catbench — KL and PPL
+// are evals like the rest, they just come out of qbench.
 
 let dataPollingInterval = null;
 let lastRowCount = 0;
-let activeTab = "command";  // "command" | "data" | "evals"
+let activeTab = "command";  // "command" | "results"
 
 // Sticky-render flags: once we've drawn a real table or graph for this
 // page session, subsequent empty / 404 responses (transient fetches
@@ -25,11 +29,7 @@ function switchTab(tab) {
   if (tab === "command") {
     document.getElementById("form-panel").classList.add("active");
     document.getElementById("command-desc").style.display = "";
-  } else if (tab === "data") {
-    document.getElementById("data-panel").classList.add("active");
-    document.getElementById("command-desc").style.display = "none";
-    refreshData();
-  } else if (tab === "evals") {
+  } else if (tab === "results") {
     document.getElementById("evals-tab-panel").classList.add("active");
     document.getElementById("command-desc").style.display = "none";
     refreshEvals();
@@ -86,7 +86,7 @@ function renderTable(rows) {
   tbody.innerHTML = rows.map(r => {
     const bpw = r.weights || "";
     const kl = r["KL Div"] || "";
-    const ppl = r["PPL r-100"] || "";
+    const ppl = r["PPL"] || "";
     const gib = r["GiB"] || "";
     return `<tr>
       <td>${esc(bpw)}</td>
@@ -96,7 +96,7 @@ function renderTable(rows) {
     </tr>`;
   }).join("");
 
-  lastRowCount = rows.filter(r => r["KL Div"] && r["PPL r-100"]).length;
+  lastRowCount = rows.filter(r => r["KL Div"] && r["PPL"]).length;
   hasRenderedDataTable = true;
 }
 
@@ -152,11 +152,7 @@ function clearDataView() {
 function startDataPolling() {
   stopDataPolling();
   dataPollingInterval = setInterval(() => {
-    if (activeTab === "data") {
-      refreshData();
-    } else if (activeTab === "evals") {
-      refreshEvals();
-    }
+    if (activeTab === "results") refreshEvals();
   }, 4000);
 }
 
@@ -260,35 +256,51 @@ let evalsLastCatbenchKey = "";
 
 function getEvalsKind() {
   const el = document.getElementById("evals-kind-select");
-  return el ? el.value : "perf";
+  return el ? el.value : "klppl";
 }
 
 function setEvalsViewMode(kind) {
-  // Toggle visibility of perf-specific vs. catbench-specific elements.
+  // One view visible at a time: KL/PPL table+graph, perf tables+chart, or
+  // the catbench grid. The BPW picker only applies to perf.
   const bpwGroup = document.getElementById("evals-bpw-group");
   const perfBody = document.getElementById("evals-body");
   const empty = document.getElementById("evals-empty");
   const grid = document.getElementById("evals-catbench-grid");
+  const klppl = document.getElementById("data-content");
+
+  if (kind !== "catbench") {
+    if (grid) { grid.style.display = "none"; grid.innerHTML = ""; }
+    evalsLastCatbenchKey = "";
+  }
 
   if (kind === "catbench") {
     if (bpwGroup) bpwGroup.style.display = "none";
     if (perfBody) perfBody.style.display = "none";
     if (empty) empty.style.display = "none";
+    if (klppl) klppl.style.display = "none";
     if (grid) grid.style.display = "";
+  } else if (kind === "klppl") {
+    if (bpwGroup) bpwGroup.style.display = "none";
+    if (perfBody) perfBody.style.display = "none";
+    if (empty) empty.style.display = "none";
+    if (klppl) klppl.style.display = "";
   } else {
     if (bpwGroup) bpwGroup.style.display = "";
-    if (grid) { grid.style.display = "none"; grid.innerHTML = ""; }
-    evalsLastCatbenchKey = "";
+    if (klppl) klppl.style.display = "none";
   }
 }
 
 async function refreshEvals() {
+  const kind = getEvalsKind();
+  if (kind === "klppl") {
+    await refreshData();
+    return;
+  }
   const modelDir = getModelDir();
   if (!modelDir) {
     showEvalsEmpty("Enter a model directory first.");
     return;
   }
-  const kind = getEvalsKind();
   if (kind === "catbench") {
     await fetchCatbenchGrid(modelDir);
     return;
@@ -461,14 +473,14 @@ function initEvalsTab() {
   const select = document.getElementById("evals-bpw-select");
   if (select) {
     select.addEventListener("change", () => {
-      if (activeTab === "evals") refreshEvals();
+      if (activeTab === "results") refreshEvals();
     });
   }
   const kindSelect = document.getElementById("evals-kind-select");
   if (kindSelect) {
     kindSelect.addEventListener("change", () => {
       setEvalsViewMode(kindSelect.value);
-      if (activeTab === "evals") refreshEvals();
+      if (activeTab === "results") refreshEvals();
     });
     // Initialize show/hide based on current selection
     setEvalsViewMode(kindSelect.value);

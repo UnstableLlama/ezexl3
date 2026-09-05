@@ -127,18 +127,27 @@ class MtpVendorTests(unittest.TestCase):
 
 
 class MtpUiWiringTests(unittest.TestCase):
-    def test_server_allowlists_mtp(self):
+    """MTP has no tab of its own: the bitrate is an option on Quantize and
+    Repo, since exllamav3's convert takes -mb directly. The standalone
+    `ezexl3 mtp` command survives for retrofitting quants built before MTP
+    support existed, but it is not reachable from the dashboard."""
+
+    def test_server_does_not_allowlist_mtp(self):
         src = (REPO_ROOT / "ezexl3" / "ui" / "server.py").read_text()
-        self.assertRegex(src, r'valid_commands = \{[^}]*"mtp"')
+        self.assertNotRegex(src, r'valid_commands = \{[^}]*"mtp"')
 
-    def test_commands_js_has_mtp_schema(self):
+    def test_commands_js_has_no_mtp_tab(self):
         src = (REPO_ROOT / "ezexl3" / "ui" / "static" / "js" / "commands.js").read_text()
-        self.assertIn("mtp: {", src)
-        self.assertIn('flag: "-mb"', src)
+        self.assertNotIn("mtp: {", src)
 
-    def test_index_html_has_mtp_nav_button(self):
+    def test_mtp_bits_is_an_option_on_quantize_and_repo(self):
+        src = (REPO_ROOT / "ezexl3" / "ui" / "static" / "js" / "commands.js").read_text()
+        self.assertEqual(src.count('name: "mtp_bits", flag: "-mb"'), 2)
+        self.assertEqual(src.count('label: "MTP Bits"'), 2)
+
+    def test_index_html_has_no_mtp_nav_button(self):
         src = (REPO_ROOT / "ezexl3" / "ui" / "static" / "index.html").read_text()
-        self.assertIn('data-cmd="mtp"', src)
+        self.assertNotIn('data-cmd="mtp"', src)
 
 
 if __name__ == "__main__":

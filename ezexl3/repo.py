@@ -297,10 +297,6 @@ def _parse_measure_args(measure_args: List[str], default_devices: List[int]) -> 
     return repo_measure._parse_measure_args(measure_args, default_devices)
 
 
-def _maybe_update_graph(model_dir: str, csv_path: str) -> None:
-    return repo_measure._maybe_update_graph(model_dir, csv_path)
-
-
 def _init_measure_db(model_dir: str, devices: List[int]) -> Tuple[str, str]:
     return repo_measure._init_measure_db(
         model_dir=model_dir,
@@ -405,6 +401,7 @@ def run_measure_single_bpw(
     ppl_rows: int = 100,
     write_logs: bool = True,
     include_base_ppl: bool = False,
+    legacy_measure: bool = False,
 ) -> int:
     return repo_measure.run_measure_single_bpw(
         model_dir=model_dir,
@@ -414,6 +411,7 @@ def run_measure_single_bpw(
         ppl_rows=ppl_rows,
         write_logs=write_logs,
         include_base_ppl=include_base_ppl,
+        legacy_measure=legacy_measure,
         read_db_rows_fn=_read_db_rows,
         task_to_csv_label_fn=_task_to_csv_label,
         process_cls=Process,
@@ -424,7 +422,6 @@ def run_measure_single_bpw(
         print_msg_with_progress_fn=_print_msg_with_progress,
         cleanup_gpu_progress_fn=_cleanup_gpu_progress,
         export_csv_fn=export_csv,
-        maybe_update_graph_fn=_maybe_update_graph,
         default_csv_path_fn=default_csv_path,
         sleep_fn=time.sleep,
     )
@@ -440,6 +437,8 @@ def run_measure_stage(
     evals: Optional[Dict[str, Any]] = None,
     skip_kl: bool = False,
     skip_ppl: bool = False,
+    legacy_measure: bool = False,
+    qbench_opts: Optional[Dict[str, Any]] = None,
     prompt_for_model_name: bool = True,
 ) -> int:
     return repo_measure.run_measure_stage(
@@ -452,6 +451,8 @@ def run_measure_stage(
         evals=evals,
         skip_kl=skip_kl,
         skip_ppl=skip_ppl,
+        legacy_measure=legacy_measure,
+        qbench_opts=qbench_opts,
         prompt_for_model_name=prompt_for_model_name,
         parse_measure_args_fn=_parse_measure_args,
         init_measure_db_fn=_init_measure_db,
@@ -472,7 +473,6 @@ def run_measure_stage(
         clear_and_redraw_progress_fn=_clear_and_redraw_progress,
         print_above_progress_fn=_print_above_progress,
         export_csv_fn=export_csv,
-        maybe_update_graph_fn=_maybe_update_graph,
         run_catbench_subprocess_fn=_run_catbench_subprocess,
         catbench_cache_tokens=_CATBENCH_CACHE_TOKENS,
         executable=sys.executable,
@@ -502,6 +502,7 @@ def run_repo(
     evals: Optional[Dict[str, Any]] = None,
     skip_kl: bool = False,
     skip_ppl: bool = False,
+    legacy_measure: bool = False,
     hq_bpws: Optional[set] = None,
     hb8_bpws: Optional[set] = None,
     opt_bpws: Optional[set] = None,
@@ -596,6 +597,7 @@ def run_repo(
                 ppl_rows=ppl_rows,
                 write_logs=write_logs,
                 include_base_ppl=(i == 0),
+                legacy_measure=legacy_measure,
             )
             if rc == 0:
                 first_verify_passed = True
@@ -630,6 +632,7 @@ def run_repo(
                     ppl_rows=ppl_rows,
                     write_logs=write_logs,
                     include_base_ppl=(not first_verify_passed and not quant_bpws),
+                    legacy_measure=legacy_measure,
                 )
                 if rc == 0:
                     first_verify_passed = True
@@ -664,6 +667,7 @@ def run_repo(
                     db_path=db_path,
                     ppl_rows=ppl_rows,
                     write_logs=write_logs,
+                    legacy_measure=legacy_measure,
                 )
                 if rc == 0:
                     first_verify_passed = True
@@ -701,6 +705,7 @@ def run_repo(
                 evals=evals,
                 skip_kl=skip_kl,
                 skip_ppl=skip_ppl,
+                legacy_measure=legacy_measure,
             )
             if rc != 0:
                 return rc
@@ -755,6 +760,7 @@ def run_repo(
                 evals=evals,
                 skip_kl=skip_kl,
                 skip_ppl=skip_ppl,
+                legacy_measure=legacy_measure,
             )
             if rc != 0:
                 return rc

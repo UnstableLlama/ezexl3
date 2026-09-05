@@ -226,12 +226,15 @@ body.splitter-active #upper-panel { transition: none; }
   padding: 20px 24px;
 }
 
-/* ── Data panel ──────────────────────────────────────────────── */
-#data-panel { padding: 0; }
+/* ── KL / PPL view (inside the results tab) ──────────────────── */
 #data-content {
   display: flex;
   flex: 1;
+  min-height: 0;
   overflow: hidden;
+  /* Bleed past #evals-tab-content's padding so the table/graph split
+     still spans the full panel, the way it did as its own tab. */
+  margin: 0 -20px -16px;
 }
 #data-table-wrap {
   flex: 0 0 510px;

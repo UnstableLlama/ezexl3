@@ -21,9 +21,12 @@ entry.
 
 from __future__ import annotations
 
+import json
 import os
+import re
+import shutil
 import sys
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from ezexl3.measure import run_cmd_capture
 
@@ -38,6 +41,15 @@ _OUTPUT_FILES = {
     "plot_kld_spread": "qb_kld_spread.png",
     "plot_kld_hist": "qb_kld_hist.png",
 }
+
+# The charts the generated README embeds, in display order: mean KLD vs bpw,
+# perplexity vs bpw, then the per-token KLD panels. Copied up to the model
+# root by publish_charts() so uploads never have to reach into qbench/, which
+# also holds the (very large) logit cache.
+README_CHARTS = ["qb_kld.png", "qb_ppl.png", "qb_kld_hist.png"]
+
+# Labels build_project() gives EXL3 quant entries, e.g. "4 bpw" / "4.5 bpw".
+_BPW_LABEL_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*bpw$", re.IGNORECASE)
 
 
 def default_qbench_dir(model_dir: str) -> str:
@@ -160,6 +172,75 @@ def _missing_quants(project: dict, model_dir: str, bpws: List[str]) -> List[str]
     ]
 
 
+def sync_project_models(project: dict, model_dir: str, bpws: List[str]) -> List[str]:
+    """Add model entries for any of *bpws* the project doesn't reference yet.
+
+    Existing entries are left alone, so hand edits (GGUF entries, extra HF
+    checkpoints, per-model options) survive. This is what lets the repo
+    pipeline measure incrementally: each newly quantized BPW is appended and
+    qbench re-measures only that one, since results are cached per model.
+
+    Returns the BPWs that were added.
+    """
+    missing = _missing_quants(project, model_dir, bpws)
+    if not missing:
+        return []
+    model_dir = os.path.abspath(model_dir)
+    models = project.setdefault("models", [])
+    for bpw in missing:
+        models.append({
+            "label": f"{bpw} bpw",
+            "group": "EXL3",
+            "engine": "exllamav3",
+            "source": os.path.join(model_dir, bpw),
+        })
+    return missing
+
+
+def read_results(model_dir: str) -> Dict[str, dict]:
+    """Parse qb_results.json into {csv label -> result dict}.
+
+    Keys are measure-DB labels ("bf16", "4", "4.5"). The noise-floor row and
+    any hand-added entries whose labels we don't generate are skipped — they
+    have no BPW directory to attach to.
+    """
+    path = os.path.join(default_qbench_dir(model_dir), _OUTPUT_FILES["results"])
+    if not os.path.isfile(path):
+        return {}
+    with open(path, "r", encoding="utf8") as f:
+        results = json.load(f)
+
+    out: Dict[str, dict] = {}
+    for res in results:
+        group = res.get("group")
+        if group == "reference":
+            out["bf16"] = res
+            continue
+        if group != "EXL3":
+            continue  # noise_floor, GGUF/HF entries added by hand
+        m = _BPW_LABEL_RE.match(str(res.get("label", "")))
+        if m:
+            out[m.group(1)] = res
+    return out
+
+
+def publish_charts(model_dir: str) -> List[str]:
+    """Copy the README's charts from qbench/ up to the model root.
+
+    The README references them as plain filenames, and upload only collects
+    root-level artifacts — so the logit cache under qbench/ is never uploaded.
+    Returns the filenames actually copied.
+    """
+    qb_dir = default_qbench_dir(model_dir)
+    copied = []
+    for name in README_CHARTS:
+        src = os.path.join(qb_dir, name)
+        if os.path.isfile(src):
+            shutil.copy2(src, os.path.join(os.path.abspath(model_dir), name))
+            copied.append(name)
+    return copied
+
+
 def run_qbench(
     model_dir: str,
     bpws: Optional[List[str]] = None,
@@ -205,11 +286,10 @@ def run_qbench(
         with open(project_path, "r", encoding="utf8") as f:
             project = yaml.safe_load(f)
         print(f" -- Reusing existing project: {project_path}")
-        stale = _missing_quants(project, model_dir, bpws)
-        if stale:
-            print(f"⚠️  Quants not in the project file: {', '.join(stale)}. "
-                  "Add them by hand or rerun with --regen "
-                  "(cached results survive regeneration).")
+        added = sync_project_models(project, model_dir, bpws)
+        if added:
+            write_project(project_path, project)
+            print(f" -- Added quant(s) to the project: {', '.join(added)}")
     else:
         project = build_project(
             model_dir, bpws,
@@ -225,4 +305,7 @@ def run_qbench(
 
     qb_dir = default_qbench_dir(model_dir)
     print(f"\n -- qbench outputs in: {qb_dir}")
+    copied = publish_charts(model_dir)
+    if copied:
+        print(f" -- Charts copied to the model root: {', '.join(copied)}")
     return 0

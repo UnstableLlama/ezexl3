@@ -103,18 +103,13 @@ def _model_name_is_locked(model_dir: str) -> bool:
         return False
 
 
-def _wait_for_model_name(
-    model_dir: str,
-    csv_path: str,
-    maybe_update_graph_fn: Callable,
-) -> None:
-    """If MODEL isn't locked, pause for the user to confirm it, then regenerate graphs."""
+def _wait_for_model_name(model_dir: str) -> None:
+    """If MODEL isn't locked, pause for the user to confirm it.
+
+    The confirmed name titles the perf charts, which are regenerated here
+    once it is known.
+    """
     if _model_name_is_locked(model_dir):
-        # Already locked — regenerate graphs with the confirmed name and return.
-        try:
-            maybe_update_graph_fn(model_dir, csv_path)
-        except Exception:
-            pass
         return
 
     # Write auto-detected default so the UI has something to show
@@ -152,12 +147,6 @@ def _wait_for_model_name(
     model_name = _resolve_model_name(model_dir)
     print(f"📝 Model name confirmed: {model_name}")
 
-    # Regenerate graphs with the confirmed name
-    try:
-        maybe_update_graph_fn(model_dir, csv_path)
-    except Exception:
-        pass
-
     # Regenerate perf charts too
     try:
         from ezexl3.perf_db import available_bpws, default_perf_db_path
@@ -194,24 +183,101 @@ def _resolve_model_name(model_dir: str) -> str:
     return name
 
 
-def _maybe_update_graph(model_dir: str, csv_path: str) -> None:
-    import numpy as np
-    from ezexl3.graph_svg import load_series, make_plot
+def run_qbench_stage(
+    model_dir: str,
+    bpws: List[str],
+    device: int,
+    db_path: str,
+    out_csv: str,
+    existing_rows: Optional[Dict[str, dict]] = None,
+    qbench_opts: Optional[Dict[str, Any]] = None,
+    file_size_gib_fn: Callable = file_size_gib,
+    upsert_row_fn: Callable = upsert_row,
+    export_csv_fn: Callable = export_csv,
+) -> int:
+    """Measure KL divergence + perplexity for *bpws* with qbench.
+
+    Replaces the per-BPW model_diff/ppl_layer jobs: one qbench run covers
+    every quant plus the BF16 reference against a shared, cached set of
+    reference logits, so re-running after a new quant only measures that
+    quant. Results are written back into the measure DB under the same
+    columns the old path used, and the README's charts are refreshed.
+
+    *qbench_opts* are run_qbench() keyword overrides (rows, length, dataset,
+    template, trace, ref_engine, cache_gb, noise_floor, regen) built from the
+    tuning flags the user actually typed. Passing any of them also means
+    "measure this differently", so the already-measured short-circuit below
+    is bypassed — otherwise a re-run with new test data would no-op.
+    """
+    from ezexl3 import qbench
+
+    # Decide there is work to do BEFORE checking for qbench's dependencies:
+    # a resumed run with everything already measured must not fail just
+    # because seaborn isn't installed.
+    # qbench itself caches per (test data, reference, model), but skipping
+    # here avoids paying for the subprocess at all.
+    if existing_rows is not None and not qbench_opts:
+        wanted = [_task_to_csv_label(b) for b in bpws] + ["bf16"]
+        if all(
+            (existing_rows.get(lbl, {}).get("KL Div") or "").strip()
+            and (existing_rows.get(lbl, {}).get("PPL") or "").strip()
+            for lbl in wanted
+            if lbl != "bf16"
+        ) and (existing_rows.get("bf16", {}).get("PPL") or "").strip():
+            print("🟦 skipping qbench: all BPWs already measured")
+            return 0
+
+    quant_bpws = [str(b) for b in bpws if b != "base"]
+    if not quant_bpws:
+        return 0
+
+    err = qbench.check_qbench_support()
+    if err:
+        print(f"🔴 {err}")
+        print("   Run with --legacy-measure to use the old model_diff/ppl_layer path.")
+        return 1
+
+    print(f"\n🔬 qbench: measuring {len(quant_bpws)} quant(s) + BF16 reference on GPU {device}...")
+    try:
+        rc = qbench.run_qbench(model_dir, bpws=quant_bpws, device=device,
+                               **(qbench_opts or {}))
+    except Exception as e:
+        print(f"🔴 qbench failed: {e}")
+        return 1
+    if rc != 0:
+        return rc
+
+    results = qbench.read_results(model_dir)
+    if not results:
+        print("🔴 qbench produced no parseable results (qb_results.json missing or empty)")
+        return 1
+
+    # Refresh the README's copies at the model root. run_qbench() does this
+    # too for the standalone command; repeating it here keeps the stage
+    # correct on its own terms and costs three small file copies.
+    copied = qbench.publish_charts(model_dir)
+    missing = [c for c in qbench.README_CHARTS if c not in copied]
+    if missing:
+        print(f"⚠️  qbench chart(s) not produced: {', '.join(missing)}")
+
+    for label, res in sorted(results.items(), key=lambda kv: _bpw_sort_key(kv[0])):
+        quant_dir = model_dir if label == "bf16" else os.path.join(model_dir, label)
+        fields = {"gib": str(round(file_size_gib_fn(quant_dir), 2))}
+        # The reference has no KLD against itself; record it as 0 so the row
+        # reads the same way the old path wrote it.
+        fields["kl_div"] = str(res["kld"]) if "kld" in res else ("0.0" if label == "bf16" else "")
+        if "ppl" in res:
+            fields["ppl"] = str(res["ppl"])
+        upsert_row_fn(db_path, weights=label, **{k: v for k, v in fields.items() if v != ""})
+        kld_disp = f"{res['kld']:.6f}" if "kld" in res else "—"
+        ppl_disp = f"{res['ppl']:.4f}" if "ppl" in res else "—"
+        print(f"✅ {label:>6}: KLD={kld_disp}  PPL={ppl_disp}")
 
     try:
-        bpw, kld, ppl, gib, _ = load_series(csv_path, drop_bf16=True)
+        export_csv_fn(db_path, out_csv)
     except Exception:
-        return
-
-    valid = ~(np.isnan(kld) | np.isnan(ppl) | np.isnan(gib))
-    bpw, kld, ppl, gib = bpw[valid], kld[valid], ppl[valid], gib[valid]
-
-    if len(bpw) < 2:
-        return
-    title = _resolve_model_name(model_dir)
-    basename = os.path.basename(os.path.abspath(model_dir)).lower()
-    svg_path = os.path.join(model_dir, f"{basename}.svg")
-    make_plot(bpw, kld, ppl, gib, title=title, outfile=svg_path, add_checks=False)
+        pass
+    return 0
 
 
 def _init_measure_db(
@@ -285,7 +351,7 @@ def _worker_measure(
 
                 gib = file_size_gib_fn(model_dir)
                 upsert_row_fn(db_path, weights=label, kl_div=str(kl_div), gib=str(gib))
-                row = {"weights": label, "KL Div": kl_div, "PPL r-100": "", "GiB": gib}
+                row = {"weights": label, "KL Div": kl_div, "PPL": "", "GiB": gib}
                 results.put({"event": "done", "device": device, "label": label, "phase": phase, "row": row})
 
             elif phase == "ppl":
@@ -305,10 +371,10 @@ def _worker_measure(
                 gib = file_size_gib_fn(model_dir)
                 if task_label == "base":
                     upsert_row_fn(db_path, weights=label, kl_div="0.0", ppl=str(ppl), gib=str(gib))
-                    row = {"weights": label, "KL Div": 0.0, "PPL r-100": ppl, "GiB": gib}
+                    row = {"weights": label, "KL Div": 0.0, "PPL": ppl, "GiB": gib}
                 else:
                     upsert_row_fn(db_path, weights=label, ppl=str(ppl), gib=str(gib))
-                    row = {"weights": label, "KL Div": "", "PPL r-100": ppl, "GiB": gib}
+                    row = {"weights": label, "KL Div": "", "PPL": ppl, "GiB": gib}
                 results.put({"event": "done", "device": device, "label": label, "phase": phase, "row": row})
 
             elif phase == "catbench":
@@ -394,6 +460,7 @@ def run_measure_single_bpw(
     ppl_rows: int = 100,
     write_logs: bool = True,
     include_base_ppl: bool = False,
+    legacy_measure: bool = False,
     read_db_rows_fn: Callable = _read_db_rows,
     task_to_csv_label_fn: Callable = _task_to_csv_label,
     process_cls=Process,
@@ -404,22 +471,35 @@ def run_measure_single_bpw(
     print_msg_with_progress_fn: Callable = _print_msg_with_progress,
     cleanup_gpu_progress_fn: Callable = _cleanup_gpu_progress,
     export_csv_fn: Callable = export_csv,
-    maybe_update_graph_fn: Callable = _maybe_update_graph,
     default_csv_path_fn: Callable = default_csv_path,
     sleep_fn: Callable = time.sleep,
 ) -> int:
     label = task_to_csv_label_fn(bpw)
     existing_rows = read_db_rows_fn(db_path)
 
+    if not legacy_measure:
+        # Verification for a freshly quantized BPW. qbench appends it to the
+        # project and measures only that quant — the reference logits were
+        # cached by the first BPW's run.
+        return run_qbench_stage(
+            model_dir=model_dir,
+            bpws=[bpw],
+            device=devices[0],
+            db_path=db_path,
+            out_csv=default_csv_path_fn(model_dir),
+            existing_rows=existing_rows,
+            export_csv_fn=export_csv_fn,
+        )
+
     all_tasks: List[dict] = []
     if include_base_ppl:
         base_row = existing_rows.get("bf16", {})
-        if not (base_row.get("PPL r-100") or "").strip():
+        if not (base_row.get("PPL") or "").strip():
             all_tasks.append({"label": "base", "phase": "ppl"})
 
     row = existing_rows.get(label, {})
     has_kl = bool((row.get("KL Div") or "").strip())
-    has_ppl = bool((row.get("PPL r-100") or "").strip())
+    has_ppl = bool((row.get("PPL") or "").strip())
 
     if bpw != "base" and not has_kl:
         all_tasks.append({"label": bpw, "phase": "kl"})
@@ -493,12 +573,11 @@ def run_measure_single_bpw(
             if phase == "kl":
                 msg = f"✅ [GPU {gpu}] DONE {res_label} KL: KL={row.get('KL Div', 'N/A')}"
             else:
-                msg = f"✅ [GPU {gpu}] DONE {res_label} PPL: PPL={row.get('PPL r-100', 'N/A')}"
+                msg = f"✅ [GPU {gpu}] DONE {res_label} PPL: PPL={row.get('PPL', 'N/A')}"
             gpu_status[gpu] = "idle"
             try:
                 out_csv = default_csv_path_fn(model_dir)
                 export_csv_fn(db_path, out_csv)
-                maybe_update_graph_fn(model_dir, out_csv)
             except Exception:
                 pass
         elif event == "error":
@@ -531,6 +610,8 @@ def run_measure_stage(
     evals: Optional[Dict[str, Any]] = None,
     skip_kl: bool = False,
     skip_ppl: bool = False,
+    legacy_measure: bool = False,
+    qbench_opts: Optional[Dict[str, Any]] = None,
     parse_measure_args_fn: Callable = _parse_measure_args,
     init_measure_db_fn: Callable = _init_measure_db,
     read_db_rows_fn: Callable = _read_db_rows,
@@ -550,7 +631,6 @@ def run_measure_stage(
     clear_and_redraw_progress_fn: Callable = _clear_and_redraw_progress,
     print_above_progress_fn: Callable = _print_above_progress,
     export_csv_fn: Callable = export_csv,
-    maybe_update_graph_fn: Callable = _maybe_update_graph,
     run_catbench_subprocess_fn: Callable = _run_catbench_subprocess,
     catbench_cache_tokens: int = 4608,
     executable: str = sys.executable,
@@ -593,33 +673,56 @@ def run_measure_stage(
     ppl_tasks: List[dict] = []
     skipped_kl: List[str] = []
     skipped_ppl: List[str] = []
+    qbench_failed = False
 
-    for bpw in bpws:
-        label = task_to_csv_label_fn(bpw)
-        row = existing_rows.get(label, {})
-        has_kl = bool((row.get("KL Div") or "").strip())
-        has_ppl = bool((row.get("PPL r-100") or "").strip())
-        if bpw != "base" and not has_kl and not skip_kl:
-            kl_tasks.append({"label": bpw, "phase": "kl"})
-        elif bpw != "base":
-            skipped_kl.append(label)
-        if not has_ppl and not skip_ppl:
-            ppl_tasks.append({"label": bpw, "phase": "ppl"})
+    if not legacy_measure:
+        # Default path: one qbench run covers KL divergence + perplexity for
+        # every quant against a cached BF16 reference. skip_kl/skip_ppl only
+        # suppress it when BOTH are off, since a single run produces both.
+        if not (skip_kl and skip_ppl):
+            rc = run_qbench_stage(
+                model_dir=model_dir,
+                bpws=bpws,
+                device=devices[0],
+                db_path=db_path,
+                out_csv=out_csv,
+                existing_rows=existing_rows,
+                qbench_opts=qbench_opts,
+                file_size_gib_fn=file_size_gib_fn,
+                upsert_row_fn=upsert_row_fn,
+                export_csv_fn=export_csv_fn,
+            )
+            if rc != 0:
+                qbench_failed = True
         else:
-            skipped_ppl.append(label)
-
-    base_row = existing_rows.get("bf16", {})
-    if not bool((base_row.get("PPL r-100") or "").strip()) and not skip_ppl:
-        if not any(t["label"] == "base" for t in ppl_tasks):
-            ppl_tasks.append({"label": "base", "phase": "ppl"})
+            print("🟦 skipping qbench: KL and perplexity both disabled")
     else:
-        if "bf16" not in skipped_ppl:
-            skipped_ppl.append("bf16")
+        for bpw in bpws:
+            label = task_to_csv_label_fn(bpw)
+            row = existing_rows.get(label, {})
+            has_kl = bool((row.get("KL Div") or "").strip())
+            has_ppl = bool((row.get("PPL") or "").strip())
+            if bpw != "base" and not has_kl and not skip_kl:
+                kl_tasks.append({"label": bpw, "phase": "kl"})
+            elif bpw != "base":
+                skipped_kl.append(label)
+            if not has_ppl and not skip_ppl:
+                ppl_tasks.append({"label": bpw, "phase": "ppl"})
+            else:
+                skipped_ppl.append(label)
 
-    if skipped_kl:
-        print(f"🟦 skipping KL divergence: {', '.join(skipped_kl)} (already measured)")
-    if skipped_ppl:
-        print(f"🟦 skipping perplexity: {', '.join(skipped_ppl)} (already measured)")
+        base_row = existing_rows.get("bf16", {})
+        if not bool((base_row.get("PPL") or "").strip()) and not skip_ppl:
+            if not any(t["label"] == "base" for t in ppl_tasks):
+                ppl_tasks.append({"label": "base", "phase": "ppl"})
+        else:
+            if "bf16" not in skipped_ppl:
+                skipped_ppl.append("bf16")
+
+        if skipped_kl:
+            print(f"🟦 skipping KL divergence: {', '.join(skipped_kl)} (already measured)")
+        if skipped_ppl:
+            print(f"🟦 skipping perplexity: {', '.join(skipped_ppl)} (already measured)")
 
     catbench_tasks: List[dict] = []
     multi_gpu_catbench_tasks: List[dict] = []
@@ -702,9 +805,11 @@ def run_measure_stage(
             print("🎨 Generating SVGs from catbench results...")
             n_svgs = catbench_generate_svgs_fn(catbench_out_dir)
             print(f"✅ {n_svgs} SVGs generated.")
+        elif qbench_failed:
+            print("⚠️ Measurement stage completed with 1 failure(s) (qbench).")
         else:
             print("✅ All requested measurement phases already exist. Nothing to do.")
-        return 0
+        return 1 if qbench_failed else 0
 
     n_kl = len(kl_tasks)
     n_ppl = len(ppl_tasks)
@@ -718,9 +823,9 @@ def run_measure_stage(
 
     remaining_jobs = len(kl_tasks) + len(ppl_tasks) + len(eval_tasks)
     if remaining_jobs == 0 and not all_gpu_eval_tasks and n_cat == 0:
-        return 0
+        return 1 if qbench_failed else 0
 
-    failures = 0
+    failures = 1 if qbench_failed else 0
 
     tasks = queue_cls()
     results = queue_cls()
@@ -758,14 +863,20 @@ def run_measure_stage(
         procs.append(p)
         sleep_fn(2.0)
 
-    eval_msg = f" + {n_eval} EVAL" if n_eval else ""
+    leading: List[str] = []
+    if n_kl:
+        leading.append(f"{n_kl} KL")
+    if n_ppl:
+        leading.append(f"{n_ppl} PPL")
+    if n_eval:
+        leading.append(f"{n_eval} EVAL")
     trailing: List[str] = []
     if n_allgpu_eval:
         trailing.append(f"{n_allgpu_eval} all-GPU eval")
     if n_cat:
         trailing.append(f"{n_cat} CAT")
     trailing_msg = f" (+ {', '.join(trailing)} after)" if trailing else ""
-    print(f"\n🚀 Measuring {n_kl} KL + {n_ppl} PPL{eval_msg} jobs on {len(devices)} GPUs...{trailing_msg}")
+    print(f"\n🚀 Measuring {' + '.join(leading)} jobs on {len(devices)} GPUs...{trailing_msg}")
 
     use_ansi = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     gpu_status: Dict[int, str] = {d: "idle" for d in devices}
@@ -798,7 +909,7 @@ def run_measure_stage(
             if phase == "kl":
                 msg = f"✅ [GPU {gpu}] DONE {label} KL: KL={row.get('KL Div', 'N/A')}"
             elif phase == "ppl":
-                msg = f"✅ [GPU {gpu}] DONE {label} PPL: PPL={row.get('PPL r-100', 'N/A')}"
+                msg = f"✅ [GPU {gpu}] DONE {label} PPL: PPL={row.get('PPL', 'N/A')}"
             elif phase == "catbench":
                 msg = f"🐱 [GPU {gpu}] DONE {label} CATBENCH"
             else:
@@ -822,15 +933,8 @@ def run_measure_stage(
                     msg = f"✅ [GPU {gpu}] DONE {label} {phase_tag}"
             gpu_status[gpu] = "idle"
             # Flush CSV after every DB-writing phase so the on-disk snapshot
-            # tracks reality. Graph update stays gated to KL/PPL because evals
-            # don't feed the graph.
-            if phase in ("kl", "ppl"):
-                try:
-                    export_csv_fn(db_path, out_csv)
-                    maybe_update_graph_fn(model_dir, out_csv)
-                except Exception:
-                    pass
-            elif phase != "catbench":
+            # tracks reality.
+            if phase != "catbench":
                 try:
                     export_csv_fn(db_path, out_csv)
                 except Exception:
@@ -1134,15 +1238,10 @@ def run_measure_stage(
 
     # --- Model name confirmation gate ---
     # If MODEL isn't locked in metadata, pause so the user can confirm or
-    # override the auto-detected name before final graph generation. The
-    # standalone `measure` CLI skips this entirely (no README is being
-    # generated), so we just refresh the graph with whatever name we have.
+    # override the auto-detected name before the perf charts are titled with
+    # it. The standalone `measure` CLI skips this entirely (no README is
+    # being generated).
     if prompt_for_model_name:
-        wait_for_model_name_fn(model_dir, out_csv, maybe_update_graph_fn)
-    else:
-        try:
-            maybe_update_graph_fn(model_dir, out_csv)
-        except Exception:
-            pass
+        wait_for_model_name_fn(model_dir)
 
     return 0

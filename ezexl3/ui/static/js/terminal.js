@@ -291,7 +291,7 @@ async function streamJob(jobId) {
     abortController = null;
     updateRunButton();
     stopDataPolling();
-    refreshData();
+    refreshEvals();
   }
 }
 

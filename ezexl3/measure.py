@@ -21,7 +21,7 @@ import subprocess
 import sys
 from typing import Dict, List, Set
 
-CSV_FIELDS = ["weights", "KL Div", "PPL r-100", "GiB"]
+CSV_FIELDS = ["weights", "KL Div", "PPL", "GiB"]
 
 _MODEL_DIFF_SCRIPT = os.path.join(os.path.dirname(__file__), "vendor", "model_diff.py")
 
@@ -263,7 +263,7 @@ def run_measure(
         row = {
             "weights": label,
             "KL Div": kl_div,
-            "PPL r-100": ppl_100,
+            "PPL": ppl_100,
             "GiB": size_gib,
         }
 

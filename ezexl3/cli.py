@@ -1,7 +1,7 @@
 import argparse
 import sys
 from dataclasses import dataclass
-from typing import List, Tuple, Optional, Set
+from typing import Any, Dict, List, Tuple, Optional, Set
 from ezexl3 import __version__
 
 @dataclass
@@ -146,6 +146,76 @@ def _norm_bpw(b: str) -> str:
     """Normalize a BPW string for consistent comparison (strip whitespace)."""
     return b.strip()
 
+
+# qbench's test-data / reference knobs, shared by `qbench` (which runs it
+# directly) and `measure` (which runs it as the KL+PPL stage).
+_QBENCH_TUNING_DEFAULTS = {
+    "rows": 10,
+    "length": 2048,
+    "dataset": "wiki2",
+    "template": "none",
+    "trace": None,
+    "ref_engine": "exllamav3",
+    "cache_gb": 50.0,
+    "no_noise_floor": False,
+    "regen": False,
+}
+
+
+def _add_qbench_tuning_args(p: argparse.ArgumentParser, explicit_only: bool = False) -> None:
+    """Attach qbench's test-data / reference options to a parser.
+
+    With *explicit_only* every option defaults to None instead of its real
+    default, so _collect_qbench_opts() can tell "the user asked for this"
+    from "the user left it alone". `measure` needs that distinction: it only
+    forwards what was typed, and forwarding anything forces a re-measure.
+    """
+    def dflt(key):
+        return None if explicit_only else _QBENCH_TUNING_DEFAULTS[key]
+
+    p.add_argument("--rows", type=int, default=dflt("rows"),
+                   help="Test rows (default: 10)")
+    p.add_argument("--length", type=int, default=dflt("length"),
+                   help="Tokens per row (default: 2048)")
+    p.add_argument("--dataset", choices=["wiki2", "openwebtext"], default=dflt("dataset"),
+                   help="Test dataset (default: wiki2)")
+    p.add_argument("--template", choices=["none", "chat", "assistant"], default=dflt("template"),
+                   help="Apply the model's chat template to test rows "
+                        "(none = raw text, default)")
+    p.add_argument("--trace", default=dflt("trace"),
+                   help="In-domain test trace JSON from qbench_prompts.py "
+                        "(replaces --dataset/--rows/--length)")
+    p.add_argument("--ref-engine", choices=["exllamav3", "transformers"],
+                   default=dflt("ref_engine"),
+                   help="Engine for the BF16 reference pass (transformers needs "
+                        "the transformers+accelerate packages)")
+    p.add_argument("--cache-gb", type=float, default=dflt("cache_gb"),
+                   help="Logit cache size limit in GB (default: 50)")
+    p.add_argument("--no-noise-floor", action="store_true", default=dflt("no_noise_floor"),
+                   help="Skip the BF16-noise self-floor pass (faster; disables "
+                        "histogram plots)")
+    p.add_argument("--regen", action="store_true", default=dflt("regen"),
+                   help="Regenerate qbench/project.yml instead of reusing it "
+                        "(cached results survive)")
+
+
+def _collect_qbench_opts(args: argparse.Namespace) -> Dict[str, Any]:
+    """Map explicitly-passed qbench tuning flags onto run_qbench() kwargs.
+
+    Only options the user actually typed appear, so an empty dict means
+    "run qbench exactly the way the repo pipeline does".
+    """
+    opts: Dict[str, Any] = {}
+    for attr in ("rows", "length", "dataset", "template", "trace",
+                 "ref_engine", "cache_gb", "regen"):
+        val = getattr(args, attr, None)
+        if val is not None:
+            opts[attr] = val
+    if getattr(args, "no_noise_floor", None):
+        opts["noise_floor"] = False
+    return opts
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="ezexl3",
@@ -189,6 +259,10 @@ def build_parser() -> argparse.ArgumentParser:
                            help="Vision tower bitrate for all BPWs, 1-8, or 16 to store unquantized "
                                 "(default: architecture's default). Requires a recent exllamav3. "
                                 "Example: -vb 8")
+        p_sub.add_argument("-mb", "--mtp-bits", type=int, default=None,
+                           help="MTP (speculative decoding) layer bitrate for all BPWs, 1-8, or 16 "
+                                "to store unquantized (exllamav3 default: 4). Ignored by models "
+                                "without an MTP head. Example: -mb 4")
         p_sub.add_argument("-ngb", "--ngram-bits", type=int, default=None,
                            help="Bits per weight for hashed n-gram embedding tables, 1-8 "
                                 "(PLE models, e.g. Qwen3.8-Flash-Next; exllamav3 default: "
@@ -228,6 +302,10 @@ def build_parser() -> argparse.ArgumentParser:
                            help="Skip KL divergence measurement")
         p_sub.add_argument("--no-ppl", action="store_true",
                            help="Skip perplexity measurement")
+        p_sub.add_argument("--legacy-measure", action="store_true",
+                           help="Measure KL/PPL with the pre-qbench scripts (model_diff + "
+                                "ppl_layer, 100 wiki2 rows) instead of qbench. Reproduces "
+                                "numbers published before the switch; no charts are produced.")
         p_sub.add_argument("-cb", "--catbench", type=int, default=0, nargs="?", const=3,
                            help="Run SVG Catbench with N samples per model (default: 3 when flag present)")
         p_sub.add_argument("-div", "--diversity", type=int, default=0, nargs="?", const=50,
@@ -271,6 +349,10 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("-vb", "--vision-bits", type=int, default=None,
                    help="Vision tower bitrate for all BPWs, 1-8, or 16 to store unquantized "
                         "(default: architecture's default). Requires a recent exllamav3.")
+    q.add_argument("-mb", "--mtp-bits", type=int, default=None,
+                   help="MTP (speculative decoding) layer bitrate for all BPWs, 1-8, or 16 to "
+                        "store unquantized (exllamav3 default: 4). Ignored by models without "
+                        "an MTP head.")
     q.add_argument("-ngb", "--ngram-bits", type=int, default=None,
                    help="Bits per weight for hashed n-gram embedding tables, 1-8 "
                         "(PLE models, e.g. Qwen3.8-Flash-Next; exllamav3 default: "
@@ -307,30 +389,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="BPWs to include (default: auto-detect quant subdirectories)")
     qb.add_argument("-d", "--device", type=int, default=0,
                     help="Single CUDA device index (default: 0)")
-    qb.add_argument("--rows", type=int, default=10,
-                    help="Test rows (default: 10)")
-    qb.add_argument("--length", type=int, default=2048,
-                    help="Tokens per row (default: 2048)")
-    qb.add_argument("--dataset", choices=["wiki2", "openwebtext"], default="wiki2",
-                    help="Test dataset (default: wiki2)")
-    qb.add_argument("--template", choices=["none", "chat", "assistant"], default="none",
-                    help="Apply the model's chat template to test rows "
-                         "(none = raw text, default)")
-    qb.add_argument("--trace", default=None,
-                    help="In-domain test trace JSON from qbench_prompts.py "
-                         "(replaces --dataset/--rows/--length)")
-    qb.add_argument("--ref-engine", choices=["exllamav3", "transformers"],
-                    default="exllamav3",
-                    help="Engine for the BF16 reference pass (transformers needs "
-                         "the transformers+accelerate packages)")
-    qb.add_argument("--cache-gb", type=float, default=50.0,
-                    help="Logit cache size limit in GB (default: 50)")
-    qb.add_argument("--no-noise-floor", action="store_true",
-                    help="Skip the BF16-noise self-floor pass (faster; disables "
-                         "histogram plots)")
-    qb.add_argument("--regen", action="store_true",
-                    help="Regenerate qbench/project.yml instead of reusing it "
-                         "(cached results survive)")
+    _add_qbench_tuning_args(qb)
 
     # --- measure ---
     m = sub.add_parser("measure", help="Measure only (vendored quantMeasure)")
@@ -344,6 +403,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Skip KL divergence measurement")
     m.add_argument("--no-ppl", action="store_true",
                    help="Skip perplexity measurement")
+    m.add_argument("--legacy-measure", action="store_true",
+                   help="Measure KL/PPL with the pre-qbench scripts (model_diff + ppl_layer, "
+                        "100 wiki2 rows) instead of qbench. Reproduces numbers published "
+                        "before the switch; no charts are produced.")
     m.add_argument("-cb", "--catbench", type=int, default=0, nargs="?", const=3,
                    help="Run SVG Catbench with N samples per model (default: 3 when flag present)")
     m.add_argument("-div", "--diversity", type=int, default=0, nargs="?", const=50,
@@ -358,6 +421,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Run MMLU knowledge benchmark with N fewshot examples (default: 5)")
     m.add_argument("-perf", "--perf", type=int, default=0, nargs="?", const=32768,
                    help="Run inference performance benchmark (default max_length: 32768)")
+    # qbench tuning for the KL+PPL stage. Unset means "same as the repo
+    # pipeline"; setting any of them also re-measures BPWs already recorded.
+    _add_qbench_tuning_args(m, explicit_only=True)
 
 
     # --- chat ---
@@ -611,6 +677,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             raise SystemExit(f"--vision-bits must be 1-8 or 16, got {vision_bits}")
         if "-vb" not in pt.quant_args:
             pt.quant_args = list(pt.quant_args) + ["-vb", str(vision_bits)]
+    mtp_bits = getattr(args, "mtp_bits", None)
+    if mtp_bits is not None:
+        if not (1 <= mtp_bits <= 8 or mtp_bits == 16):
+            raise SystemExit(f"--mtp-bits must be 1-8 or 16, got {mtp_bits}")
+        if "-mb" not in pt.quant_args:
+            pt.quant_args = list(pt.quant_args) + ["-mb", str(mtp_bits)]
     ngram_bits = getattr(args, "ngram_bits", None)
     if ngram_bits is not None:
         if not (1 <= ngram_bits <= 8):
@@ -683,6 +755,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     evals=enabled_evals or None,
                     skip_kl=getattr(args, "no_kl", False),
                     skip_ppl=getattr(args, "no_ppl", False),
+                    legacy_measure=getattr(args, "legacy_measure", False),
                     hq_bpws=hq_bpws,
                     hb8_bpws=hb8_bpws,
                     opt_bpws=opt_bpws,
@@ -796,6 +869,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         # name. The dashboard spawns measure with stdin piped/closed, so
         # isatty() is False there and the gate runs as expected.
         prompt_for_model = not sys.stdin.isatty()
+        qbench_opts = _collect_qbench_opts(args)
         failed_models: List[str] = []
         for model_dir in args.models:
             print(f"\nMeasuring model: {model_dir}")
@@ -810,6 +884,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     evals=enabled_evals or None,
                     skip_kl=getattr(args, "no_kl", False),
                     skip_ppl=getattr(args, "no_ppl", False),
+                    legacy_measure=getattr(args, "legacy_measure", False),
+                    qbench_opts=qbench_opts or None,
                     prompt_for_model_name=prompt_for_model,
                 )
                 if rc != 0:

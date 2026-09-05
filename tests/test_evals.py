@@ -409,7 +409,7 @@ class TestMeasureDBEvalColumns:
         from ezexl3.measure_db import read_all_rows
         rows = read_all_rows(db_path)
         assert rows["4"]["KL Div"] == "0.5"
-        assert rows["4"]["PPL r-100"] == "7.2"
+        assert rows["4"]["PPL"] == "7.2"
         assert rows["4"]["MMLU"] == "84.2%"
 
     def test_export_csv_dynamic_eval_columns(self, tmp_path):
@@ -428,7 +428,7 @@ class TestMeasureDBEvalColumns:
         # Core columns: always present
         assert "weights" in header
         assert "KL Div" in header
-        assert "PPL r-100" in header
+        assert "PPL" in header
         assert "GiB" in header
         # Populated eval column: included
         assert "MMLU" in header
@@ -449,7 +449,7 @@ class TestMeasureDBEvalColumns:
         export_csv(db_path, csv_path)
         with open(csv_path) as f:
             header = f.readline().strip()
-        assert header == "weights,KL Div,PPL r-100,GiB"
+        assert header == "weights,KL Div,PPL,GiB"
 
 
 # ---------------------------------------------------------------------------
@@ -573,7 +573,6 @@ def _run_stage_with_fake_worker(tmp_path, worker_fn, eval_name, eval_arg=32768):
         cleanup_gpu_progress_fn=lambda *a, **kw: None,
         clear_and_redraw_progress_fn=lambda *a, **kw: None,
         print_above_progress_fn=lambda *a, **kw: None,
-        maybe_update_graph_fn=lambda *a, **kw: None,
         sleep_fn=lambda *a, **kw: None,
         wait_for_model_name_fn=lambda *a, **kw: None,
     )
