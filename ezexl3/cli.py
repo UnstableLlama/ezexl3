@@ -278,6 +278,11 @@ def build_parser() -> argparse.ArgumentParser:
                                 "an optimized per-tensor bitrate recipe. Works on any BPW (integer or "
                                 "decimal); requires exllamav3 >= 1.4.3. Bare flag applies to all BPWs; "
                                 "with args applies to listed BPWs only. Example: -sc 2.5,3.14")
+        p_sub.add_argument("-scd", "--sc-donor", type=str, default=None,
+                           help="Model directory the -sc calibration trace is sampled from. "
+                                "Default: the highest completed quant >= 5 bpw under the model "
+                                "dir, else the unquantized model (correct but much slower). "
+                                "Example: -scd /models/Foo/6.0")
         p_sub.add_argument("-opt", nargs="*", default=None,
                            help="Use optimized quantization pipeline for fractional BPWs. "
                                 "Compares neighboring integer quants to find optimal mix. "
@@ -365,6 +370,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Build self-calibrated quants (self-sampled trace + per-tensor recipe). "
                         "Works on any BPW; requires exllamav3 >= 1.4.3. "
                         "Bare flag applies to all BPWs; with args applies to listed BPWs only.")
+    q.add_argument("-scd", "--sc-donor", type=str, default=None,
+                   help="Model directory the -sc calibration trace is sampled from. "
+                        "Default: the highest completed quant >= 5 bpw under the model dir, "
+                        "else the unquantized model (correct but much slower).")
     q.add_argument("-opt", nargs="*", default=None,
                    help="Use optimized quantization pipeline for fractional BPWs. "
                         "Only applies to fractional BPWs. "
@@ -760,6 +769,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     hb8_bpws=hb8_bpws,
                     opt_bpws=opt_bpws,
                     sc_bpws=sc_bpws,
+                    sc_donor=getattr(args, "sc_donor", None),
                     head_bits=head_bits,
                 )
                 if rc != 0:
@@ -847,6 +857,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         ),
                         head_bits=head_bits,
                         write_logs=not args.no_logs,
+                        trace_donor=getattr(args, "sc_donor", None),
                     )
 
                 if optimized_bpws and not args.dry:

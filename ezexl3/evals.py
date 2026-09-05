@@ -738,7 +738,7 @@ def run_eval_subprocess(
     # Read byte-by-byte to handle \r overwrites
     line_buf = bytearray()
     while True:
-        chunk = proc.stdout.read(4096)
+        chunk = proc.stdout.read1(4096)
         if not chunk:
             break
         buf.append(chunk)

@@ -507,6 +507,7 @@ def run_repo(
     hb8_bpws: Optional[set] = None,
     opt_bpws: Optional[set] = None,
     sc_bpws: Optional[set] = None,
+    sc_donor: Optional[str] = None,
     head_bits: Optional[int] = None,
 ) -> int:
     bpw_plan = _plan_repo_bpws(bpws, opt_bpws=opt_bpws, sc_bpws=sc_bpws)
@@ -621,6 +622,7 @@ def run_repo(
                 forwarded_for_bpw=_selfcal_forwarded,
                 head_bits=head_bits,
                 write_logs=write_logs,
+                trace_donor=sc_donor,
             )
             # Verify each self-calibrated BPW
             for sc_bpw in selfcal_bpws:
@@ -736,6 +738,7 @@ def run_repo(
                 forwarded_for_bpw=_selfcal_forwarded,
                 head_bits=head_bits,
                 write_logs=write_logs,
+                trace_donor=sc_donor,
             )
 
         # Stage 2: optimized optimize

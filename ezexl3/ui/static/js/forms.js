@@ -7,8 +7,10 @@ function renderForm(commandKey) {
   const container = document.getElementById("form-fields");
   container.innerHTML = "";
 
+  // Fields with afterField are pinned directly under their anchor instead of
+  // falling into the Options block, so they read as part of that control.
   const required = cmd.fields.filter(f => f.required && f.type !== "boolean" && !f.section && !f.group);
-  const optional = cmd.fields.filter(f => !f.required && !f.section && !f.group && (f.type !== "boolean" || f.toggleable));
+  const optional = cmd.fields.filter(f => !f.required && !f.section && !f.group && !f.afterField && (f.type !== "boolean" || f.toggleable));
   const booleans = cmd.fields.filter(f => f.type === "boolean" && !f.toggleable && !f.section && !f.group);
   const grouped = cmd.fields.filter(f => f.group && !f.section);
   const evals = cmd.fields.filter(f => f.section === "evals");
@@ -16,7 +18,7 @@ function renderForm(commandKey) {
   // Required fields
   if (required.length) {
     for (const field of required) {
-      container.appendChild(createFieldEl(field));
+      appendFieldWithFollowers(container, cmd, field);
     }
   }
 
@@ -27,7 +29,7 @@ function renderForm(commandKey) {
     heading.textContent = "Options";
     container.appendChild(heading);
     for (const field of optional) {
-      container.appendChild(createFieldEl(field));
+      appendFieldWithFollowers(container, cmd, field);
     }
   }
 
@@ -64,6 +66,34 @@ function renderForm(commandKey) {
   const rightPanels = document.getElementById("right-panels");
   const hasRight = cmd.hasMetadata || evals.length > 0;
   rightPanels.style.display = hasRight ? "" : "none";
+}
+
+
+function appendFieldWithFollowers(container, cmd, field) {
+  container.appendChild(createFieldEl(field));
+  for (const f of cmd.fields) {
+    if (f.afterField === field.name) container.appendChild(createFieldEl(f));
+  }
+}
+
+
+// A showWhen field is only rendered (and only contributes an arg) while the
+// named global paint flag is on — e.g. sc_donor follows the -sc toggle.
+function isFieldVisible(field) {
+  if (!field.showWhen) return true;
+  const { field: srcField, globalFlag } = field.showWhen;
+  return !!(bpwGlobalState[srcField] && bpwGlobalState[srcField].has(globalFlag));
+}
+
+
+function updateConditionalFields() {
+  const cmd = COMMANDS[activeCommand];
+  if (!cmd) return;
+  for (const field of cmd.fields) {
+    if (!field.showWhen) continue;
+    const row = document.getElementById(`row-${field.name}`);
+    if (row) row.style.display = isFieldVisible(field) ? "" : "none";
+  }
 }
 
 
@@ -110,6 +140,8 @@ function createGroupEl(cmd, groupId, fields) {
 function createFieldEl(field) {
   const row = document.createElement("div");
   row.className = "form-row";
+  row.id = `row-${field.name}`;
+  if (field.showWhen) row.style.display = "none";
 
   const labelRow = document.createElement("div");
   labelRow.className = "form-label-row";
@@ -406,10 +438,17 @@ function rebuildBpwTokens(fieldName, paintFlags) {
         e.preventDefault();
         if (!bpwGlobalState[fieldName]) bpwGlobalState[fieldName] = new Set();
         const set = bpwGlobalState[fieldName];
-        if (set.has(pf.name)) set.delete(pf.name);
-        else set.add(pf.name);
+        const turningOn = !set.has(pf.name);
+        if (turningOn) set.add(pf.name);
+        else set.delete(pf.name);
         // Rebuild so the token glow + button active state stay in sync
         rebuildBpwTokens(fieldName, paintFlags);
+        // -sc needs a low-distortion model to sample its calibration trace
+        // from. It always runs, but with nothing >= 5 bpw around it falls back
+        // to the bf16 model, which is far slower — worth flagging up front.
+        if (pf.name === "sc" && turningOn) {
+          checkSelfcalDonor(document.querySelector(`#tokens-${fieldName} [data-paint-flag="sc"]`));
+        }
       });
     } else {
       // Restore active state if this paint mode is currently on
@@ -427,6 +466,58 @@ function rebuildBpwTokens(fieldName, paintFlags) {
     paintWrap.appendChild(btn);
   }
   display.appendChild(paintWrap);
+
+  updateConditionalFields();
+}
+
+
+// Ask the server what the -sc trace stage would pick as its donor for the
+// current model dir, using repo_selfcal's own detection so the UI can't drift
+// from the pipeline. Advisory only: a missing donor still runs, just slowly.
+async function checkSelfcalDonor(btn) {
+  const donorEl = document.getElementById("field-sc_donor");
+  const modelEl = document.getElementById("field-models");
+  const modelDir = modelEl ? modelEl.value.trim() : "";
+  if (!modelDir) {
+    if (donorEl) donorEl.placeholder = "auto (set a model directory first)";
+    return;
+  }
+
+  let data;
+  try {
+    const res = await fetch("/api/selfcal-check?path=" + encodeURIComponent(modelDir));
+    data = await res.json();
+  } catch (_) {
+    return;
+  }
+  if (!data || data.error) return;
+
+  if (data.donor) {
+    // Show the auto-pick as a placeholder rather than a value, so we don't
+    // bake a path into the command that goes stale if the model dir changes.
+    if (donorEl) donorEl.placeholder = `auto: ${data.donor}`;
+    return;
+  }
+
+  if (donorEl) donorEl.placeholder = `auto: unquantized model (slow)`;
+  flashPaintButton(btn);
+  appendTerminal(
+    `\n⚠️  No quant >= ${data.min_bpw} bpw under ${modelDir}. Self-calibrated ` +
+    `quants will sample their calibration trace from the unquantized model — ` +
+    `correct, but much slower. Point "SC Trace Generation Model" at a 6bpw+ ` +
+    `quant to speed this up.\n`,
+    "term-warn",
+  );
+}
+
+
+function flashPaintButton(btn) {
+  if (!btn) return;
+  btn.classList.remove("paint-btn-flash");
+  // Force a reflow so a repeated click restarts the animation
+  void btn.offsetWidth;
+  btn.classList.add("paint-btn-flash");
+  setTimeout(() => btn.classList.remove("paint-btn-flash"), 1200);
 }
 
 function onTokenClick(fieldName, bpw, paintFlags) {
@@ -569,6 +660,7 @@ function collectArgs() {
   for (const field of cmd.fields) {
     const el = document.getElementById(`field-${field.name}`);
     if (!el) continue;
+    if (!isFieldVisible(field)) continue;
 
     if (field.type === "boolean") {
       if (field.invertFlag) {

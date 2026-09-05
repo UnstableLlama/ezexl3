@@ -227,60 +227,129 @@ async function runCommand() {
 }
 
 
-async function streamJob(jobId) {
-  abortController = new AbortController();
+function _applyJobEvent(event) {
+  if (event.type === "stdout") {
+    checkMetadataWait(event.text);
+    checkBandwidth(event.text);
+    if (!event.text.includes("<<EZEXL3:")) {
+      appendTerminal(event.text);
+    }
+  } else if (event.type === "stderr") {
+    appendTerminal(event.text, "term-stderr");
+  } else if (event.type === "exit") {
+    appendTerminal(`\n`);
+    if (event.code === 0) {
+      appendTerminal(`Process exited successfully (code 0)\n`, "term-success");
+      terminalStatus().textContent = "Completed";
+      terminalStatus().className = "terminal-status success";
+    } else {
+      appendTerminal(`Process exited with code ${event.code}\n`, "term-error");
+      terminalStatus().textContent = `Exit code ${event.code}`;
+      terminalStatus().className = "terminal-status error";
+    }
+  }
+}
+
+
+// Consume one SSE connection, resuming at cursor.n and advancing it past
+// every event rendered. Returns normally only when the server closed the
+// stream, which it does only once the job is done; throws on transport loss.
+async function _consumeJobStream(jobId, cursor, signal, onOpen) {
+  const res = await fetch(`/api/run/${jobId}/stream?from=${cursor.n}`, { signal });
+  if (onOpen) onOpen();
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) return;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop(); // Keep incomplete line
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const payload = line.slice(6);
+      if (payload === "[DONE]") continue;
+
+      // Count it before rendering it: the cursor indexes the server's event
+      // counter, so a payload we fail to parse still has to advance it or a
+      // reconnect would replay everything after it.
+      cursor.n++;
+      let event;
+      try {
+        event = JSON.parse(payload);
+      } catch (e) {
+        console.warn("SSE: malformed event payload", { payload, error: e });
+        continue;
+      }
+      _applyJobEvent(event);
+    }
+  }
+}
+
+
+// Is this job still alive on the server? true / false, or null when the
+// server itself couldn't be reached (a different problem from a dead job).
+async function _jobStillRunning(jobId) {
+  try {
+    const res = await fetch("/api/run/status");
+    const data = await res.json();
+    return data.job_id === jobId && (data.status === "running" || data.status === "starting");
+  } catch (e) {
+    return null;
+  }
+}
+
+
+async function streamJob(jobId, startCursor = 0) {
+  const cursor = { n: startCursor };
+  let backoff = 500;
+  let announcedDrop = false;
 
   try {
-    const res = await fetch(`/api/run/${jobId}/stream`, {
-      signal: abortController.signal,
-    });
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
+    // Reconnect for as long as the server says the job is alive. The job
+    // outlives its socket, so losing the stream is not losing the run —
+    // the exit condition is the job's state, not a retry count.
     while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop(); // Keep incomplete line
-
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const payload = line.slice(6);
-        if (payload === "[DONE]") continue;
-
-        try {
-          const event = JSON.parse(payload);
-          if (event.type === "stdout") {
-            checkMetadataWait(event.text);
-            checkBandwidth(event.text);
-            if (!event.text.includes("<<EZEXL3:")) {
-              appendTerminal(event.text);
-            }
-          } else if (event.type === "stderr") {
-            appendTerminal(event.text, "term-stderr");
-          } else if (event.type === "exit") {
-            appendTerminal(`\n`);
-            if (event.code === 0) {
-              appendTerminal(`Process exited successfully (code 0)\n`, "term-success");
-              terminalStatus().textContent = "Completed";
-              terminalStatus().className = "terminal-status success";
-            } else {
-              appendTerminal(`Process exited with code ${event.code}\n`, "term-error");
-              terminalStatus().textContent = `Exit code ${event.code}`;
-              terminalStatus().className = "terminal-status error";
-            }
+      abortController = new AbortController();
+      try {
+        await _consumeJobStream(jobId, cursor, abortController.signal, () => {
+          // Back on the wire — clear the reconnect state so a later drop
+          // starts from a short delay again.
+          if (announcedDrop) {
+            appendTerminal(`Reconnected.\n`, "term-success");
+            announcedDrop = false;
+            terminalStatus().textContent = "Running...";
+            terminalStatus().className = "terminal-status running";
           }
-        } catch (e) {
-          console.warn("SSE: malformed event payload", { payload, error: e });
+          backoff = 500;
+        });
+        break; // server closed the stream: the job is finished
+      } catch (e) {
+        if (e.name === "AbortError") break; // user hit Stop
+
+        const alive = await _jobStillRunning(jobId);
+        if (alive === false) {
+          appendTerminal(`\nStream disconnected: ${e.message}\n`, "term-stderr");
+          break;
         }
+
+        // alive === true, or null (server unreachable — retry, since it may
+        // just be restarting and the job would still be there).
+        if (!announcedDrop) {
+          appendTerminal(`\nStream lost, reconnecting...\n`, "term-stderr");
+          announcedDrop = true;
+        }
+        terminalStatus().textContent = "Reconnecting...";
+        terminalStatus().className = "terminal-status running";
+
+        await new Promise(r => setTimeout(r, backoff));
+        backoff = Math.min(backoff * 2, 5000);
+        if (abortController.signal.aborted) break; // Stop pressed while waiting
       }
-    }
-  } catch (e) {
-    if (e.name !== "AbortError") {
-      appendTerminal(`\nStream disconnected: ${e.message}\n`, "term-stderr");
     }
   } finally {
     jobRunning = false;

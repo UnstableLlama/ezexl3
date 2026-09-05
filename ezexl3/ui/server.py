@@ -297,6 +297,35 @@ async def handle_gpus(request: web.Request) -> web.Response:
     return web.json_response({"gpus": gpus})
 
 
+async def handle_selfcal_check(request: web.Request) -> web.Response:
+    """Report what the -sc trace stage would pick as its donor for a model dir.
+
+    Reuses repo_selfcal's own detection so the UI and the pipeline can never
+    disagree about the threshold. A missing donor is advisory, not fatal: the
+    pipeline still runs, tracing from the unquantized model instead.
+    """
+    from ezexl3 import repo_selfcal
+
+    raw = request.query.get("path", "").strip()
+    if not raw:
+        return web.json_response({"error": "No path given"}, status=400)
+    model_dir = Path(raw).expanduser()
+    if not model_dir.is_dir():
+        return web.json_response({"error": "Not a directory"}, status=400)
+    model_dir = str(model_dir.resolve())
+
+    donor = repo_selfcal._find_trace_donor(model_dir)
+    anchor = repo_selfcal._find_probe_anchor(model_dir)
+    return web.json_response({
+        "min_bpw": repo_selfcal._TRACE_DONOR_MIN_BPW,
+        "donor": donor,
+        "donor_name": os.path.basename(donor) if donor else None,
+        "anchor_name": anchor[0] if anchor else None,
+        "has_base_model": os.path.isfile(os.path.join(model_dir, "config.json")),
+        "quants": [name for _v, name, _p in repo_selfcal._existing_quants(model_dir)],
+    })
+
+
 async def handle_templates(request: web.Request) -> web.Response:
     templates = []
     if TEMPLATES_DIR.is_dir():
@@ -366,9 +395,16 @@ async def handle_run_stream(request: web.Request) -> web.Response:
     try:
         # Track progress with a cursor that indexes into job.total_appended
         # (the monotonic counter) so we stay correct even after the bounded
-        # deque rolls over. The first loop iteration replays everything
-        # currently buffered; subsequent iterations send only new events.
-        cursor = 0
+        # deque rolls over. The first loop iteration replays everything the
+        # client hasn't seen; subsequent iterations send only new events.
+        #
+        # ?from=N lets a client that lost its socket resume at event N instead
+        # of re-rendering the whole run. A fresh page sends no ?from and gets
+        # the full replay.
+        try:
+            cursor = max(0, int(request.query.get("from", 0)))
+        except (TypeError, ValueError):
+            cursor = 0
 
         def _pending_events() -> list[dict]:
             """Return any events the client hasn't seen yet, in order."""
@@ -850,6 +886,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/gpus", handle_gpus)
     app.router.add_get("/api/hf-auth", handle_hf_auth)
     app.router.add_get("/api/templates", handle_templates)
+    app.router.add_get("/api/selfcal-check", handle_selfcal_check)
     app.router.add_post("/api/run", handle_run)
     app.router.add_get("/api/run/{job_id}/stream", handle_run_stream)
     app.router.add_post("/api/run/{job_id}/stop", handle_run_stop)

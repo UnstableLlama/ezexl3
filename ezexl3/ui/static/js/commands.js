@@ -16,14 +16,19 @@ const COMMANDS = {
       { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "1-8, comma separated, decimals ok (e.g. 2,3,4.5,6)",
         bpwPaintFlags: [
           { name: "hq", flag: "-hq", label: "-hq", color: "#4a90d9", tooltip: "use on low bpws" },
-          { name: "sc", flag: "-sc", label: "-sc", color: "#9b6dd6", isGlobal: true, tooltip: "self-calibrated quants (all bpws, slow)" },
+          { name: "sc", flag: "-sc", label: "-sc", color: "#9b6dd6", isGlobal: true, tooltip: "self-calibrated quants (all bpws, slow) — traces from a 6bpw+ quant if one exists, else the much slower bf16 model" },
           { name: "pm", flag: "-pm", label: "-pm", color: "#ffffff", isGlobal: true, tooltip: "use on MoEs" },
         ]
       },
+      // Only meaningful while -sc is on, so it stays hidden until then and
+      // renders directly under the BPW row rather than down in Options.
+      { name: "sc_donor", flag: "-scd", type: "path", label: "SC Trace Generation Model",
+        help: "Model the -sc calibration trace is sampled from. Must be 6bpw+, else defaults to slower bf16. Leave empty to auto-pick the highest quant ≥ 5 bpw in the model directory.",
+        afterField: "bpws", showWhen: { field: "bpws", globalFlag: "sc" } },
       { name: "devices", flag: "-d", type: "csv", default: "0", label: "CUDA Devices", placeholder: "0,1", help: "GPUs used, comma separated (e.g. 0,1)" },
       { name: "device_ratios", flag: "-r", type: "csv", label: "Device Ratios", placeholder: "1,1", help: "VRAM split ratio per device when GPUs are uneven" },
       { name: "head_bits", flag: "-hb", type: "number", default: "6", label: "Head Bits", help: "Output head layer bitrate, 1-8 (exllamav3 default: 6)", toggleable: true },
-      { name: "vision_bits", flag: "-vb", type: "number", default: "6", label: "Vision Bits", help: "Vision tower bitrate, 1-8, or 16 = unquantized (vision models only)", toggleable: true },
+      { name: "vision_bits", flag: "-vb", type: "number", default: "6", label: "Vision Bits", help: "Vision tower bitrate, 1-8, or 16 = unquantized (vision models only). exllamav3 default: 6 on validated towers (Gemma 4, GLM-4V, Qwen3-VL, Step3.7, Muse/Glimmer), 16 = unquantized on every other vision model.", toggleable: true },
       { name: "mtp_bits", flag: "-mb", type: "number", default: "4", label: "MTP Bits", help: "4 recommended", toggleable: true },
       { name: "ngram_bits", flag: "-ngb", type: "number", default: "4", label: "N-gram Bits", help: "Bits per weight for the hashed n-gram embedding table, 1-8 (exllamav3 default: target BPW rounded)", toggleable: true, group: "ngram" },
       { name: "ngram_file", flag: "-ngf", type: "text", label: "N-gram File", placeholder: "/path/to/ngram_embedding.safetensors", help: "Pre-quantized n-gram table (from exllamav3 util/convert_ngram.py) reused instead of quantizing the table", group: "ngram" },
@@ -57,14 +62,19 @@ const COMMANDS = {
       { name: "bpws", flag: "-b", type: "csv", required: true, label: "BPWs", placeholder: "2,3,4,5,6", help: "1-8, comma separated, decimals ok (e.g. 2,3,4.5,6)",
         bpwPaintFlags: [
           { name: "hq", flag: "-hq", label: "-hq", color: "#4a90d9", tooltip: "use on low bpws" },
-          { name: "sc", flag: "-sc", label: "-sc", color: "#9b6dd6", isGlobal: true, tooltip: "self-calibrated quants (all bpws, slow)" },
+          { name: "sc", flag: "-sc", label: "-sc", color: "#9b6dd6", isGlobal: true, tooltip: "self-calibrated quants (all bpws, slow) — traces from a 6bpw+ quant if one exists, else the much slower bf16 model" },
           { name: "pm", flag: "-pm", label: "-pm", color: "#ffffff", isGlobal: true, tooltip: "use on MoEs" },
         ]
       },
+      // Only meaningful while -sc is on, so it stays hidden until then and
+      // renders directly under the BPW row rather than down in Options.
+      { name: "sc_donor", flag: "-scd", type: "path", label: "SC Trace Generation Model",
+        help: "Model the -sc calibration trace is sampled from. Must be 6bpw+, else defaults to slower bf16. Leave empty to auto-pick the highest quant ≥ 5 bpw in the model directory.",
+        afterField: "bpws", showWhen: { field: "bpws", globalFlag: "sc" } },
       { name: "devices", flag: "-d", type: "csv", default: "0", label: "CUDA Devices", placeholder: "0,1", help: "GPUs used, comma separated (e.g. 0,1)" },
       { name: "device_ratios", flag: "-r", type: "csv", label: "Device Ratios", placeholder: "1,1", help: "VRAM split ratio per device when GPUs are uneven" },
       { name: "head_bits", flag: "-hb", type: "number", default: "6", label: "Head Bits", help: "Output head layer bitrate, 1-8 (exllamav3 default: 6)", toggleable: true },
-      { name: "vision_bits", flag: "-vb", type: "number", default: "6", label: "Vision Bits", help: "Vision tower bitrate, 1-8, or 16 = unquantized (vision models only)", toggleable: true },
+      { name: "vision_bits", flag: "-vb", type: "number", default: "6", label: "Vision Bits", help: "Vision tower bitrate, 1-8, or 16 = unquantized (vision models only). exllamav3 default: 6 on validated towers (Gemma 4, GLM-4V, Qwen3-VL, Step3.7, Muse/Glimmer), 16 = unquantized on every other vision model.", toggleable: true },
       { name: "mtp_bits", flag: "-mb", type: "number", default: "4", label: "MTP Bits", help: "4 recommended", toggleable: true },
       { name: "ngram_bits", flag: "-ngb", type: "number", default: "4", label: "N-gram Bits", help: "Bits per weight for the hashed n-gram embedding table, 1-8 (exllamav3 default: target BPW rounded)", toggleable: true, group: "ngram" },
       { name: "ngram_file", flag: "-ngf", type: "text", label: "N-gram File", placeholder: "/path/to/ngram_embedding.safetensors", help: "Pre-quantized n-gram table (from exllamav3 util/convert_ngram.py) reused instead of quantizing the table", group: "ngram" },

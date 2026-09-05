@@ -128,7 +128,10 @@ def _run_script(
         )
         assert proc.stdout is not None
         while True:
-            chunk = proc.stdout.read(4096)
+            # read1(), not read(): read() blocks until it has the full 4096
+            # bytes, which stalls low-volume stages (sc_trace emits ~100 bytes
+            # a minute) behind a buffer that takes hours to fill.
+            chunk = proc.stdout.read1(4096)
             if not chunk:
                 break
             text = chunk.decode("utf-8", errors="replace")
@@ -152,6 +155,7 @@ def run_selfcal_stage(
     forwarded_for_bpw: Callable[[str], List[str]],
     head_bits: Optional[int] = None,
     write_logs: bool = True,
+    trace_donor: Optional[str] = None,
     run_script_fn: Callable = _run_script,
     quant_one_fn: Optional[Callable] = None,
     check_support_fn: Callable = check_selfcal_support,
@@ -161,6 +165,9 @@ def run_selfcal_stage(
 
     forwarded_for_bpw(bpw) must return the standard forwarded quant args for
     that BPW (devices, ratios, -hq/-hb paints); -rcp/-cd are appended here.
+
+    trace_donor overrides the model the calibration trace is sampled from;
+    None auto-picks per _find_trace_donor and falls back to the bf16 model.
     """
     if not sc_bpws:
         return
@@ -195,13 +202,21 @@ def run_selfcal_stage(
     if os.path.isfile(paths["trace_st"]) and os.path.isfile(paths["trace_json"]):
         print(f"🟦 skipping trace: {os.path.basename(paths['trace_st'])} already exists")
     else:
-        donor = _find_trace_donor(model_dir)
-        if donor:
-            print(f"📝 Generating self-sampled trace from {os.path.basename(donor)} bpw quant")
+        if trace_donor:
+            donor = os.path.abspath(trace_donor)
+            if not os.path.isfile(os.path.join(donor, "config.json")):
+                raise RuntimeError(
+                    f"Trace donor {donor} is not a model directory (no config.json)"
+                )
+            print(f"📝 Generating self-sampled trace from {donor} (explicit donor)")
         else:
-            donor = model_dir
-            print("📝 Generating self-sampled trace from the unquantized model "
-                  f"(no >= {_TRACE_DONOR_MIN_BPW:g} bpw quant found; this is slower)")
+            donor = _find_trace_donor(model_dir)
+            if donor:
+                print(f"📝 Generating self-sampled trace from {os.path.basename(donor)} bpw quant")
+            else:
+                donor = model_dir
+                print("📝 Generating self-sampled trace from the unquantized model "
+                      f"(no >= {_TRACE_DONOR_MIN_BPW:g} bpw quant found; this is slower)")
         run_script_fn(
             [
                 executable, _SC_TRACE_SCRIPT,
