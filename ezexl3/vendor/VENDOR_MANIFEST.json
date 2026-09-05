@@ -72,7 +72,9 @@
   },
   "eval/qbench/engines.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench/engines.py",
-    "sha256": "2cef5f32ab45685f8a88bcd55a3accaf812234e1696ebc49dc9a51379d0ca2d9"
+    "sha256": "2cef5f32ab45685f8a88bcd55a3accaf812234e1696ebc49dc9a51379d0ca2d9",
+    "local_sha256": "e76d394a1098aeb54587c4c2ed38a6c521f5cd0df0623638896c7bbb95ccfddc",
+    "local_patch": "Exl3Backend.run: key the noise generators by activation device. Upstream pins one generator to the compute device, so the noise-floor pass dies on the very first module ('Expected a cpu device type for generator but found cuda'): prefer_cpu modules (the embedding) are loaded on CPU and emit CPU activations. TransformersBackend._noise_hooks already keys generators by device; this makes the exl3 path match. Drop the patch and clear these two fields when upstream fixes it."
   },
   "eval/qbench/measure.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench/measure.py",

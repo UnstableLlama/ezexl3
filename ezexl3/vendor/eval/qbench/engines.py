@@ -54,8 +54,16 @@ class Exl3Backend:
         from exllamav3.modules import Linear
         modules = self.model.modules
         states = list(ids.split(1))
-        gen = torch.Generator(device = self.device)
-        gen.manual_seed(1)
+        # LOCAL PATCH (ezexl3): modules with prefer_cpu (the embedding) are loaded on CPU and
+        # emit CPU activations, so one generator pinned to self.device cannot feed randn for
+        # every module. Key generators by activation device, as _noise_hooks already does
+        gens = {}
+        def gen_for(device):
+            if device not in gens:
+                g = torch.Generator(device = device)
+                g.manual_seed(1)
+                gens[device] = g
+            return gens[device]
 
         sum_bits = sum_numel = head_bits = head_numel = 0
         with ProgressBar("Streaming", len(modules)) as pb:
@@ -92,7 +100,7 @@ class Exl3Backend:
                     x = module.prepare_for_device(states[r], params)
                     x = module.forward(x, params)
                     if noise_eps and idx < len(modules) - 2 and x.is_floating_point():
-                        x = apply_mult_noise(x, noise_eps, gen)
+                        x = apply_mult_noise(x, noise_eps, gen_for(x.device))
                     if logits_layer:
                         callback(r, x)
                         states[r] = None

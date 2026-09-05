@@ -6,6 +6,11 @@ VENDOR_MANIFEST.json (catches accidental local edits).
 
 Online test: fetches upstream scripts from GitHub and warns if they
 have changed since we last vendored (marks as xfail, not hard failure).
+
+Locally patched files carry two hashes: ``sha256`` stays the pristine upstream
+hash (so the online drift check keeps working) and ``local_sha256`` records the
+patched file on disk, with ``local_patch`` describing why. A patch is meant to
+be temporary - delete it and clear both fields once upstream carries the fix.
 """
 
 import hashlib
@@ -58,9 +63,28 @@ class TestVendorManifestIntegrity:
         for filename, meta in manifest.items():
             path = os.path.join(_VENDOR_DIR, filename)
             actual_hash = _file_sha256(path)
-            assert actual_hash == meta["sha256"], (
-                f"{filename}: local hash {actual_hash[:16]}... != manifest {meta['sha256'][:16]}... "
-                f"(file was modified locally? Re-vendor from upstream to fix)"
+            expected = meta.get("local_sha256", meta["sha256"])
+            patched = "local_sha256" in meta
+            assert actual_hash == expected, (
+                f"{filename}: local hash {actual_hash[:16]}... != manifest {expected[:16]}... "
+                + ("(the recorded local patch was changed or lost? Re-apply it and update "
+                   "local_sha256 in VENDOR_MANIFEST.json)" if patched else
+                   "(file was modified locally? Re-vendor from upstream, or record the change "
+                   "as a local_sha256 + local_patch pair in VENDOR_MANIFEST.json)")
+            )
+
+    def test_local_patches_are_documented(self):
+        """A local_sha256 must explain itself and must actually differ from upstream."""
+        manifest = _load_manifest()
+        for filename, meta in manifest.items():
+            if "local_sha256" not in meta:
+                continue
+            assert meta.get("local_patch"), (
+                f"{filename}: has local_sha256 but no local_patch describing why"
+            )
+            assert meta["local_sha256"] != meta["sha256"], (
+                f"{filename}: local_sha256 equals the upstream sha256 - the patch is gone, "
+                f"so drop local_sha256/local_patch from VENDOR_MANIFEST.json"
             )
 
 
