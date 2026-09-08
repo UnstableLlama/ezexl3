@@ -533,6 +533,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.print_help()
         return 0
 
+    # Run before command modules can import ExLlama and wait on FileBaton.
+    # Running here also covers jobs launched by an already-running dashboard.
+    from ezexl3.ui.build_locks import prepare_build_cache
+    for message in prepare_build_cache():
+        print(message, file=sys.stderr, flush=True)
+
     # Normalize lists
     if hasattr(args, "models"):
         args.models = _csv_or_space_list(args.models)

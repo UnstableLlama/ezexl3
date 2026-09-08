@@ -22,6 +22,7 @@ from pathlib import Path
 
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionError
+from .build_locks import cleanup_locks, group_is_running, snapshot_locks
 
 STATIC_DIR = Path(__file__).parent / "static"
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -34,7 +35,7 @@ TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 class Job:
     __slots__ = (
         "id", "cmd", "process", "output", "status", "returncode",
-        "_waiters", "total_appended",
+        "_waiters", "total_appended", "_stopping",
     )
 
     def __init__(self, job_id: str, cmd: list[str]):
@@ -48,6 +49,7 @@ class Job:
         self.status: str = "starting"  # starting | running | stopped | done
         self.returncode: int | None = None
         self._waiters: list[asyncio.Event] = []
+        self._stopping = False
 
     def append_event(self, event: dict) -> None:
         self.output.append(event)
@@ -88,6 +90,8 @@ class JobManager:
         on the same GPUs and the same work dir.
         """
         for job in self.jobs.values():
+            if job._stopping:
+                return job
             if job.process is None:
                 # Slot claimed by start() but the process is not spawned yet.
                 if job.status == "starting":
@@ -100,7 +104,7 @@ class JobManager:
         # dicts keep insertion order, so this drops the oldest finished jobs first.
         finished = [
             j for j in self.jobs.values()
-            if j.process is not None and j.process.returncode is not None
+            if j.process is not None and j.process.returncode is not None and not j._stopping
         ]
         for job in finished[:max(0, len(finished) - self.MAX_FINISHED)]:
             self.jobs.pop(job.id, None)
@@ -178,8 +182,11 @@ class JobManager:
 
     async def _wait_exit(self, job: Job, proc: asyncio.subprocess.Process):
         code = await proc.wait()
+        while job._stopping:
+            await asyncio.sleep(0.05)
         job.returncode = code
-        job.status = "done"
+        if job.status != "stopped":
+            job.status = "done"
         job.append_event({"type": "exit", "code": code})
         job.notify()
 
@@ -187,25 +194,52 @@ class JobManager:
         job = self.jobs.get(job_id)
         if not job:
             return
+        if job._stopping:
+            while job._stopping:
+                await asyncio.sleep(0.05)
+            return
         if job.process and job.process.returncode is None:
+            locks = snapshot_locks()
+            job._stopping = True
             job.status = "stopped"
-            self._signal_tree(job, signal.SIGTERM)
-            try:
-                # A quantize worker in the middle of a 10 GB checkpoint write needs longer than
-                # a couple of seconds to unwind, and SIGKILLing it there leaves a torn ckpt.
-                await asyncio.wait_for(job.process.wait(), timeout=30)
-            except asyncio.TimeoutError:
-                self._signal_tree(job, signal.SIGKILL)
-                # SIGKILL cannot be caught, so this cannot hang. Without it stop() would
-                # return while the process is still being reaped, and the job would keep
-                # reading as live to the start guard.
+            # start_new_session=True makes the original PID the stable PGID,
+            # even after the parent exits while a compiler child stays alive.
+            pgid = job.process.pid
+
+            async def wait_tree():
                 await job.process.wait()
+                if sys.platform == "linux":
+                    while group_is_running(pgid):
+                        await asyncio.sleep(0.1)
+
+            try:
+                # SIGINT first: KeyboardInterrupt unwinds finally blocks, so
+                # checkpoint writes complete and PyTorch's extension build
+                # releases its lock file. A SIGTERM'd Python process skips its
+                # finally blocks and leaves the lock behind, which is how the
+                # cache ended up wedged for every later import.
+                self._signal_tree(job, signal.SIGINT)
+                try:
+                    await asyncio.wait_for(wait_tree(), timeout=30)
+                except asyncio.TimeoutError:
+                    self._signal_tree(job, signal.SIGTERM)
+                    try:
+                        await asyncio.wait_for(wait_tree(), timeout=10)
+                    except asyncio.TimeoutError:
+                        self._signal_tree(job, signal.SIGKILL)
+                        await wait_tree()
+                for path in cleanup_locks(locks):
+                    job.append_event({"type": "stdout", "text":
+                                      f"Removed interrupted extension build lock: {path}\n"})
+                job.notify()
+            finally:
+                job._stopping = False
 
     @staticmethod
     def _signal_tree(job: Job, sig: int):
         """Signal the job's whole process group, falling back to the direct child."""
         try:
-            os.killpg(os.getpgid(job.process.pid), sig)
+            os.killpg(job.process.pid, sig)
         except (ProcessLookupError, PermissionError):
             try:
                 job.process.send_signal(sig)
