@@ -1,7 +1,7 @@
 import argparse
 import sys
 from dataclasses import dataclass
-from typing import List, Tuple, Optional, Set
+from typing import Any, Dict, List, Tuple, Optional, Set
 from ezexl3 import __version__
 
 @dataclass
@@ -146,6 +146,76 @@ def _norm_bpw(b: str) -> str:
     """Normalize a BPW string for consistent comparison (strip whitespace)."""
     return b.strip()
 
+
+# qbench's test-data / reference knobs, shared by `qbench` (which runs it
+# directly) and `measure` (which runs it as the KL+PPL stage).
+_QBENCH_TUNING_DEFAULTS = {
+    "rows": 10,
+    "length": 2048,
+    "dataset": None,
+    "template": "none",
+    "trace": None,
+    "ref_engine": "exllamav3",
+    "cache_gb": 50.0,
+    "no_noise_floor": False,
+    "regen": False,
+}
+
+
+def _add_qbench_tuning_args(p: argparse.ArgumentParser, explicit_only: bool = False) -> None:
+    """Attach qbench's test-data / reference options to a parser.
+
+    With *explicit_only* every option defaults to None instead of its real
+    default, so _collect_qbench_opts() can tell "the user asked for this"
+    from "the user left it alone". `measure` needs that distinction: it only
+    forwards what was typed without overriding saved project settings.
+    """
+    def dflt(key):
+        return None if explicit_only else _QBENCH_TUNING_DEFAULTS[key]
+
+    p.add_argument("--rows", type=int, default=dflt("rows"),
+                   help="Test rows (default: 10)")
+    p.add_argument("--length", type=int, default=dflt("length"),
+                   help="Tokens per row (default: 2048)")
+    p.add_argument("--dataset", choices=["wiki2", "openwebtext"], default=dflt("dataset"),
+                   help="Use a text dataset instead of the default separate, self-generated eval trace")
+    p.add_argument("--template", choices=["none", "chat", "assistant"], default=dflt("template"),
+                   help="Apply the model's chat template to test rows "
+                        "(none = raw text, default)")
+    p.add_argument("--trace", default=dflt("trace"),
+                   help="Use an existing in-domain eval trace JSON from qbench_prompts.py "
+                        "(replaces --dataset/--rows/--length)")
+    p.add_argument("--ref-engine", choices=["exllamav3", "transformers"],
+                   default=dflt("ref_engine"),
+                   help="Engine for the BF16 reference pass (transformers needs "
+                        "the transformers+accelerate packages)")
+    p.add_argument("--cache-gb", type=float, default=dflt("cache_gb"),
+                   help="Logit cache size limit in GB (default: 50)")
+    p.add_argument("--no-noise-floor", action="store_true", default=dflt("no_noise_floor"),
+                   help="Skip the BF16-noise self-floor pass (faster; disables "
+                        "histogram plots)")
+    p.add_argument("--regen", action="store_true", default=dflt("regen"),
+                   help="Regenerate qbench/project.yml instead of reusing it "
+                        "(cached results survive)")
+
+
+def _collect_qbench_opts(args: argparse.Namespace) -> Dict[str, Any]:
+    """Map explicitly-passed qbench tuning flags onto run_qbench() kwargs.
+
+    Only options the user actually typed appear, so an empty dict means
+    "run qbench exactly the way the repo pipeline does".
+    """
+    opts: Dict[str, Any] = {}
+    for attr in ("rows", "length", "dataset", "template", "trace",
+                 "ref_engine", "cache_gb", "regen"):
+        val = getattr(args, attr, None)
+        if val is not None:
+            opts[attr] = val
+    if getattr(args, "no_noise_floor", None):
+        opts["noise_floor"] = False
+    return opts
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="ezexl3",
@@ -182,6 +252,37 @@ def build_parser() -> argparse.ArgumentParser:
                            help="Use 8-bit head quantization (exllamav3 -hb 8) instead of default 6. "
                                 "Bare flag applies to all BPWs; with args applies to listed BPWs only. "
                                 "Example: -hb8 6,8")
+        p_sub.add_argument("-hb", "--head-bits", type=int, default=None,
+                           help="Head (output layer) bitrate for all BPWs, 1-8 (exllamav3 default: 6). "
+                                "Takes precedence over -hb8 paints. Example: -hb 4")
+        p_sub.add_argument("-vb", "--vision-bits", type=int, default=None,
+                           help="Vision tower bitrate for all BPWs, 1-8, or 16 to store unquantized "
+                                "(default: architecture's default). Requires a recent exllamav3. "
+                                "Example: -vb 8")
+        p_sub.add_argument("-mb", "--mtp-bits", type=int, default=None,
+                           help="MTP (speculative decoding) layer bitrate for all BPWs, 1-8, or 16 "
+                                "to store unquantized (exllamav3 default: 4). Ignored by models "
+                                "without an MTP head. Example: -mb 4")
+        p_sub.add_argument("-ngb", "--ngram-bits", type=int, default=None,
+                           help="Bits per weight for hashed n-gram embedding tables, 1-8 "
+                                "(PLE models, e.g. Qwen3.8-Flash-Next; exllamav3 default: "
+                                "target BPW rounded). Requires exllamav3 >= 1.4.5. Example: -ngb 4")
+        p_sub.add_argument("-ngf", "--ngram-file", default=None,
+                           help="Pre-quantized n-gram table .safetensors (from exllamav3 "
+                                "util/convert_ngram.py) to reuse instead of quantizing the "
+                                "table. Requires exllamav3 >= 1.4.5")
+        p_sub.add_argument("-sc", nargs="*", default=None,
+                           help="Build self-calibrated quants (exllamav3 sc_* pipeline): the model "
+                                "generates its own in-domain calibration trace, per-tensor sensitivity "
+                                "is measured on the unquantized model, and each BPW is converted with "
+                                "an optimized per-tensor bitrate recipe. Works on any BPW (integer or "
+                                "decimal); requires exllamav3 >= 1.4.3. Bare flag applies to all BPWs; "
+                                "with args applies to listed BPWs only. Example: -sc 2.5,3.14")
+        p_sub.add_argument("-scd", "--sc-donor", type=str, default=None,
+                           help="Model directory the -sc calibration trace is sampled from. "
+                                "Default: the highest completed quant >= 5 bpw under the model "
+                                "dir, else the unquantized model (correct but much slower). "
+                                "Example: -scd /models/Foo/6.0")
         p_sub.add_argument("-opt", nargs="*", default=None,
                            help="Use optimized quantization pipeline for fractional BPWs. "
                                 "Compares neighboring integer quants to find optimal mix. "
@@ -206,6 +307,10 @@ def build_parser() -> argparse.ArgumentParser:
                            help="Skip KL divergence measurement")
         p_sub.add_argument("--no-ppl", action="store_true",
                            help="Skip perplexity measurement")
+        p_sub.add_argument("--legacy-measure", action="store_true",
+                           help="Measure KL/PPL with the pre-qbench scripts (model_diff + "
+                                "ppl_layer, 100 wiki2 rows) instead of qbench. Reproduces "
+                                "numbers published before the switch; no charts are produced.")
         p_sub.add_argument("-cb", "--catbench", type=int, default=0, nargs="?", const=3,
                            help="Run SVG Catbench with N samples per model (default: 3 when flag present)")
         p_sub.add_argument("-div", "--diversity", type=int, default=0, nargs="?", const=50,
@@ -243,6 +348,32 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("-hb8", nargs="*", default=None,
                    help="Use 8-bit head quantization (exllamav3 -hb 8) instead of default 6. "
                         "Bare flag applies to all BPWs; with args applies to listed BPWs only.")
+    q.add_argument("-hb", "--head-bits", type=int, default=None,
+                   help="Head (output layer) bitrate for all BPWs, 1-8 (exllamav3 default: 6). "
+                        "Takes precedence over -hb8 paints.")
+    q.add_argument("-vb", "--vision-bits", type=int, default=None,
+                   help="Vision tower bitrate for all BPWs, 1-8, or 16 to store unquantized "
+                        "(default: architecture's default). Requires a recent exllamav3.")
+    q.add_argument("-mb", "--mtp-bits", type=int, default=None,
+                   help="MTP (speculative decoding) layer bitrate for all BPWs, 1-8, or 16 to "
+                        "store unquantized (exllamav3 default: 4). Ignored by models without "
+                        "an MTP head.")
+    q.add_argument("-ngb", "--ngram-bits", type=int, default=None,
+                   help="Bits per weight for hashed n-gram embedding tables, 1-8 "
+                        "(PLE models, e.g. Qwen3.8-Flash-Next; exllamav3 default: "
+                        "target BPW rounded). Requires exllamav3 >= 1.4.5.")
+    q.add_argument("-ngf", "--ngram-file", default=None,
+                   help="Pre-quantized n-gram table .safetensors (from exllamav3 "
+                        "util/convert_ngram.py) to reuse instead of quantizing the "
+                        "table. Requires exllamav3 >= 1.4.5")
+    q.add_argument("-sc", nargs="*", default=None,
+                   help="Build self-calibrated quants (self-sampled trace + per-tensor recipe). "
+                        "Works on any BPW; requires exllamav3 >= 1.4.3. "
+                        "Bare flag applies to all BPWs; with args applies to listed BPWs only.")
+    q.add_argument("-scd", "--sc-donor", type=str, default=None,
+                   help="Model directory the -sc calibration trace is sampled from. "
+                        "Default: the highest completed quant >= 5 bpw under the model dir, "
+                        "else the unquantized model (correct but much slower).")
     q.add_argument("-opt", nargs="*", default=None,
                    help="Use optimized quantization pipeline for fractional BPWs. "
                         "Only applies to fractional BPWs. "
@@ -254,6 +385,20 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--continue-on-error", action="store_true", help="Keep going after failures.")
     q.add_argument("--no-logs", action="store_true", help="Do not write per-GPU logs")
     q.add_argument("-l", "--layers", type=int, default=2, choices=[1, 2, 3], help="Layers used by optimized comparative measure stage (1-3, default: 2)")
+
+    # --- qbench ---
+    qb = sub.add_parser(
+        "qbench",
+        help="Compare quants against the BF16 reference (vendored exllamav3 qbench: "
+             "cached reference logits, noise floor, KLD median/p90 + plots)",
+    )
+    qb.add_argument("-m", "--models", nargs="+", required=True,
+                    help="One or more base model directories with <bpw>/ quant subdirs")
+    qb.add_argument("-b", "--bpws", nargs="+", default=None,
+                    help="BPWs to include (default: auto-detect quant subdirectories)")
+    qb.add_argument("-d", "--device", type=int, default=0,
+                    help="Single CUDA device index (default: 0)")
+    _add_qbench_tuning_args(qb)
 
     # --- measure ---
     m = sub.add_parser("measure", help="Measure only (vendored quantMeasure)")
@@ -267,6 +412,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Skip KL divergence measurement")
     m.add_argument("--no-ppl", action="store_true",
                    help="Skip perplexity measurement")
+    m.add_argument("--legacy-measure", action="store_true",
+                   help="Measure KL/PPL with the pre-qbench scripts (model_diff + ppl_layer, "
+                        "100 wiki2 rows) instead of qbench. Reproduces numbers published "
+                        "before the switch; no charts are produced.")
     m.add_argument("-cb", "--catbench", type=int, default=0, nargs="?", const=3,
                    help="Run SVG Catbench with N samples per model (default: 3 when flag present)")
     m.add_argument("-div", "--diversity", type=int, default=0, nargs="?", const=50,
@@ -281,6 +430,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Run MMLU knowledge benchmark with N fewshot examples (default: 5)")
     m.add_argument("-perf", "--perf", type=int, default=0, nargs="?", const=32768,
                    help="Run inference performance benchmark (default max_length: 32768)")
+    # qbench tuning for the KL+PPL stage. Unset means "same as the repo
+    # pipeline"; setting any of them also re-measures BPWs already recorded.
+    _add_qbench_tuning_args(m, explicit_only=True)
 
 
     # --- chat ---
@@ -296,6 +448,37 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Cache size in tokens (default: 32768). Must be multiple of 256")
     ch.add_argument("-cq", "--cache-quant", type=str, default=None,
                     help="Cache quantization bits: kv_bits or k_bits,v_bits (default: 6,6)")
+    ch.add_argument("-df", "--draft-model", default=None,
+                    help="Draft model directory for speculative decoding (e.g. DFlash), "
+                         "loaded together with the model (required for recurrent models "
+                         "like Qwen3.5/3.6). Needs -m.")
+    ch.add_argument("--mtp", action="store_true",
+                    help="MTP drafting via the model's built-in MTP head. Needs -m.")
+    ch.add_argument("-ngr", "--ngram-ram", action="store_true",
+                    help="Load a PLE model's hashed n-gram embedding table fully "
+                         "into system RAM instead of streaming rows from disk "
+                         "(tens of GB of RAM; exllamav3 >= 1.4.5, e.g. "
+                         "Qwen3.8-Flash-Next)")
+    ch.add_argument("--ngram", type=int, default=0, metavar="MIN",
+                    help="N-gram drafting (no draft model) with minimum match length MIN. Needs -m.")
+
+    # --- mtp (MTP-tensor-only quantization) ---
+    mt = sub.add_parser(
+        "mtp",
+        help="Quantize just the MTP tensors from a base model (adds MTP support to legacy quants)",
+    )
+    mt.add_argument("-m", "--models", nargs="+", required=True,
+                    help="One or more base model directories (original HF checkpoint with MTP head)")
+    mt.add_argument("-hq", action="store_true",
+                    help="Increase bitrate of select MTP layers (attention, shared experts), "
+                         "matching the integrated conversion's -hq")
+    mt.add_argument("-mb", "--mtp-bits", type=int, default=4,
+                    help="MTP tensor bitrate (16 = unquantized, default: 4)")
+    mt.add_argument("-o", "--out-file", default=None,
+                    help="Output .safetensors file (default: <model>/mtp-quant/mtp_<bits>bpw.safetensors). "
+                         "Single model only.")
+    mt.add_argument("-d", "--device", type=int, default=0,
+                    help="CUDA device index used for quantization (default: 0)")
 
     # --- readme ---
     r = sub.add_parser("readme", help="README only (CSV -> README)")
@@ -307,6 +490,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--no-graph", "-ng", action="store_true", help="Do not generate or embed the README SVG graph")
     r.add_argument("--no-measurement", "-nm", action="store_true", help="Remove KL/PPL columns from README and skip graph embedding")
     r.add_argument("--template", "-t", help="README template name (e.g., 'fire', 'basic')")
+    r.add_argument("-cb", "--catbench", action="store_true",
+                   help="Include the SVG Catbench grid in the README (requires catbench/ to exist)")
 
     # --- upload ---
     u = sub.add_parser("upload", help="Upload quantized models to HuggingFace")
@@ -348,10 +533,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.print_help()
         return 0
 
+    # Run before command modules can import ExLlama and wait on FileBaton.
+    # Running here also covers jobs launched by an already-running dashboard.
+    from ezexl3.ui.build_locks import prepare_build_cache
+    for message in prepare_build_cache():
+        print(message, file=sys.stderr, flush=True)
+
     # Normalize lists
     if hasattr(args, "models"):
         args.models = _csv_or_space_list(args.models)
-    if hasattr(args, "bpws"):
+    if hasattr(args, "bpws") and args.bpws is not None:
         args.bpws = _csv_or_space_list(args.bpws)
     if hasattr(args, "devices"):
         args.devices = [d.strip() for d in str(args.devices).split(",") if d.strip()]
@@ -363,6 +554,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if cmd == "chat":
         from ezexl3.chat.server import run_server
+        if sum([bool(args.draft_model), bool(args.mtp), bool(args.ngram)]) > 1:
+            print("Error: specify only one of -df/--draft-model, --mtp, --ngram",
+                  file=sys.stderr)
+            return 2
+        if (args.draft_model or args.mtp or args.ngram) and not args.model:
+            print("Error: -df/--mtp/--ngram need -m (the draft source is "
+                  "loaded together with the model)", file=sys.stderr)
+            return 2
         # When -m is omitted, launch UI-only (no model pre-loaded)
         chat_devices = None
         dr = None
@@ -377,6 +576,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             device_ratios=dr,
             cache_size=args.cache_size,
             cache_quant=args.cache_quant,
+            draft_model_dir=args.draft_model,
+            use_mtp=args.mtp,
+            ngram_min=args.ngram,
+            ngram_ram=args.ngram_ram,
             host=args.host,
             port=args.port,
             open_browser=not args.no_browser,
@@ -392,6 +595,59 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         return 0
 
+    if cmd == "mtp":
+        from ezexl3.mtp import run_mtp
+        if args.out_file and len(args.models) > 1:
+            raise SystemExit("-o/--out-file only makes sense with a single model")
+        failed_models: List[str] = []
+        for model_dir in args.models:
+            print(f"\nConverting MTP tensors: {model_dir}")
+            try:
+                rc = run_mtp(
+                    model_dir=model_dir,
+                    mtp_bits=args.mtp_bits,
+                    out_file=args.out_file,
+                    device=args.device,
+                    hq=args.hq,
+                )
+                if rc != 0:
+                    failed_models.append(model_dir)
+            except Exception as e:
+                print(f"Error converting MTP for {model_dir}: {e}")
+                import traceback
+                traceback.print_exc()
+                failed_models.append(model_dir)
+        return 1 if failed_models else 0
+
+    if cmd == "qbench":
+        from ezexl3.qbench import run_qbench
+        failed_models: List[str] = []
+        for model_dir in args.models:
+            print(f"\nRunning qbench: {model_dir}")
+            try:
+                rc = run_qbench(
+                    model_dir=model_dir,
+                    bpws=args.bpws,
+                    device=args.device,
+                    rows=args.rows,
+                    length=args.length,
+                    dataset=args.dataset,
+                    template=args.template,
+                    trace=args.trace,
+                    ref_engine=args.ref_engine,
+                    cache_gb=args.cache_gb,
+                    noise_floor=not args.no_noise_floor,
+                    regen=args.regen,
+                )
+                if rc != 0:
+                    failed_models.append(model_dir)
+            except Exception as e:
+                print(f"Error running qbench for {model_dir}: {e}")
+                import traceback
+                traceback.print_exc()
+                failed_models.append(model_dir)
+        return 1 if failed_models else 0
+
     from ezexl3.repo import run_repo, run_quant_stage, run_measure_stage
 
     devices_i = _parse_devices(getattr(args, "devices", ["0"]))
@@ -404,12 +660,56 @@ def main(argv: Optional[List[str]] = None) -> int:
     if getattr(args, "pm", False) and "-pm" not in pt.quant_args:
         pt.quant_args = list(pt.quant_args) + ["-pm"]
 
-    # Build per-BPW flag sets from -hq, -hb8, and -opt
+    # Build per-BPW flag sets from -hq, -hb8, -sc, and -opt
     hq_bpws = _parse_per_bpw_flag(getattr(args, "hq", None), args.bpws)
     hb8_bpws = _parse_per_bpw_flag(getattr(args, "hb8", None), args.bpws)
+    sc_bpws = _parse_per_bpw_flag(getattr(args, "sc", None), args.bpws)
     opt_bpws = _parse_per_bpw_flag(getattr(args, "opt", None), args.bpws)
     # -opt only applies to fractional BPWs; silently drop any integers
     opt_bpws = {b for b in opt_bpws if "." in b}
+
+    conflict = {b for b in sc_bpws if b in opt_bpws}
+    if conflict:
+        raise SystemExit(
+            "BPW(s) painted with both -sc and -opt: "
+            + ", ".join(sorted(conflict, key=float))
+            + ". A BPW is built by one pipeline or the other — pick one."
+        )
+
+    # Global head/vision bitrates ride along as real exllamav3 convert flags
+    # via the quant_args passthrough, so every conversion picks them up.
+    head_bits = getattr(args, "head_bits", None)
+    if head_bits is not None:
+        if not (1 <= head_bits <= 8):
+            raise SystemExit(f"--head-bits must be 1-8, got {head_bits}")
+        if hb8_bpws:
+            print("⚠️  Both -hb and -hb8 given: -hb takes precedence for all BPWs")
+        if "-hb" not in pt.quant_args:
+            pt.quant_args = list(pt.quant_args) + ["-hb", str(head_bits)]
+    vision_bits = getattr(args, "vision_bits", None)
+    if vision_bits is not None:
+        if not (1 <= vision_bits <= 8 or vision_bits == 16):
+            raise SystemExit(f"--vision-bits must be 1-8 or 16, got {vision_bits}")
+        if "-vb" not in pt.quant_args:
+            pt.quant_args = list(pt.quant_args) + ["-vb", str(vision_bits)]
+    mtp_bits = getattr(args, "mtp_bits", None)
+    if mtp_bits is not None:
+        if not (1 <= mtp_bits <= 8 or mtp_bits == 16):
+            raise SystemExit(f"--mtp-bits must be 1-8 or 16, got {mtp_bits}")
+        if "-mb" not in pt.quant_args:
+            pt.quant_args = list(pt.quant_args) + ["-mb", str(mtp_bits)]
+    ngram_bits = getattr(args, "ngram_bits", None)
+    if ngram_bits is not None:
+        if not (1 <= ngram_bits <= 8):
+            raise SystemExit(f"--ngram-bits must be 1-8, got {ngram_bits}")
+        if "-ngb" not in pt.quant_args:
+            pt.quant_args = list(pt.quant_args) + ["-ngb", str(ngram_bits)]
+    ngram_file = getattr(args, "ngram_file", None)
+    if ngram_file is not None:
+        if not os.path.isfile(ngram_file):
+            raise SystemExit(f"--ngram-file not found: {ngram_file}")
+        if "-ngf" not in pt.quant_args:
+            pt.quant_args = list(pt.quant_args) + ["-ngf", os.path.abspath(ngram_file)]
 
     # When a fractional BPW is painted with -opt, the actual quantization
     # happens on its integer neighbors (e.g. 4.5 → quantize 4 and 5, then
@@ -470,9 +770,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                     evals=enabled_evals or None,
                     skip_kl=getattr(args, "no_kl", False),
                     skip_ppl=getattr(args, "no_ppl", False),
+                    legacy_measure=getattr(args, "legacy_measure", False),
                     hq_bpws=hq_bpws,
                     hb8_bpws=hb8_bpws,
                     opt_bpws=opt_bpws,
+                    sc_bpws=sc_bpws,
+                    sc_donor=getattr(args, "sc_donor", None),
+                    head_bits=head_bits,
                 )
                 if rc != 0:
                     failed_models.append(model_dir)
@@ -490,16 +794,31 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     if cmd in ("quant", "quantize"):
-        from ezexl3.repo import _plan_repo_bpws, _run_optimized_opt_stage
+        from ezexl3.repo import (
+            _build_quant_forwarded_for_bpw,
+            _plan_repo_bpws,
+            _run_optimized_opt_stage,
+        )
+        from ezexl3 import repo_selfcal
 
-        bpw_plan = _plan_repo_bpws(args.bpws, opt_bpws=opt_bpws)
+        try:
+            bpw_plan = _plan_repo_bpws(args.bpws, opt_bpws=opt_bpws, sc_bpws=sc_bpws)
+        except ValueError as e:
+            raise SystemExit(str(e))
         quant_bpws = bpw_plan["quant_integer_queue"]
         optimized_bpws = bpw_plan["requested_optimizeds"]
+        selfcal_bpws = bpw_plan["requested_selfcal"]
 
-        if optimized_bpws and args.out_template != "{model}/{bpw}":
-            print("Error: --out-template cannot be customized when using decimal BPWs.")
-            print("The optimized quantization stage requires outputs at {model}/{bpw}.")
+        if (optimized_bpws or selfcal_bpws) and args.out_template != "{model}/{bpw}":
+            print("Error: --out-template cannot be customized when using -opt or -sc BPWs.")
+            print("These pipeline stages require outputs at {model}/{bpw}.")
             return 1
+
+        if selfcal_bpws:
+            support_err = repo_selfcal.check_selfcal_support()
+            if support_err:
+                print(f"Error: {support_err}")
+                return 1
 
         all_requested = set(bpw_plan["requested_integers"] + bpw_plan.get("requested_optimizeds", []))
         # Also exclude standard fractional BPWs (in quant queue but explicitly requested)
@@ -533,6 +852,20 @@ def main(argv: Optional[List[str]] = None) -> int:
                     failed_models.append(model_dir)
                     continue
 
+                if selfcal_bpws and not args.dry:
+                    repo_selfcal.run_selfcal_stage(
+                        model_dir=os.path.abspath(model_dir),
+                        sc_bpws=selfcal_bpws,
+                        devices=devices_i,
+                        forwarded_for_bpw=lambda b: _build_quant_forwarded_for_bpw(
+                            pt.quant_args, devices_i, device_ratios_str, b,
+                            hq_bpws, hb8_bpws,
+                        ),
+                        head_bits=head_bits,
+                        write_logs=not args.no_logs,
+                        trace_donor=getattr(args, "sc_donor", None),
+                    )
+
                 if optimized_bpws and not args.dry:
                     _run_optimized_opt_stage(
                         model_dir=os.path.abspath(model_dir),
@@ -553,6 +886,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         # name. The dashboard spawns measure with stdin piped/closed, so
         # isatty() is False there and the gate runs as expected.
         prompt_for_model = not sys.stdin.isatty()
+        qbench_opts = _collect_qbench_opts(args)
         failed_models: List[str] = []
         for model_dir in args.models:
             print(f"\nMeasuring model: {model_dir}")
@@ -567,6 +901,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     evals=enabled_evals or None,
                     skip_kl=getattr(args, "no_kl", False),
                     skip_ppl=getattr(args, "no_ppl", False),
+                    legacy_measure=getattr(args, "legacy_measure", False),
+                    qbench_opts=qbench_opts or None,
                     prompt_for_model_name=prompt_for_model,
                 )
                 if rc != 0:
@@ -580,6 +916,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         from ezexl3.readme import run_readme, run_readme_single
         readme_bpws = args.bpws if hasattr(args, "bpws") and args.bpws else None
         readme_mode = getattr(args, "mode", "branched")
+        include_catbench = bool(getattr(args, "catbench", False))
         for model_dir in args.models:
             if readme_mode == "single":
                 run_readme_single(
@@ -589,6 +926,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     interactive=(not args.no_prompt),
                     include_graph=(not args.no_graph and not args.no_measurement),
                     include_measurements=(not args.no_measurement),
+                    include_catbench=include_catbench,
                 )
             else:
                 run_readme(
@@ -598,6 +936,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     include_graph=(not args.no_graph and not args.no_measurement),
                     include_measurements=(not args.no_measurement),
                     bpws_hint=readme_bpws,
+                    include_catbench=include_catbench,
                 )
         return 0
 

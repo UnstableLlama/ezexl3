@@ -21,7 +21,7 @@ import subprocess
 import sys
 from typing import Dict, List, Set
 
-CSV_FIELDS = ["weights", "KL Div", "PPL r-100", "GiB"]
+CSV_FIELDS = ["weights", "KL Div", "PPL", "GiB"]
 
 _MODEL_DIFF_SCRIPT = os.path.join(os.path.dirname(__file__), "vendor", "model_diff.py")
 
@@ -134,6 +134,9 @@ def run_cmd_capture(cmd: List[str]) -> str:
     """Run a command, stream stdout live, and also capture full output."""
     env = os.environ.copy()
     env["PYTHONSAFEPATH"] = "1"
+    # Set before the child interpreter imports torch; the vendored model_diff.py
+    # is byte-identical to upstream and no longer sets this itself.
+    env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
     assert proc.stdout is not None
     out_lines: List[str] = []
@@ -150,16 +153,19 @@ def run_model_diff(
     base_dir: str,
     other_dir: str,
     device: int,
-    r: int = 10,
+    r: int = 100,
 ) -> float:
     """
     Runs internal model_diff.py and returns KL divergence.
+
+    Orientation: model A is the quant, model B is the base, so the reported
+    KL(A, B) is KL(quant || base) — per upstream (turboderp) guidance.
     """
     cmd = [
         sys.executable,
         _MODEL_DIFF_SCRIPT,
-        "-ma", base_dir,
-        "-mb", other_dir,
+        "-ma", other_dir,
+        "-mb", base_dir,
         "-r", str(r),
         "-d", str(device),
     ]
@@ -249,7 +255,7 @@ def run_measure(
                 base_dir,
                 model_dir,
                 device=device,
-                r=10,
+                r=100,
             )
             ppl_100 = run_ppl_layer(model_dir, device=device, r=ppl_rows)
             size_gib = file_size_gib(model_dir)
@@ -257,7 +263,7 @@ def run_measure(
         row = {
             "weights": label,
             "KL Div": kl_div,
-            "PPL r-100": ppl_100,
+            "PPL": ppl_100,
             "GiB": size_gib,
         }
 

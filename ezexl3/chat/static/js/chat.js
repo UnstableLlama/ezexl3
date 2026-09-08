@@ -54,10 +54,224 @@ async function streamResponse(message, context, bodyEl, {initialText = '', prefi
   return {fullText, tpsData};
 }
 
+// ── DPO duel: generate two candidates for one user turn ────────
+let duelStopped = false;  // set by stopGeneration(); abandons the duel
+
+async function streamDuel(message, context, bodies, systemPrompts = null) {
+  // One /api/chat request with n=2: the server batches both candidates
+  // in a single generator pass and tags every SSE event with `cand`,
+  // so both columns stream CONCURRENTLY. systemPrompts optionally
+  // biases each candidate's generation (null entry = trained prompt).
+  const texts = bodies.map(() => '');
+  const tps = bodies.map(() => null);
+
+  const reqBody = {message, context, n: bodies.length};
+  if (systemPrompts && systemPrompts.some(Boolean)) {
+    reqBody.system_prompts = systemPrompts;
+  }
+  const resp = await fetch('/api/chat', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(reqBody),
+  });
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, {stream: true});
+
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const payload = line.slice(6);
+      if (payload === '[DONE]') continue;
+
+      try {
+        const evt = JSON.parse(payload);
+        const c = evt.cand || 0;
+        switch (evt.type) {
+          case 'token':
+            texts[c] += evt.text;
+            bodies[c].classList.remove('duel-waiting');
+            renderStreaming(bodies[c], texts[c]);
+            scrollToBottom();
+            break;
+          case 'tps':
+            tps[c] = evt;
+            break;
+          case 'done':
+            break;
+          case 'error':
+            texts[c] += `\n\n**Error:** ${evt.message}`;
+            renderStreaming(bodies[c], texts[c]);
+            break;
+        }
+      } catch {}
+    }
+  }
+
+  return texts.map((fullText, i) => ({fullText, tpsData: tps[i]}));
+}
+
+async function runDuel(userNode, context) {
+  // Streams N candidates side by side, adds each as a sibling assistant
+  // node, and (unless stopped) arms pendingDuel so renderActiveTree shows
+  // the judgment UI. Queue-driven bulk mode allows a single candidate,
+  // generates every candidate under System Prompt A, and swaps the ▲/▼
+  // pick UI for ✗ / Save-all.
+  duelStopped = false;
+  const bulk = bulkQueueActive();
+  const n = bulk ? bulkCount() : duelCount();
+
+  const duelEl = document.createElement('div');
+  duelEl.className = 'duel-wrap';
+  msgContainer.appendChild(duelEl);
+  const bodies = [];
+  for (let i = 0; i < n; i++) {
+    const cand = document.createElement('div');
+    cand.className = 'duel-candidate';
+    cand.innerHTML =
+      `<div class="duel-head"><span class="duel-label">${candLabel(i)}</span></div>` +
+      '<div class="msg-body duel-waiting">&hellip;</div>';
+    duelEl.appendChild(cand);
+    bodies.push(cand.querySelector('.msg-body'));
+  }
+
+  const spoofs = bulk
+    ? Array.from({length: n}, () => bulkGenSystem())
+    : duelSystemPromptsFor(n);
+  const results = await streamDuel(userNode.content, context, bodies, spoofs);
+
+  const ids = [];
+  results.forEach(({fullText, tpsData}, i) => {
+    if (!fullText.trim()) return;  // stopped before any tokens
+    const node = addAssistantNode(userNode.id, fullText.trim());
+    if (tpsData) node.tpsData = tpsData;
+    node.genSystem = spoofs[i] || null;
+    ids.push(node.id);
+  });
+
+  if (ids.length === n && (n >= 2 || bulk) && !duelStopped) {
+    pendingDuel = {userNodeId: userNode.id, ids, marks: {}, bulk,
+                   sourceRow: bulk ? (promptQueue.current || null) : null};
+  }
+  renderActiveTree();
+}
+
+// ── DPO duel: regenerate the un-pinned candidates ──────────────
+async function regenerateDuelCandidates() {
+  // Duels: replaces every candidate NOT pinned with a ▲/▼ vote (unmarked
+  // or ✗), keeping the voted candidates' text and marks. Bulk: unmarked
+  // candidates are keepers (Save-all records them), so only ✗-marked
+  // ones are replaced.
+  if (!pendingDuel || generating || !modelLoaded) return;
+  const duel = pendingDuel;
+  const regenIdxs = duel.ids
+    .map((id, i) => {
+      if (duel.bulk) return duel.marks[id] === 'fail' ? i : -1;
+      return (duel.marks[id] === 'up' || duel.marks[id] === 'down') ? -1 : i;
+    })
+    .filter(i => i >= 0);
+  if (!regenIdxs.length) return;
+
+  pendingDuel = null;
+  duelStopped = false;
+
+  const userNode = tree.nodes.get(duel.userNodeId);
+  if (!userNode) { renderActiveTree(); return; }
+  const context = getActivePathUpTo(userNode.id);
+
+  // Drop the failed candidates from the tree; their replacements get
+  // fresh node ids (any stale mark goes with them).
+  for (const i of regenIdxs) {
+    const id = duel.ids[i];
+    const idx = userNode.children.indexOf(id);
+    if (idx >= 0) userNode.children.splice(idx, 1);
+    tree.nodes.delete(id);
+    delete duel.marks[id];
+  }
+
+  // Render history up to the user turn, then rebuild the side-by-side
+  // view: kept candidates static, failed slots streaming.
+  const savedActiveChild = userNode.activeChild;
+  userNode.activeChild = -1;
+  renderActiveTree();
+  userNode.activeChild = Math.min(savedActiveChild, userNode.children.length - 1);
+
+  generating = true;
+  sendBtn.style.display = 'none';
+  stopBtn.style.display = 'flex';
+  sendBtn.disabled = true;
+
+  const duelEl = document.createElement('div');
+  duelEl.className = 'duel-wrap';
+  msgContainer.appendChild(duelEl);
+  const streamBodies = [];
+  duel.ids.forEach((id, i) => {
+    const cand = document.createElement('div');
+    cand.className = 'duel-candidate';
+    cand.innerHTML =
+      `<div class="duel-head"><span class="duel-label">${candLabel(i)}</span></div>` +
+      '<div class="msg-body duel-waiting">&hellip;</div>';
+    duelEl.appendChild(cand);
+    const body = cand.querySelector('.msg-body');
+    if (regenIdxs.includes(i)) {
+      streamBodies.push(body);
+    } else {
+      const node = tree.nodes.get(id);
+      body.classList.remove('duel-waiting');
+      renderFinal(body, node ? node.content : '');
+    }
+  });
+
+  try {
+    // Each regenerated slot keeps its own generation prompt (A/B/… for
+    // duels; System Prompt A across the board for bulk).
+    const spoofs = duel.bulk
+      ? Array.from({length: duel.ids.length}, () => bulkGenSystem())
+      : duelSystemPromptsFor(duel.ids.length);
+    const slotSpoofs = regenIdxs.map(i => spoofs[i] || null);
+    const results = await streamDuel(userNode.content, context, streamBodies,
+                                     slotSpoofs);
+    results.forEach((res, k) => {
+      const slot = regenIdxs[k];
+      const text = res.fullText.trim();
+      if (!text) { duel.ids[slot] = null; return; }  // stopped before tokens
+      const node = addAssistantNode(userNode.id, text);
+      if (res.tpsData) node.tpsData = res.tpsData;
+      node.genSystem = slotSpoofs[k];
+      duel.ids[slot] = node.id;
+    });
+  } catch (e) {
+    console.error('Duel regen failed:', e);
+  }
+
+  generating = false;
+  sendBtn.style.display = 'flex';
+  stopBtn.style.display = 'none';
+  sendBtn.disabled = false;
+
+  // Re-arm the duel only if both slots hold a live candidate; a stopped
+  // regen leaves the surviving replies as ordinary siblings.
+  if (!duelStopped && duel.ids.every(Boolean)) {
+    pendingDuel = duel;
+  }
+  renderActiveTree();
+  inputBox.focus();
+  scrollToBottom();
+}
+
 // ── Send message ────────────────────────────────────────────────
 async function sendMessage() {
   const text = inputBox.value.trim();
   if (!text || generating || !modelLoaded) return;
+  if (typeof ratingsReady !== 'undefined') await ratingsReady;
 
   inputBox.value = '';
   inputBox.style.height = 'auto';
@@ -72,31 +286,40 @@ async function sendMessage() {
   // Render tree (shows user message, empty assistant placeholder will be added)
   renderActiveTree();
 
-  // Create assistant placeholder in DOM
-  const assistantEl = createMsgEl('assistant', '');
-  msgContainer.appendChild(assistantEl);
-  const bodyEl = assistantEl.querySelector('.msg-body');
-
   generating = true;
   sendBtn.style.display = 'none';
   stopBtn.style.display = 'flex';
   sendBtn.disabled = true;
 
-  try {
-    const {fullText, tpsData} = await streamResponse(text, context, bodyEl);
+  if (ratingsMode === 'dpo') {
+    try {
+      await runDuel(userNode, context);
+    } catch (e) {
+      console.error('Duel failed:', e);
+      renderActiveTree();
+    }
+  } else {
+    // Create assistant placeholder in DOM
+    const assistantEl = createMsgEl('assistant', '');
+    msgContainer.appendChild(assistantEl);
+    const bodyEl = assistantEl.querySelector('.msg-body');
 
-    // Final render
-    renderFinal(bodyEl, fullText);
+    try {
+      const {fullText, tpsData} = await streamResponse(text, context, bodyEl);
 
-    // Add assistant to tree with TPS data
-    const assistNode = addAssistantNode(userNode.id, fullText.trim());
-    if (tpsData) assistNode.tpsData = tpsData;
+      // Final render
+      renderFinal(bodyEl, fullText);
 
-    // Re-render full tree to get proper action buttons + TPS badge
-    renderActiveTree();
+      // Add assistant to tree with TPS data
+      const assistNode = addAssistantNode(userNode.id, fullText.trim());
+      if (tpsData) assistNode.tpsData = tpsData;
 
-  } catch (e) {
-    renderFinal(bodyEl, `\n\n**Error:** ${e.message}`);
+      // Re-render full tree to get proper action buttons + TPS badge
+      renderActiveTree();
+
+    } catch (e) {
+      renderFinal(bodyEl, `\n\n**Error:** ${e.message}`);
+    }
   }
 
   generating = false;
@@ -110,6 +333,7 @@ async function sendMessage() {
 // ── Regenerate response ─────────────────────────────────────────
 async function regenerateResponse(assistantNodeId) {
   if (generating) return;
+  if (typeof ratingsReady !== 'undefined') await ratingsReady;
 
   const assistNode = tree.nodes.get(assistantNodeId);
   if (!assistNode || assistNode.role !== 'assistant') return;
@@ -125,27 +349,36 @@ async function regenerateResponse(assistantNodeId) {
   renderActiveTree();
   userNode.activeChild = savedActiveChild;
 
-  // Create assistant placeholder
-  const assistantEl = createMsgEl('assistant', '');
-  msgContainer.appendChild(assistantEl);
-  const bodyEl = assistantEl.querySelector('.msg-body');
-
   generating = true;
   sendBtn.style.display = 'none';
   stopBtn.style.display = 'flex';
   sendBtn.disabled = true;
 
-  try {
-    const {fullText, tpsData} = await streamResponse(userNode.content, context, bodyEl);
-    renderFinal(bodyEl, fullText);
+  if (ratingsMode === 'dpo') {
+    try {
+      await runDuel(userNode, context);
+    } catch (e) {
+      console.error('Duel failed:', e);
+      renderActiveTree();
+    }
+  } else {
+    // Create assistant placeholder
+    const assistantEl = createMsgEl('assistant', '');
+    msgContainer.appendChild(assistantEl);
+    const bodyEl = assistantEl.querySelector('.msg-body');
 
-    // Add as new sibling assistant node
-    const newAssist = addAssistantNode(userNode.id, fullText.trim());
-    if (tpsData) newAssist.tpsData = tpsData;
+    try {
+      const {fullText, tpsData} = await streamResponse(userNode.content, context, bodyEl);
+      renderFinal(bodyEl, fullText);
 
-    renderActiveTree();
-  } catch (e) {
-    renderFinal(bodyEl, `\n\n**Error:** ${e.message}`);
+      // Add as new sibling assistant node
+      const newAssist = addAssistantNode(userNode.id, fullText.trim());
+      if (tpsData) newAssist.tpsData = tpsData;
+
+      renderActiveTree();
+    } catch (e) {
+      renderFinal(bodyEl, `\n\n**Error:** ${e.message}`);
+    }
   }
 
   generating = false;
@@ -345,6 +578,7 @@ async function continueGeneration(assistantNodeId) {
 
 // ── Stop generation ─────────────────────────────────────────────
 async function stopGeneration() {
+  duelStopped = true;  // a stopped duel is abandoned, not recorded
   await fetch('/api/stop', {method: 'POST'});
 }
 

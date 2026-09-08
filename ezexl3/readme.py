@@ -6,7 +6,6 @@ import sys
 import time
 from typing import List, Dict, Optional
 
-from ezexl3.graph_svg import generate_iceblink_svg
 
 _META_FILENAME = ".ezexl3_readme_meta.json"
 _META_KEYS = ("AUTHOR", "MODEL", "REPOLINK", "USER")
@@ -193,9 +192,9 @@ def _discover_rows_without_measurements(model_dir: str, bpws_hint: Optional[List
             return 9999.0
 
     for b in sorted(ordered_bpws, key=_bpw_order):
-        rows.append({"weights": b, "GiB": "x", "KL Div": "x", "PPL r-100": "x"})
+        rows.append({"weights": b, "GiB": "x", "KL Div": "x", "PPL": "x"})
 
-    rows.append({"weights": "bf16", "GiB": "x", "KL Div": "x", "PPL r-100": "x"})
+    rows.append({"weights": "bf16", "GiB": "x", "KL Div": "x", "PPL": "x"})
     return rows
 
 
@@ -261,9 +260,15 @@ def run_readme(
     include_measurements: bool = True,
     bpws_hint: Optional[List[str]] = None,
     include_catbench: bool = False,
+    write_per_bpw: bool = True,
 ) -> None:
     """
     Generate README.md for the model repository based on measurement CSV and template.
+
+    When ``write_per_bpw`` is True (the default), the same README is also
+    overwritten into each BPW subdirectory after the root copy is written.
+    ``run_readme_single`` passes ``False`` because it writes its own
+    rewritten per-BPW READMEs in a follow-up pass.
     """
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
     templates_dir = os.path.join(pkg_dir, "templates")
@@ -378,32 +383,14 @@ def run_readme(
         except Exception:
             pass
 
-        kl = r.get("KL Div", "x")
-        try:
-            kl = f"{float(kl):.4f}"
-        except Exception:
-            pass
-
-        ppl = r.get("PPL r-100", "x")
-        try:
-            ppl = f"{float(ppl):.4f}"
-        except Exception:
-            pass
-          
         if w == "bf16":
             revision_link = meta["REPOLINK"].rstrip("/")
         else:
             revision_link = f"{quant_repo_link.rstrip('/')}/tree/{label}"
 
-        if include_measurements:
-            row_html = f"""            <tr>
-              <td><a class=\"link-style\" href=\"{revision_link}\">{label}</a></td>
-              <td>{gib}</td>
-              <td>{kl}</td>
-              <td>{ppl}</td>
-            </tr>"""
-        else:
-            row_html = f"""            <tr>
+        # KL divergence and perplexity live in the qbench charts now; the
+        # table is just the per-BPW repo links and their sizes.
+        row_html = f"""            <tr>
               <td><a class=\"link-style\" href=\"{revision_link}\">{label}</a></td>
               <td>{gib}</td>
             </tr>"""
@@ -412,17 +399,7 @@ def run_readme(
     table_body = "\n".join(table_rows)
     template = re.sub(r"<tbody>.*?</tbody>", f"<tbody>\n{table_body}\n          </tbody>", template, flags=re.DOTALL)
 
-    if include_measurements:
-        table_head = """          <thead>
-            <tr>
-              <th>REVISION</th>
-              <th>GiB</th>
-              <th>KL DIV</th>
-              <th>PPL</th>
-            </tr>
-          </thead>"""
-    else:
-        table_head = """          <thead>
+    table_head = """          <thead>
             <tr>
               <th>REVISION</th>
               <th>GiB</th>
@@ -430,18 +407,32 @@ def run_readme(
           </thead>"""
     template = re.sub(r"<thead>.*?</thead>", table_head, template, flags=re.DOTALL)
 
-    if include_graph:
-        graph_filename = f"{os.path.basename(os.path.abspath(model_dir)).lower()}.svg"
-        graph_path = os.path.join(model_dir, graph_filename)
-        try:
-            from ezexl3.measure import default_csv_path
-            generate_iceblink_svg(csv_path=default_csv_path(model_dir), out_svg=graph_path, title=f"{meta['MODEL']}-{meta['QUANT_METHOD']}")
-        except Exception as e:
-            print(f"⚠️ Graph generation skipped: {e}")
-        meta["GRAPH_FILE"] = graph_filename
+    # qbench charts, in display order: mean KLD vs bpw, perplexity vs bpw,
+    # then the per-token KLD panels. Only the ones qbench actually produced
+    # are embedded — the histograms need the noise-floor pass, so a run
+    # without it simply shows two charts.
+    if include_graph and include_measurements:
+        from ezexl3.qbench import README_CHARTS, publish_charts
+        publish_charts(model_dir)
+        alts = {
+            "qb_kld.png": "Mean KL divergence vs bits per weight",
+            "qb_ppl.png": "Perplexity vs bits per weight",
+            "qb_kld_hist.png": "Per-token KL divergence distribution",
+            "qb_kld_hist_combined.png": "Combined per-token KL divergence distributions and noise floor",
+        }
+        imgs = [
+            f'<img class="repo-graph" src="{name}" alt="{alts[name]}">'
+            for name in README_CHARTS
+            if os.path.exists(os.path.join(model_dir, name))
+        ]
+        if not imgs:
+            print("⚠️ No qbench charts found — run the measure stage to generate them.")
+        meta["QBENCH_CHARTS"] = "\n      ".join(imgs)
     else:
-        template = re.sub(r"\s*<img class=\"repo-graph\"[^>]*>\s*", "\n", template)
-        meta["GRAPH_FILE"] = ""
+        meta["QBENCH_CHARTS"] = ""
+    # Legacy placeholder: templates predating the chart panel still carry it.
+    meta["GRAPH_FILE"] = ""
+    template = re.sub(r"\s*<img class=\"repo-graph\" src=\"\{\{GRAPH_FILE\}\}\"[^>]*>\s*", "\n      ", template)
 
     for k, v in meta.items():
         template = template.replace(f"{{{{{k}}}}}", str(v))
@@ -469,6 +460,24 @@ def run_readme(
         f.write(template)
 
     print(f"✅ Generated {readme_path}")
+
+    if write_per_bpw:
+        # Mirror the root README into every BPW subdirectory so the per-repo
+        # uploads always carry the latest README. Single-mode rewrites these
+        # again afterward; branched-mode just keeps these copies as-is.
+        copied = 0
+        for bpw_dir_name in _discover_bpws(model_dir):
+            bpw_dir = os.path.join(model_dir, bpw_dir_name)
+            try:
+                os.makedirs(bpw_dir, exist_ok=True)
+                with open(os.path.join(bpw_dir, "README.md"), "w") as f:
+                    f.write(template)
+                copied += 1
+            except OSError as e:
+                print(f"⚠️  Could not write {bpw_dir_name}/README.md: {e}")
+        if copied:
+            print(f"✅ Mirrored README into {copied} BPW subdirector{'y' if copied == 1 else 'ies'}")
+
     # Signal to dashboard: README write finished. The frontend unfreezes
     # the metadata lock buttons so the user can edit them again.
     print("<<EZEXL3:README_DONE>>")
@@ -528,7 +537,9 @@ def run_readme_single(
             print("🔴 No BPWs specified and none auto-detected in model directory.")
             return
 
-    # Generate the standard branched README first as a base
+    # Generate the standard branched README first as a base. Skip the
+    # auto per-BPW mirror — we rewrite each BPW's README below with
+    # single-mode link / title / download tweaks.
     run_readme(
         model_dir,
         template_name=template_name,
@@ -537,6 +548,7 @@ def run_readme_single(
         include_measurements=include_measurements,
         bpws_hint=bpws,
         include_catbench=include_catbench,
+        write_per_bpw=False,
     )
 
     base_readme = os.path.join(model_dir, "README.md")

@@ -7,15 +7,18 @@ function renderForm(commandKey) {
   const container = document.getElementById("form-fields");
   container.innerHTML = "";
 
-  const required = cmd.fields.filter(f => f.required && f.type !== "boolean" && !f.section);
-  const optional = cmd.fields.filter(f => !f.required && !f.section && (f.type !== "boolean" || f.toggleable));
-  const booleans = cmd.fields.filter(f => f.type === "boolean" && !f.toggleable && !f.section);
+  // Fields with afterField are pinned directly under their anchor instead of
+  // falling into the Options block, so they read as part of that control.
+  const required = cmd.fields.filter(f => f.required && f.type !== "boolean" && !f.section && !f.group);
+  const optional = cmd.fields.filter(f => !f.required && !f.section && !f.group && !f.afterField && (f.type !== "boolean" || f.toggleable));
+  const booleans = cmd.fields.filter(f => f.type === "boolean" && !f.toggleable && !f.section && !f.group);
+  const grouped = cmd.fields.filter(f => f.group && !f.section);
   const evals = cmd.fields.filter(f => f.section === "evals");
 
   // Required fields
   if (required.length) {
     for (const field of required) {
-      container.appendChild(createFieldEl(field));
+      appendFieldWithFollowers(container, cmd, field);
     }
   }
 
@@ -26,8 +29,13 @@ function renderForm(commandKey) {
     heading.textContent = "Options";
     container.appendChild(heading);
     for (const field of optional) {
-      container.appendChild(createFieldEl(field));
+      appendFieldWithFollowers(container, cmd, field);
     }
+  }
+
+  // Collapsed subsections for rarely-used field groups (e.g. N-gram)
+  for (const gid of [...new Set(grouped.map(f => f.group))]) {
+    container.appendChild(createGroupEl(cmd, gid, grouped.filter(f => f.group === gid)));
   }
 
   // Boolean flags in a compact grid
@@ -44,6 +52,12 @@ function renderForm(commandKey) {
     container.appendChild(grid);
   }
 
+  // BPW fields render their tokens on input, but the flag buttons live in
+  // the same container — build them once now so they show on an empty form.
+  for (const field of cmd.fields) {
+    if (field.bpwPaintFlags) rebuildBpwTokens(field.name, field.bpwPaintFlags);
+  }
+
   // Side panels (right column)
   renderEvalsPanel(commandKey);
   renderMetadataPanel(commandKey);
@@ -55,9 +69,79 @@ function renderForm(commandKey) {
 }
 
 
+function appendFieldWithFollowers(container, cmd, field) {
+  container.appendChild(createFieldEl(field));
+  for (const f of cmd.fields) {
+    if (f.afterField === field.name) container.appendChild(createFieldEl(f));
+  }
+}
+
+
+// A showWhen field is only rendered (and only contributes an arg) while the
+// named global paint flag is on — e.g. sc_donor follows the -sc toggle.
+function isFieldVisible(field) {
+  if (!field.showWhen) return true;
+  const { field: srcField, globalFlag } = field.showWhen;
+  return !!(bpwGlobalState[srcField] && bpwGlobalState[srcField].has(globalFlag));
+}
+
+
+function updateConditionalFields() {
+  const cmd = COMMANDS[activeCommand];
+  if (!cmd) return;
+  for (const field of cmd.fields) {
+    if (!field.showWhen) continue;
+    const row = document.getElementById(`row-${field.name}`);
+    if (row) row.style.display = isFieldVisible(field) ? "" : "none";
+  }
+}
+
+
+function createGroupEl(cmd, groupId, fields) {
+  const meta = (cmd.groups || {})[groupId] || { label: groupId };
+  const wrap = document.createElement("div");
+  wrap.className = "form-group-collapsible";
+
+  const header = document.createElement("div");
+  header.className = "subsection-header";
+  const title = document.createElement("span");
+  title.textContent = meta.label;
+  header.appendChild(title);
+  const chevron = document.createElement("span");
+  chevron.className = "chevron";
+  chevron.innerHTML = "&#9660;";
+  header.appendChild(chevron);
+  wrap.appendChild(header);
+
+  const body = document.createElement("div");
+  body.className = "subsection-body";
+  body.style.display = "none";
+  if (meta.help) {
+    const help = document.createElement("div");
+    help.className = "form-help";
+    help.textContent = meta.help;
+    body.appendChild(help);
+  }
+  for (const field of fields) {
+    body.appendChild(createFieldEl(field));
+  }
+  wrap.appendChild(body);
+
+  header.addEventListener("click", () => {
+    const open = body.style.display === "none";
+    body.style.display = open ? "" : "none";
+    chevron.innerHTML = open ? "&#9650;" : "&#9660;";
+  });
+
+  return wrap;
+}
+
+
 function createFieldEl(field) {
   const row = document.createElement("div");
   row.className = "form-row";
+  row.id = `row-${field.name}`;
+  if (field.showWhen) row.style.display = "none";
 
   const labelRow = document.createElement("div");
   labelRow.className = "form-label-row";
@@ -293,11 +377,12 @@ function rebuildBpwTokens(fieldName, paintFlags) {
 
   display.innerHTML = "";
 
-  // Global toggles (e.g. -pm) apply universally to every token. We pass
-  // the resolved set into applyTokenColor so the visual flag (white glow)
-  // is set as an inline style and survives any CSS specificity quirks.
+  // Global toggles apply to every token rather than being painted on one
+  // at a time: -pm shows as a white glow, the rest (e.g. -sc) fold into
+  // each token's stripe pattern alongside whatever was painted on it.
   const globalSet = bpwGlobalState[fieldName] || new Set();
   const pmActive = globalSet.has("pm");
+  const globalStripes = [...globalSet].filter(n => n !== "pm");
 
   const validParts = parts.filter(isValidBpw);
   validParts.forEach((bpw, idx) => {
@@ -307,8 +392,8 @@ function rebuildBpwTokens(fieldName, paintFlags) {
     token.dataset.bpw = bpw;
     token.title = "click a color then click me";
 
-    // Apply flag colors
-    const flags = bpwFlagState[fieldName][bpw] || new Set();
+    // Apply flag colors — painted flags plus any global stripe flags
+    const flags = new Set([...(bpwFlagState[fieldName][bpw] || []), ...globalStripes]);
     applyTokenColor(token, flags, paintFlags, pmActive);
 
     token.addEventListener("mousedown", (e) => {
@@ -327,53 +412,112 @@ function rebuildBpwTokens(fieldName, paintFlags) {
     }
   });
 
-  // Append paint buttons inline after the tokens
-  if (validParts.length > 0) {
-    const paintWrap = document.createElement("div");
-    paintWrap.className = "bpw-paint-buttons";
-    for (const pf of paintFlags) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "bpw-paint-btn";
-      if (pf.isGlobal) btn.classList.add("bpw-paint-btn-global");
-      btn.dataset.paintFlag = pf.name;
-      btn.dataset.paintColor = pf.color;
-      btn.textContent = pf.label;
-      btn.style.setProperty("--paint-color", pf.color);
-      if (pf.tooltip) btn.title = pf.tooltip;
-      if (jobRunning) btn.disabled = true;
-      if (pf.isGlobal) {
-        // Global toggle (e.g. -pm) — independent on/off, not paint mode.
-        if (bpwGlobalState[fieldName]?.has(pf.name)) {
-          btn.classList.add("active");
-        }
-        btn.addEventListener("mousedown", (e) => {
-          if (jobRunning) return;
-          e.preventDefault();
-          if (!bpwGlobalState[fieldName]) bpwGlobalState[fieldName] = new Set();
-          const set = bpwGlobalState[fieldName];
-          if (set.has(pf.name)) set.delete(pf.name);
-          else set.add(pf.name);
-          // Rebuild so the token glow + button active state stay in sync
-          rebuildBpwTokens(fieldName, paintFlags);
-        });
-      } else {
-        // Restore active state if this paint mode is currently on
-        if (activePaint && activePaint.fieldName === fieldName && activePaint.flagName === pf.name) {
-          btn.classList.add("active");
-        }
-        // Use mousedown so the click isn't eaten by the BPW input's blur
-        // when the user clicks straight from typing into the entry field.
-        btn.addEventListener("mousedown", (e) => {
-          if (jobRunning) return;
-          e.preventDefault();
-          togglePaintMode(fieldName, pf.name, btn);
-        });
+  // Paint buttons render inline after the tokens, always — they're the
+  // legend for the colors as much as the control, so they shouldn't
+  // vanish just because no BPW has been typed yet.
+  const paintWrap = document.createElement("div");
+  paintWrap.className = "bpw-paint-buttons";
+  for (const pf of paintFlags) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "bpw-paint-btn";
+    if (pf.isGlobal) btn.classList.add("bpw-paint-btn-global");
+    btn.dataset.paintFlag = pf.name;
+    btn.dataset.paintColor = pf.color;
+    btn.textContent = pf.label;
+    btn.style.setProperty("--paint-color", pf.color);
+    if (pf.tooltip) btn.title = pf.tooltip;
+    if (jobRunning) btn.disabled = true;
+    if (pf.isGlobal) {
+      // Global toggle (e.g. -pm) — independent on/off, not paint mode.
+      if (bpwGlobalState[fieldName]?.has(pf.name)) {
+        btn.classList.add("active");
       }
-      paintWrap.appendChild(btn);
+      btn.addEventListener("mousedown", (e) => {
+        if (jobRunning) return;
+        e.preventDefault();
+        if (!bpwGlobalState[fieldName]) bpwGlobalState[fieldName] = new Set();
+        const set = bpwGlobalState[fieldName];
+        const turningOn = !set.has(pf.name);
+        if (turningOn) set.add(pf.name);
+        else set.delete(pf.name);
+        // Rebuild so the token glow + button active state stay in sync
+        rebuildBpwTokens(fieldName, paintFlags);
+        // -sc needs a low-distortion model to sample its calibration trace
+        // from. It always runs, but with nothing >= 5 bpw around it falls back
+        // to the bf16 model, which is far slower — worth flagging up front.
+        if (pf.name === "sc" && turningOn) {
+          checkSelfcalDonor(document.querySelector(`#tokens-${fieldName} [data-paint-flag="sc"]`));
+        }
+      });
+    } else {
+      // Restore active state if this paint mode is currently on
+      if (activePaint && activePaint.fieldName === fieldName && activePaint.flagName === pf.name) {
+        btn.classList.add("active");
+      }
+      // Use mousedown so the click isn't eaten by the BPW input's blur
+      // when the user clicks straight from typing into the entry field.
+      btn.addEventListener("mousedown", (e) => {
+        if (jobRunning) return;
+        e.preventDefault();
+        togglePaintMode(fieldName, pf.name, btn);
+      });
     }
-    display.appendChild(paintWrap);
+    paintWrap.appendChild(btn);
   }
+  display.appendChild(paintWrap);
+
+  updateConditionalFields();
+}
+
+
+// Ask the server what the -sc trace stage would pick as its donor for the
+// current model dir, using repo_selfcal's own detection so the UI can't drift
+// from the pipeline. Advisory only: a missing donor still runs, just slowly.
+async function checkSelfcalDonor(btn) {
+  const donorEl = document.getElementById("field-sc_donor");
+  const modelEl = document.getElementById("field-models");
+  const modelDir = modelEl ? modelEl.value.trim() : "";
+  if (!modelDir) {
+    if (donorEl) donorEl.placeholder = "auto (set a model directory first)";
+    return;
+  }
+
+  let data;
+  try {
+    const res = await fetch("/api/selfcal-check?path=" + encodeURIComponent(modelDir));
+    data = await res.json();
+  } catch (_) {
+    return;
+  }
+  if (!data || data.error) return;
+
+  if (data.donor) {
+    // Show the auto-pick as a placeholder rather than a value, so we don't
+    // bake a path into the command that goes stale if the model dir changes.
+    if (donorEl) donorEl.placeholder = `auto: ${data.donor}`;
+    return;
+  }
+
+  if (donorEl) donorEl.placeholder = `auto: unquantized model (slow)`;
+  flashPaintButton(btn);
+  appendTerminal(
+    `\n⚠️  No quant >= ${data.min_bpw} bpw under ${modelDir}. Self-calibrated ` +
+    `quants will sample their calibration trace from the unquantized model — ` +
+    `correct, but much slower. Point "SC Trace Generation Model" at a 6bpw+ ` +
+    `quant to speed this up.\n`,
+    "term-warn",
+  );
+}
+
+
+function flashPaintButton(btn) {
+  if (!btn) return;
+  btn.classList.remove("paint-btn-flash");
+  // Force a reflow so a repeated click restarts the animation
+  void btn.offsetWidth;
+  btn.classList.add("paint-btn-flash");
+  setTimeout(() => btn.classList.remove("paint-btn-flash"), 1200);
 }
 
 function onTokenClick(fieldName, bpw, paintFlags) {
@@ -383,12 +527,6 @@ function onTokenClick(fieldName, bpw, paintFlags) {
   const flags = bpwFlagState[fieldName][bpw];
 
   if (activePaint && activePaint.fieldName === fieldName) {
-    // -opt can only be painted on fractional BPWs
-    const paintDef = paintFlags.find(p => p.name === activePaint.flagName);
-    if (paintDef && paintDef.fractionalOnly && !bpw.includes(".")) {
-      // Silently ignore click on non-fractional BPW for fractional-only flags
-      return;
-    }
     // Toggle the active paint flag on this BPW
     if (flags.has(activePaint.flagName)) {
       flags.delete(activePaint.flagName);
@@ -436,42 +574,26 @@ function applyTokenColor(token, flags, paintFlags, pmActive = false) {
 
   token.classList.add("bpw-token-flagged");
 
-  // Separate border-only flags (opt) from stripe flags (hq, hb8)
-  const hasOpt = flags.has("opt");
-  const stripeFlags = [...flags].filter(f => f !== "opt");
+  // One stripe layer per flag, each keeping its own color and angle, so a
+  // token carrying two flags reads as both patterns crossing rather than
+  // as some third color. Layers stack over black; gaps are transparent so
+  // the ones underneath show through.
+  const layers = [...flags]
+    .map(name => paintFlags.find(p => p.name === name))
+    .filter(Boolean)
+    .map(pf => `repeating-linear-gradient(${stripeAngle(pf.name)}, ` +
+               `${pf.color} 0px, ${pf.color} 1px, transparent 1px, transparent 6px)`);
+  if (!layers.length) return;
 
-  // Apply red outline for -opt (additive — stacks with stripe patterns)
-  if (hasOpt) {
-    token.style.outline = "3px solid #d94a4a";
-    token.style.outlineOffset = "-1px";
-  }
+  token.style.color = "#fff";
+  token.style.backgroundImage = layers.join(", ");
+  token.style.backgroundColor = "#000";
+}
 
-  if (stripeFlags.length === 0) {
-    // -opt only: red border, no stripe fill
-    if (hasOpt) token.style.color = "";
-    return;
-  }
-
-  if (stripeFlags.length === 1) {
-    const pf = paintFlags.find(p => p.name === stripeFlags[0]);
-    if (pf) {
-      token.style.color = "#fff";
-      // Accessibility: stripe patterns for color-impaired distinction
-      // -hq = horizontal stripes, -hb8 = vertical stripes
-      // 1px color, 5px black — thin stripes with breathing room
-      const dir = pf.name === "hq" ? "180deg" : "90deg";
-      token.style.backgroundImage =
-        `repeating-linear-gradient(${dir}, ${pf.color} 0px, ${pf.color} 1px, #000 1px, #000 6px)`;
-    }
-  } else if (stripeFlags.length >= 2) {
-    // Both hq + hb8: teal/cyan with checkerboard (intersection of horizontal + vertical)
-    const c = "#00897b";
-    token.style.color = "#fff";
-    token.style.backgroundImage =
-      `repeating-linear-gradient(180deg, ${c} 0px, ${c} 1px, transparent 1px, transparent 6px), ` +
-      `repeating-linear-gradient(90deg, ${c} 0px, ${c} 1px, transparent 1px, transparent 6px)`;
-    token.style.backgroundColor = "#000";
-  }
+// Accessibility: stripe angle distinguishes the flags without relying on
+// color alone. -hq = horizontal, -sc = diagonal.
+function stripeAngle(flagName) {
+  return flagName === "hq" ? "180deg" : flagName === "sc" ? "45deg" : "90deg";
 }
 
 function getBpwFlags(fieldName) {
@@ -538,6 +660,7 @@ function collectArgs() {
   for (const field of cmd.fields) {
     const el = document.getElementById(`field-${field.name}`);
     if (!el) continue;
+    if (!isFieldVisible(field)) continue;
 
     if (field.type === "boolean") {
       if (field.invertFlag) {
@@ -579,7 +702,7 @@ function collectArgs() {
         if (!csv) continue;
       }
       args.push(field.flag, csv);
-      // Emit per-BPW paint flags (e.g. -hq 4,6 -hb8 8)
+      // Emit per-BPW paint flags (e.g. -hq 4,6 -sc 2.5)
       // and collect any global toggles (e.g. -pm) to append at the end.
       if (field.bpwPaintFlags) {
         const flagState = getBpwFlags(field.name);

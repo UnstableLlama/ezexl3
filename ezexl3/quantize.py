@@ -137,6 +137,13 @@ def run_one(
     _ensure_exl3_cal_data()
     convert_parser, convert_main, convert_prepare = _get_exl3_convert()
 
+    if ("-ngb" in job_argv or "-ngf" in job_argv):
+        known_opts = {s for a in convert_parser._actions for s in a.option_strings}
+        if "--ngram_bits" not in known_opts:
+            print("🔴 The installed exllamav3 does not support n-gram table "
+                  "quantization (-ngb/-ngf). Needs exllamav3 >= 1.4.5.")
+            return False
+
     # Parse using the real exllamav3 convert parser, then call prepare/main like convert.py does.
     args = convert_parser.parse_args(job_argv)
     

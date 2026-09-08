@@ -1,5 +1,8 @@
 // ── Rendering: Markdown, Think Tags, DOM ────────────────────────
 
+// Duel candidate labels: A, B, C, … (index 0-based).
+function candLabel(i) { return String.fromCharCode(65 + i); }
+
 // Configure marked
 marked.setOptions({
   breaks: true,
@@ -39,7 +42,23 @@ function renderThinkContent(text, isOpen) {
     `</div>`;
 }
 
+// Muse recipient chains stream with literal special-token text
+// ("to=self<|message|>…<|eom|><|start|>assistant to=user<|message|>…").
+// Map them onto the <think> markup processThinkTags already folds.
+function normalizeMuseChain(text) {
+  return text
+    .replace(/^\s*to=self<\|message\|>/, '<think>')
+    .replace(/<\|eom\|><\|start\|>assistant to=self<\|message\|>/g, '\n\n')
+    .replace(/<\|eom\|><\|start\|>assistant to=user<\|message\|>/, '</think>')
+    .replace(/^\s*to=user<\|message\|>/, '')
+    .replace(/<\|eot\|>\s*$/, '');
+}
+
 function processThinkTags(text) {
+  if (typeof settings !== 'undefined' && settings &&
+      (settings.mode || '').startsWith('muse')) {
+    text = normalizeMuseChain(text);
+  }
   let html = '';
   let remaining = text;
   let thinkOpen = false;
@@ -76,14 +95,50 @@ function processThinkTags(text) {
   return {html, thinkOpen};
 }
 
+// ── Strip-formatting mode ───────────────────────────────────────
+// View-only toggle: show message text exactly as it came off the model —
+// no markdown, no dialogue quoting, no <think> folding — soft-wrapped at
+// the column edge. Every rendered body keeps its source text so the
+// toggle can re-render in place, including a body that's mid-stream.
+let stripFormatting = false;
+
+function renderPlain(el, text, cursor) {
+  el.classList.add('plain');
+  el.textContent = text;
+  if (cursor) {
+    const c = document.createElement('span');
+    c.className = 'cursor';
+    el.appendChild(c);
+  }
+}
+
 function renderStreaming(el, text) {
+  el._srcText = text;
+  if (stripFormatting) return renderPlain(el, text, true);
+  el.classList.remove('plain');
   const {html, thinkOpen} = processThinkTags(text);
   el.innerHTML = html + '<span class="cursor"></span>';
 }
 
 function renderFinal(el, text) {
+  el._srcText = text;
+  if (stripFormatting) return renderPlain(el, text, false);
+  el.classList.remove('plain');
   const {html} = processThinkTags(text);
   el.innerHTML = html;
+}
+
+// Re-render every message body in place under the new mode. Deliberately
+// not a renderActiveTree() call: an in-flight generation holds a direct
+// reference to its body element, and rebuilding the tree would orphan it
+// so the rest of the stream lands in a detached node.
+function setStripFormatting(on) {
+  stripFormatting = !!on;
+  for (const el of document.querySelectorAll('.msg-body')) {
+    if (el._srcText == null) continue;  // e.g. an unstarted duel candidate
+    if (el.querySelector('.cursor')) renderStreaming(el, el._srcText);
+    else renderFinal(el, el._srcText);
+  }
 }
 
 function createMsgEl(role, text) {
@@ -100,6 +155,23 @@ function scrollToBottom() {
   if (!document.getElementById('autoscroll').checked) return;
   const area = document.getElementById('chat-area');
   area.scrollTop = area.scrollHeight;
+}
+
+function makeTpsBadge(t) {
+  const ctx = t.prompt_tokens ? `${t.prompt_tokens.toLocaleString()} ctx` : '';
+  const cached = t.cached_tokens ? ` (${t.cached_tokens.toLocaleString()} cached)` : '';
+  let parts = [];
+  if (ctx) parts.push(ctx + cached);
+  parts.push(`${t.new_tokens} gen · ${t.tps} t/s · ${t.elapsed}s`);
+  if (t.prefill_tps) parts.push(`prefill ${t.prefill_tps} t/s`);
+  if (t.draft_accepted != null) {
+    const rate = Math.round(t.draft_acceptance_rate * 100);
+    parts.push(`draft ${rate}% (${t.draft_accepted}/${t.draft_accepted + t.draft_rejected})`);
+  }
+  const tpsEl = document.createElement('div');
+  tpsEl.className = 'msg-tps';
+  tpsEl.textContent = parts.join(' · ');
+  return tpsEl;
 }
 
 // ── Tree-aware rendering ────────────────────────────────────────
@@ -119,6 +191,14 @@ function renderActiveTree() {
   for (const nodeId of nodeIds) {
     const node = tree.nodes.get(nodeId);
     if (!node) continue;
+
+    // A pending DPO duel renders as a side-by-side judgment UI covering
+    // both candidates (only one of them is ever on the active path).
+    if (typeof pendingDuel !== 'undefined' && pendingDuel &&
+        pendingDuel.ids.includes(nodeId)) {
+      renderDuelChoice(msgContainer);
+      continue;
+    }
 
     const sibInfo = getSiblingInfo(nodeId);
 
@@ -176,6 +256,39 @@ function renderActiveTree() {
       headerEl.innerHTML += `<span class="branch-counter">${sibInfo.current} / ${sibInfo.total}</span>`;
     }
 
+    // Rating controls (assistant only), gated by the capture mode:
+    // Off shows nothing; KTO mode shows 👍/👎; DPO mode shows a
+    // "preferred" badge on messages whose duel pick is recorded
+    // (click to withdraw).
+    if (node.role === 'assistant' && typeof getRating === 'function' &&
+        ratingsMode !== 'off') {
+      const ratingSpan = document.createElement('span');
+      ratingSpan.className = 'msg-rating';
+      const rating = getRating(nodeId);
+
+      function addRate(glyph, title, handler, activeCls, active) {
+        const btn = document.createElement('button');
+        btn.textContent = glyph;
+        btn.title = title;
+        if (active) btn.className = activeCls;
+        btn.addEventListener('click', handler);
+        ratingSpan.appendChild(btn);
+      }
+
+      if (ratingsMode === 'kto') {
+        addRate('\u{1F44D}', 'Good response (KTO)',
+          () => rateNode(nodeId, true), 'rated-good', rating === true);
+        addRate('\u{1F44E}', 'Bad response (KTO)',
+          () => rateNode(nodeId, false), 'rated-bad', rating === false);
+        if (rating !== undefined) ratingSpan.classList.add('has-rating');
+      } else if (pairForNode(nodeId)) {
+        addRate('✓ preferred', 'DPO pair recorded — click to withdraw',
+          () => removePairFor(nodeId), 'rated-pair', true);
+        ratingSpan.classList.add('has-rating');
+      }
+      if (ratingSpan.childElementCount) headerEl.appendChild(ratingSpan);
+    }
+
     // Action buttons (inline in header)
     const actionsDiv = document.createElement('div');
     actionsDiv.className = 'msg-actions-inline';
@@ -212,22 +325,152 @@ function renderActiveTree() {
 
     // TPS badge below message body (for assistant messages with stats)
     if (node.role === 'assistant' && node.tpsData) {
-      const t = node.tpsData;
-      const ctx = t.prompt_tokens ? `${t.prompt_tokens.toLocaleString()} ctx` : '';
-      const cached = t.cached_tokens ? ` (${t.cached_tokens.toLocaleString()} cached)` : '';
-      let parts = [];
-      if (ctx) parts.push(ctx + cached);
-      parts.push(`${t.new_tokens} gen · ${t.tps} t/s · ${t.elapsed}s`);
-      if (t.prefill_tps) parts.push(`prefill ${t.prefill_tps} t/s`);
-      const tpsEl = document.createElement('div');
-      tpsEl.className = 'msg-tps';
-      tpsEl.textContent = parts.join(' · ');
-      msgEl.appendChild(tpsEl);
+      msgEl.appendChild(makeTpsBadge(node.tpsData));
     }
 
     wrapEl.appendChild(msgEl);
     msgContainer.appendChild(wrapEl);
   }
 
-  scrollToBottom();
+  // While a duel awaits judgment, re-renders come from mark clicks — don't
+  // yank the view to the bottom (streaming already scrolled during gen).
+  if (!(typeof pendingDuel !== 'undefined' && pendingDuel)) scrollToBottom();
+}
+
+// ── DPO duel judgment UI ────────────────────────────────────────
+// Duels: each candidate gets ▲ (chosen) / ▼ (rejected) / ✗ (failed) marks,
+// shown at both the top and bottom of the reply so long generations can
+// be judged from either end. Regenerate replaces the un-pinned
+// candidates; Commit (one ▲ + one ▼) writes the pair; Skip continues
+// without recording. Bulk review: only ✗ (discard) marks; Save all
+// writes every non-✗ candidate on the configured side and Regenerate
+// replaces just the ✗ ones. The action bar is repeated above and below.
+function renderDuelChoice(container) {
+  const block = document.createElement('div');
+  block.className = 'duel-block';
+  const {ids, marks} = pendingDuel;
+  const bulk = !!pendingDuel.bulk;
+
+  // Per-candidate marks. Built fresh per placement so the header and
+  // footer copies each get live handlers; all mutate the shared
+  // pendingDuel and re-render, keeping every copy in sync.
+  function makeMarks(id, mark) {
+    const markSpan = document.createElement('span');
+    markSpan.className = 'duel-marks';
+    const defs = bulk
+      ? [['fail', '✗', 'Discard — excluded from Save all; Regenerate replaces it']]
+      : [['up', '▲', 'Chosen — the better reply'],
+         ['down', '▼', 'Rejected — the worse reply'],
+         ['fail', '✗', 'Failed — discard; Regenerate replaces it']];
+    for (const [m, glyph, title] of defs) {
+      const btn = document.createElement('button');
+      btn.textContent = glyph;
+      btn.title = title;
+      btn.className = `duel-mark-btn mark-${m}` + (mark === m ? ' active' : '');
+      btn.addEventListener('click', () => setDuelMark(id, m));
+      markSpan.appendChild(btn);
+    }
+    return markSpan;
+  }
+
+  // Action bar, repeated top (`where`='top') and bottom.
+  function makeActionBar(where) {
+    const bar = document.createElement('div');
+    bar.className = 'duel-actions duel-actions-' + where;
+
+    const regenBtn = document.createElement('button');
+    regenBtn.className = 'duel-regen-btn';
+    regenBtn.textContent = '↻ Regenerate';
+    if (bulk) {
+      // Bulk: unmarked candidates are keepers — only ✗ ones regenerate.
+      const failed = ids.filter(id => marks[id] === 'fail');
+      regenBtn.title = 'Regenerate the ✗-marked candidates';
+      regenBtn.disabled = failed.length === 0;
+    } else {
+      // Regenerate replaces every candidate not pinned with ▲ or ▼ — an
+      // unmarked (or ✗) candidate is treated as discarded. Enabled as
+      // soon as at least one candidate is still unpinned.
+      const unpinned = ids.filter(id => marks[id] !== 'up' && marks[id] !== 'down');
+      regenBtn.title = 'Regenerate every candidate not pinned with ▲ or ▼ (unmarked = discarded)';
+      regenBtn.disabled = unpinned.length === 0;
+    }
+    regenBtn.addEventListener('click', () => regenerateDuelCandidates());
+    bar.appendChild(regenBtn);
+
+    if (bulk) {
+      const kept = ids.filter(id => marks[id] !== 'fail');
+      const saveBtn = document.createElement('button');
+      saveBtn.className = 'duel-commit-btn';
+      saveBtn.textContent = `✓ Save all & next (${kept.length})`;
+      saveBtn.title = 'Save every non-✗ reply as a ' +
+        (typeof ratingsBulkTarget !== 'undefined' ? ratingsBulkTarget : '') +
+        ' row and continue';
+      saveBtn.disabled = kept.length === 0;
+      saveBtn.addEventListener('click', () => saveAllBulk());
+      bar.appendChild(saveBtn);
+    } else {
+      const havePair = ids.some(id => marks[id] === 'up') &&
+                       ids.some(id => marks[id] === 'down');
+      const commitBtn = document.createElement('button');
+      commitBtn.className = 'duel-commit-btn';
+      commitBtn.textContent = '✓ Commit pair';
+      commitBtn.title = 'Save the ▲/▼ pair and continue from the chosen reply';
+      commitBtn.disabled = !havePair;
+      commitBtn.addEventListener('click', () => commitDuel());
+      bar.appendChild(commitBtn);
+    }
+
+    const skipBtn = document.createElement('button');
+    skipBtn.className = 'duel-skip-btn';
+    skipBtn.textContent = 'Skip';
+    skipBtn.title = bulk ? 'Continue without saving these replies'
+                         : 'Continue without recording a pair';
+    skipBtn.addEventListener('click', () => skipDuel());
+    bar.appendChild(skipBtn);
+    return bar;
+  }
+
+  block.appendChild(makeActionBar('top'));
+
+  const wrap = document.createElement('div');
+  wrap.className = 'duel-wrap';
+  ids.forEach((id, i) => {
+    const node = tree.nodes.get(id);
+    if (!node) return;
+    const mark = marks[id];
+    const cand = document.createElement('div');
+    cand.className = 'duel-candidate';
+    if (mark) cand.classList.add(`duel-marked-${mark}`);
+
+    const head = document.createElement('div');
+    head.className = 'duel-head';
+    head.innerHTML = `<span class="duel-label">${candLabel(i)}</span>`;
+    if (node.genSystem) {
+      const sysTag = document.createElement('span');
+      sysTag.className = 'duel-sys-tag';
+      sysTag.textContent = 'sys';
+      sysTag.title = `Generated with custom system prompt:\n${node.genSystem}`;
+      head.querySelector('.duel-label').after(sysTag);
+    }
+    head.appendChild(makeMarks(id, mark));
+    cand.appendChild(head);
+
+    const body = document.createElement('div');
+    body.className = 'msg-body';
+    renderFinal(body, node.content);
+    cand.appendChild(body);
+    if (node.tpsData) cand.appendChild(makeTpsBadge(node.tpsData));
+
+    // Repeat the marks bottom-right so a long reply needs no scroll-up.
+    const foot = document.createElement('div');
+    foot.className = 'duel-foot';
+    foot.appendChild(makeMarks(id, mark));
+    cand.appendChild(foot);
+
+    wrap.appendChild(cand);
+  });
+  block.appendChild(wrap);
+
+  block.appendChild(makeActionBar('bottom'));
+  container.appendChild(block);
 }

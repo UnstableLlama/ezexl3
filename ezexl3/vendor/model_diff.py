@@ -1,23 +1,25 @@
-# model_diff.py - Integrated from Turboderp/exllamav3
-# Source: https://github.com/turboderp/exllamav3/blob/master/eval/model_diff.py
-# Modified for integration into ezexl3
-
+# model_diff.py - Vendored from turboderp-org/exllamav3
+# Source: https://raw.githubusercontent.com/turboderp-org/exllamav3/dev/eval/model_diff.py
+# Vendored for pip-installable distribution (eval/ is not included in exllamav3 wheel)
+# NOTE: temporarily tracking dev (not master) for exllamav3 v1.0.0 prep; revert to master once v1.0.0 merges to master.
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import argparse
+from exllamav3.util.file import disk_lru_cache
 from exllamav3.util.progress import ProgressBar
 from exllamav3.util.memory import free_mem
-from exllamav3.util.measures import cosine_error, sqnr
+from exllamav3.util.measures import compute_kl_div, compute_target_log_probs, cosine_error, sqnr
+from exllamav3.util.misc import prepend_hf_chat_context
 from exllamav3 import Config, Model, Tokenizer
 from exllamav3.loader import SafetensorsCollection, VariantSafetensorsCollection
 from datasets import load_dataset
 import torch
-import torch.nn.functional as F
 import math
 import yaml
 from safetensors.torch import save_file
+
+torch.set_printoptions(precision = 5, sci_mode = False, linewidth = 200)
 
 def save_tensor(tensor, path: str, tensor_name: str = None):
     if isinstance(tensor, dict):
@@ -34,16 +36,17 @@ def save_tensor(tensor, path: str, tensor_name: str = None):
         }, path)
 
 
+@disk_lru_cache("get_dataset_text")
 def get_dataset_text(spec: dict):
     assert spec["dataset"] == "wiki2", "Only wiki2 implemented atm"
     dataset_text = "\n\n".join(
-        load_dataset("wikitext", "wikitext-2-raw-v1", split = "test")
+        load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split = "test")
         ["text"]
     )
     return dataset_text
 
 
-def get_test_tokens(tokenizer, rows, eval_len = 2048, eval_stride = 512):
+def get_test_tokens(tokenizer, rows, eval_len = 2048, eval_stride = 2048):
     with ProgressBar("Tokenizing", rows) as pb:
         dataset_spec = { "dataset": "wiki2" }
         eval_tokens = tokenizer.encode(get_dataset_text(dataset_spec))
@@ -58,19 +61,17 @@ def get_test_tokens(tokenizer, rows, eval_len = 2048, eval_stride = 512):
     return torch.cat(seqs, dim = 0)[:, :]
 
 
-def ppl(input_ids_, logits_):
+def ppl(input_ids_, logits_, vocab_size_):
     logprob_sum_ = 0.0
     logprob_count_ = 0
-    seq_len = logits_.shape[0]
-    chunksize = 1024
+    chunksize = 10240
     b_ = 0
-    while b_ < seq_len:
+    while b_ < logits_.shape[0]:
         a_ = b_
-        b_ = min(b_ + chunksize, seq_len)
-        logits_f = logits_[a_:b_, :].float() + 1e-10
+        b_ = min(b_ + chunksize, logits_.shape[0])
+        logits_f = logits_[a_:b_, :]
         target_ids = input_ids_[a_ + 1:b_ + 1].to(logits_.device)
-        log_probs = F.log_softmax(logits_f, dim = -1)
-        token_log_probs = log_probs.gather(-1, target_ids.unsqueeze(-1)).squeeze(-1)
+        token_log_probs = compute_target_log_probs(logits_f, target_ids, vocab_size_)
         logprob_sum_ += token_log_probs.sum().item()
         logprob_count_ += target_ids.numel()
     return logprob_sum_, logprob_count_
@@ -89,6 +90,24 @@ def main(args):
     config_b = Config.from_directory(args.model_b)
     config_b.override_dynamic_seq_len(2048)
     model_b = Model.from_config(config_b)
+    vocab_size = tokenizer.actual_vocab_size
+
+    if args.no_reconstruct:
+        config_a.infer_params.no_reconstruct = True
+        config_b.infer_params.no_reconstruct = True
+
+    if args.cache_quant is not None:
+        split = [int(bits) for bits in args.cache_quant.split(",")]
+        if len(split) == 1:
+            sim_kvq = split + split
+        elif len(split) == 2:
+            sim_kvq = tuple(split)
+        else:
+            raise ValueError("Specify either one or two bitrates for cache quantization")
+        if args.cache_compand_a > 0.0:
+            sim_kvq = sim_kvq + (args.cache_compand_a,)
+    else:
+        sim_kvq = None
 
     # Override tensors
     if args.override:
@@ -111,8 +130,9 @@ def main(args):
             config_a.stc = vstc
 
     # Dataset
-    all_eval_ids = get_test_tokens(tokenizer, args.rows)
-    print(f" -- Processing {len(model_a.modules)} layers...")
+    all_eval_ids = get_test_tokens(tokenizer, args.rows, args.length, args.length)
+    if args.gen_prompt:
+        all_eval_ids = prepend_hf_chat_context(tokenizer, all_eval_ids)
 
     # Inputs
     states_a = list(all_eval_ids.split(args.batch_size))
@@ -127,6 +147,9 @@ def main(args):
     # Output logits
     save_logits_a = []
     save_logits_b = []
+
+    params_a = [{} for _ in range(len(states_a))]
+    params_b = [{} for _ in range(len(states_b))]
 
     # Inference
     for idx, (module_a, module_b) in enumerate(zip(model_a.modules, model_b.modules)):
@@ -154,6 +177,8 @@ def main(args):
         logprob_count = [0, 0]
         kl_div_sum_ab = 0
         kl_div_sum_ba = 0
+        kl_ab_toks = []      # per-token KLD (A, B), for median/quantile statistics
+        conf_b_toks = []     # reference top-token probability per token, for bucketed KLD
         topk_hits_sum = [[0] * topk_max, [0] * topk_max]
         topk_hits_count = [[0] * topk_max, [0] * topk_max]
         topk_agreement_sum = [0] * topk_max
@@ -166,13 +191,15 @@ def main(args):
             state_b = states_b[b]
             eval_ids = all_eval_ids[b]
 
-            params_a = {}
-            state_a = module_a.prepare_for_device(state_a, params_a)
-            state_a = module_a.forward(state_a, params_a)
+            params_a[b].update({"sim_kvq": sim_kvq})
+            params_a[b]["dev_cache"] = None
+            state_a = module_a.prepare_for_device(state_a, params_a[b])
+            state_a = module_a.forward(state_a, params_a[b])
 
-            params_b = {}
-            state_b = module_b.prepare_for_device(state_b, params_b)
-            state_b = module_b.forward(state_b, params_b)
+            params_b[b].update({})
+            params_b[b]["dev_cache"] = None
+            state_b = module_b.prepare_for_device(state_b, params_b[b])
+            state_b = module_b.forward(state_b, params_b[b])
 
             # Optionally override model A state for first layers
             if idx < args.keep_b:
@@ -215,7 +242,7 @@ def main(args):
 
                     for i in [0, 1]:
                         logits = x[i][:-1, :]
-                        logprob_sum__, logprob_count__ = ppl(input_ids, logits)
+                        logprob_sum__, logprob_count__ = ppl(input_ids, logits, vocab_size)
                         logprob_sum[i] += logprob_sum__
                         logprob_count[i] += logprob_count__
 
@@ -239,13 +266,18 @@ def main(args):
                         topk_agreement_sum[t] += row_hits.sum().item()
                         topk_agreement_count[t] += top_slice_a.shape[0]
 
-                    epsilon = 1e-10
-                    probs_a = torch.softmax(x[0].float(), dim = -1)
-                    probs_b = torch.softmax(x[1].float(), dim = -1)
-                    kl_div = F.kl_div(torch.log(probs_a + epsilon), probs_b, reduction = 'none')
-                    kl_div_sum_ab += kl_div.sum(dim = -1).mean().item()
-                    kl_div = F.kl_div(torch.log(probs_b + epsilon), probs_a, reduction = 'none')
-                    kl_div_sum_ba += kl_div.sum(dim = -1).mean().item()
+                    kl_vocab_size = min(vocab_size, x[0].shape[-1], x[1].shape[-1])
+                    kl_ab = compute_kl_div(x[0], x[1], kl_vocab_size)
+                    kl_div_sum_ab += kl_ab.mean().item()
+                    kl_div_sum_ba += compute_kl_div(x[1], x[0], kl_vocab_size).mean().item()
+
+                    # Per-token KLD and reference confidence. The mean KLD is dominated by
+                    # tokens where the reference itself is undecided
+                    kl_ab_toks.append(kl_ab.flatten().float().cpu())
+                    logits_b2 = x[1].view(-1, x[1].shape[-1])
+                    for cf_a in range(0, logits_b2.shape[0], 256):
+                        cf = logits_b2[cf_a:cf_a + 256, :kl_vocab_size].float()
+                        conf_b_toks.append((cf.max(dim = -1).values - cf.logsumexp(dim = -1)).exp().cpu())
 
         # Print error
         if not logits_layer:
@@ -277,11 +309,12 @@ def main(args):
 
         # Unload modules
         module_a.unload()
-        module_b.unload()
+        config_a.stc.close()
+        free_mem()
 
-    config_a.stc.close()
-    config_b.stc.close()
-    free_mem()
+        module_b.unload()
+        config_b.stc.close()
+        free_mem()
 
     # Perplexity for each model
     print(f" -- A perplexity: {perplexity[0]:11.8f}")
@@ -307,12 +340,132 @@ def main(args):
     print(f" -- KL divergence (A, B): {kl_div_ab:11.8f}")
     print(f" -- KL divergence (B, A): {kl_div_ba:11.8f}")
 
+    # Robust per-token statistics
+    kl_ab_all = torch.cat(kl_ab_toks)
+    conf_b_all = torch.cat(conf_b_toks)
+    print(f" -- KL divergence (A, B), per-token: median {kl_ab_all.median().item():.8f}   p90 {kl_ab_all.quantile(0.9).item():.8f}")
+    print(f" -- KL divergence (A, B), by reference confidence:")
+    for c_lo, c_hi in [(0.0, 0.25), (0.25, 0.5), (0.5, 0.75), (0.75, 0.95), (0.95, 1.01)]:
+        mask = (conf_b_all >= c_lo) & (conf_b_all < c_hi)
+        n = mask.sum().item()
+        if n == 0:
+            continue
+        kb = kl_ab_all[mask]
+        print(
+            f"      B top-prob [{c_lo:4.2f}, {min(c_hi, 1.0):4.2f}): {100 * n / conf_b_all.numel():5.1f}% of tokens"
+            f"   mean {kb.mean().item():.6f}   median {kb.median().item():.6f}"
+        )
+
+    return kl_div_ab
+
+
+def print_cqs_tables(results, compands):
+    from tabulate import tabulate
+    for cq_a in compands:
+        title = "no compand" if cq_a == 0.0 else f"compand a = {cq_a:.2f}"
+        print()
+        print(f" -- KL divergence (A, B), {title}:")
+        rows = [
+            [f"K{cq_k}"] + [f"{results[cq_a][(cq_k, cq_v)]:.6f}" for cq_v in range(2, 9)]
+            for cq_k in range(2, 9)
+        ]
+        print(tabulate(
+            rows,
+            headers = [""] + [f"V{cq_v}" for cq_v in range(2, 9)],
+            tablefmt = "github",
+            stralign = "right",
+            floatfmt = ".6f"
+        ))
+
+
+def cache_quant_sweep(args):
+    compands = [0.0]
+    if args.cache_compand_a:
+        compands.append(args.cache_compand_a)
+    results = {cq_a: {} for cq_a in compands}
+    for cq_k in range(2, 9):
+        for cq_v in range(2, 9):
+            for cq_a in compands:
+                args.cache_quant = f"{cq_k},{cq_v}"
+                args.cache_compand_a = cq_a
+                kld = main(args)
+                results[cq_a][(cq_k, cq_v)] = kld
+
+    print_cqs_tables(results, compands)
+
+
+@torch.inference_mode()
+def cache_quant_sweep_fast(args):
+    """
+    Same sweep as cache_quant_sweep, but both models are loaded whole and the reference logits
+    are kept in VRAM, so the B model runs once and the A model loads once for all 49 (98 with
+    compand) cache settings. For models small enough to share the device with rows * length *
+    vocab_size fp16 reference logits.
+    """
+    device = torch.device(args.device)
+
+    compands = [0.0]
+    if args.cache_compand_a:
+        compands.append(args.cache_compand_a)
+
+    # Dataset
+    config_b = Config.from_directory(args.model_b)
+    config_b.override_dynamic_seq_len(2048)
+    tokenizer = Tokenizer.from_config(config_b)
+    vocab_size = tokenizer.actual_vocab_size
+    all_eval_ids = get_test_tokens(tokenizer, args.rows, args.length, args.length)
+    if args.gen_prompt:
+        all_eval_ids = prepend_hf_chat_context(tokenizer, all_eval_ids)
+    batches = [ids.to(device) for ids in all_eval_ids.split(args.batch_size)]
+
+    # Reference logits from model B, kept on the device
+    if args.no_reconstruct:
+        config_b.infer_params.no_reconstruct = True
+    model_b = Model.from_config(config_b)
+    model_b.load(device = args.device)
+    ref_logits = []
+    with ProgressBar("Model B reference", len(batches)) as pb:
+        for i, ids in enumerate(batches):
+            ref_logits.append(model_b.forward(ids, {}).half())
+            pb.update(i + 1)
+    model_b.unload()
+    free_mem()
+
+    # Model A, loaded once for the whole sweep
+    config_a = Config.from_directory(args.model_a)
+    config_a.override_dynamic_seq_len(2048)
+    if args.no_reconstruct:
+        config_a.infer_params.no_reconstruct = True
+    model_a = Model.from_config(config_a)
+    model_a.load(device = args.device)
+
+    results = {cq_a: {} for cq_a in compands}
+    for cq_k in range(2, 9):
+        for cq_v in range(2, 9):
+            for cq_a in compands:
+                sim_kvq = (cq_k, cq_v) if cq_a == 0.0 else (cq_k, cq_v, cq_a)
+                kl_div_sum = 0.0
+                num_rows = 0
+                for ids, ref in zip(batches, ref_logits):
+                    logits_a = model_a.forward(ids, {"sim_kvq": sim_kvq})
+                    kl_vocab_size = min(vocab_size, logits_a.shape[-1], ref.shape[-1])
+                    for j in range(logits_a.shape[0]):
+                        kl_div_sum += compute_kl_div(logits_a[j], ref[j], kl_vocab_size).mean().item()
+                        num_rows += 1
+                    del logits_a
+                kld = kl_div_sum / num_rows
+                results[cq_a][(cq_k, cq_v)] = kld
+                print(f" -- K{cq_k} V{cq_v} a={cq_a:.2f}: kld {kld:11.8f}")
+
+    print_cqs_tables(results, compands)
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(allow_abbrev = False)
     parser.add_argument("-ma", "--model_a", type = str, help = "Model A", required = True)
     parser.add_argument("-mb", "--model_b", type = str, help = "Model B", required = True)
-    parser.add_argument("-r", "--rows", type = int, help = "Number of rows", default = 100)
+    parser.add_argument("-r", "--rows", type = int, help = "Number of rows, default: 100", default = 100)
+    parser.add_argument("-l", "--length", type = int, help = "Tokens per row, default: 2048", default = 2048)
     parser.add_argument("-kb", "--keep_b", type = int, help = "Maintain B state for number of modules", default = 0)
     parser.add_argument("-tkm", "--topk_max", type = int, default = 5, help = "Max top-K interval to test")
     parser.add_argument("-d", "--device", type = int, help = "CUDA device index", default = 0)
@@ -321,5 +474,17 @@ if __name__ == "__main__":
     parser.add_argument("-sla", "--save_logits_a", type = str, help = "Save model A logits (filename)", default = None)
     parser.add_argument("-slb", "--save_logits_b", type = str, help = "Save model B logits (filename)", default = None)
     parser.add_argument("-bsz", "--batch_size", type = int, help = "Batch size", default = 1)
+    parser.add_argument("-gp", "--gen_prompt", action = "store_true", help = "Prepend chat template generation prompt to every row")
+    parser.add_argument("-nr", "--no_reconstruct", action = "store_true", help = "Avoid GEMM reconstruct (slow)")
+    parser.add_argument("-cq", "--cache_quant", type = str, help = "Simulate quantized cache for A model. Specify either kv_bits or k_bits,v_bits pair")
+    parser.add_argument("-cca", "--cache_compand_a", type = float, help = "Compand a value for simulated cache, default: 0.0", default = 0.0)
+    parser.add_argument("-cqs", "--cache_quant_sweep", action = "store_true", help = "Sweep all k/v combinations and toggle compand if given, output KLD table")
+    parser.add_argument("-cqsf", "--cache_quant_sweep_fast", action = "store_true", help = "Sweep all k/v combinations, preload models")
     _args = parser.parse_args()
-    main(_args)
+
+    if _args.cache_quant_sweep_fast:
+        cache_quant_sweep_fast(_args)
+    elif _args.cache_quant_sweep:
+        cache_quant_sweep(_args)
+    else:
+        main(_args)

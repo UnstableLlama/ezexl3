@@ -14,11 +14,20 @@
 
     // Always init model panel (handles both loaded and unloaded states)
     await initModelPanel(status);
+    initLoraPanel();
+    initDraftPanel();
 
     // Always populate UI — initializes sliders, toggles, mode dropdown,
     // and model info regardless of whether a model is loaded yet.
     populateUI(status);
     updateChatEnabled();
+
+    if (status.loaded) {
+      showLoraPanel(true);
+      syncLoraState(status);
+      showDraftPanel(true);
+      syncDraftState(status);
+    }
   } catch (err) {
     console.error('Chat init failed:', err);
     document.getElementById('empty-hint').textContent =
@@ -63,8 +72,11 @@ stopBtn.onclick = () => stopGeneration();
 
 // ── Settings event listeners ────────────────────────────────────
 document.getElementById('s-system').addEventListener('input', syncSettings);
+document.getElementById('s-tplkwargs').addEventListener('input', syncSettings);
 document.getElementById('s-mode').addEventListener('change', syncSettings);
 document.getElementById('s-thinkbudget').addEventListener('input', syncSettings);
+document.getElementById('strip-formatting').addEventListener('change',
+  e => setStripFormatting(e.target.checked));
 document.getElementById('banned-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); addBan(); }
 });

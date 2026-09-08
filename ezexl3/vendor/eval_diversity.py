@@ -106,6 +106,8 @@ def main(args):
         tokenizer,
         show_visualizer = args.visualize_cache,
         max_batch_size = args.max_batch_size,
+        cpu_cache_size = int(args.cpu_cache_size * 1024**3),
+        recurrent_cache_size = int(args.recurrent_cache_size * 1024**3),
     )
     bpw_layer, bpw_head, vram_bits = model.get_storage_info()
 
@@ -219,7 +221,7 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(allow_abbrev = False)
     model_init.add_args(
         parser,
         default_cache_size = 32768,
@@ -227,7 +229,8 @@ if __name__ == "__main__":
         default_sampling_args = {
             "temperature": 0.8,
             "min_p": 0.08,
-        }
+        },
+        default_autosplit_max_batch_size = 16,
     )
     parser.add_argument("-samples", "--num_samples", type = int, help = "Number of samples (default: 50)", default = 50)
     parser.add_argument("-vis", "--visualize_cache", action = "store_true", help = "Show cache visualizer (slow)")

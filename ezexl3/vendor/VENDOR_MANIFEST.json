@@ -1,26 +1,95 @@
 {
+  "convert_mtp.py": {
+    "sha256": "133ef2573e7d19395317ac361c1f9f9f8e3d57541e1d7a005a5671aa58fdca9f",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/util/convert_mtp.py"
+  },
   "eval_diversity.py": {
-    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/diversity.py",
-    "sha256": "fb6c78692a27b9135b8e54772cd5693a2a2045fe06efeb38b078493f5ea1e155"
+    "sha256": "057f9bf8e1c49b4d0fbb8474aceb00e9c8b79b5547797a56ec7aa8404d835395",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/diversity.py"
   },
   "eval_humaneval.py": {
-    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/humaneval.py",
-    "sha256": "8472469d53f36922eafa6d648b6a33cfb4123bb52f3937c0526b2f8f93474a71"
+    "sha256": "6ea7a0e35df7fbd0fa19f56b059b8b6e6f78513cebf10d0f7c3060982cf0045c",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/humaneval.py"
   },
   "eval_ifbench.py": {
-    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/ifbench.py",
-    "sha256": "2259c518d7caa06b2ca669ea0a7999d3c1f16cdfba5fcc8323776bb0c53c2a74"
+    "sha256": "02e270ae16ca23a0e6da5984354ea4d99d95addae6ee74dd8c936fa322c6767c",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/ifbench.py"
   },
   "eval_longctx.py": {
-    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/longctx.py",
-    "sha256": "5ab6b102a88b540381cea3a91a7474de45b8b208425a09f4e5983084f36140bc"
+    "sha256": "a261ea43d4fa049331b518837c5fd5784c0df9154cd20ccc8158182ca6e36599",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/longctx.py"
   },
   "eval_mmlu.py": {
-    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/mmlu.py",
-    "sha256": "9a23b16062451d82aae243bc5c3d3409eea19985105f24664770bfbd275dd81b"
+    "sha256": "5324c05705fddf51efc4791b1fdb64dd8c84e7426f4471204d4ca11b3e427b3a",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/mmlu.py"
   },
   "eval_perf.py": {
-    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/perf.py",
-    "sha256": "ffa7bbbc49692feaf75f6d0a37b3bde2f79f1d0accf1582d4db4d9f242288110"
+    "sha256": "6166b9b50db65cbe7e2dda9faa65f524c2bc42e43260608d1789e9e105106197",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/dev/eval/perf.py",
+    "note": "dev-for-v1.0.0: temporary dev pin; revert to master after v1.0.0"
+  },
+  "model_diff.py": {
+    "sha256": "655e140483f55eadcacaeaa6d2ec65570c61effac58097bbccf65a36e535ff56",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/dev/eval/model_diff.py",
+    "note": "dev-for-v1.0.0: temporary dev pin; revert to master after v1.0.0"
+  },
+  "ppl.py": {
+    "sha256": "2d2aab506e96d2c6810fddf9df7cd1dd6e421554c8887ec6722c8eae90c720c4",
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/dev/eval/ppl.py",
+    "note": "dev-for-v1.0.0: temporary dev pin; revert to master after v1.0.0"
+  },
+  "sc_trace.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/sc_trace.py",
+    "sha256": "2e53d53217611200bf02d704231c4e48639224b29cd5aad41c71e4804cd9182a",
+    "local_sha256": "5866e8bda4b3b58bed5b2681fe1e0c5244f775202d89b51ff536f234cd2ee8f9",
+    "local_patch": "Insert the vendor directory into sys.path so sibling imports work when subprocesses set PYTHONSAFEPATH."
+  },
+  "sc_rfn_probe.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/sc_rfn_probe.py",
+    "sha256": "008dc10c0ec67e579d618cd9589f34a350d5798eb0541c62d4fde892d27e9ae4"
+  },
+  "sc_measure.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/sc_measure.py",
+    "sha256": "6d9b79c62b7d1099e6ab1b7fa90aeb04a57f5e0c1b924d796e8842ed9306c513",
+    "local_sha256": "bafec22374aa3eb7cf6d4bcdaa6b1815d356015f05e0b5bd33a3208578f73dcd",
+    "local_patch": "Add automatic VRAM preflight and explicit resident/streaming modes. Estimate weights from checkpoint headers because unloaded norms/convolutions can return None from weights_numel(). Streaming loads one top-level module at a time, keeps boundary/capture states and shaping factors on CPU, restores perturbed weights before unloading, and consumes final logits per row. Auto mode falls back on full-model load OOM; runtime workspace OOMs still propagate. Add deterministic module assignments for N independent GPU workers, canonical-checkpoint resume, and shard completion inventories consumed by ezexl3/sc_measure_parallel.py. Preserve the upstream hash for drift checks."
+  },
+  "sc_optimize.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/sc_optimize.py",
+    "sha256": "9702b68ad7df8dfd9c287f80d811740269a262b831900a356424bc172a5acdfe"
+  },
+  "eval/qbench_prompts.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench_prompts.py",
+    "sha256": "74ec3716a8865660f104ee59a23f5b0be231e2a49222c49c2b89e904cb12d499"
+  },
+  "eval/qbench.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench.py",
+    "sha256": "4ffd23d59fdae82270d3ce6a662841e9d095e9c2f57bcba31090d47f6679631c",
+    "local_sha256": "5137112068ff6a25409f57f13204a24a256ad90a742c3dbb57abd02a87cc01f5",
+    "local_patch": "Reuse completed measurements without rebuilding evicted reference logits unless a pending comparison needs them; check reference row files, log cache hits, and commit per-token sidecars before result checkpoints."
+  },
+  "eval/qbench/__init__.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench/__init__.py",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "eval/qbench/data.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench/data.py",
+    "sha256": "b6c79d06e9a0f4977981d727b71772e2fe7a770412054d35c67411dd7001e0e8",
+    "local_sha256": "b012202c837a7d4b18163ab722100e3864535a99455fc88fff466501eaf5a8b5",
+    "local_patch": "Exclude ezexl3 README bookkeeping metadata and non-files from model source stamps so publication does not invalidate BF16 and every quant; preserve upstream stamp format for cache compatibility. Write result checkpoints atomically."
+  },
+  "eval/qbench/engines.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench/engines.py",
+    "sha256": "2cef5f32ab45685f8a88bcd55a3accaf812234e1696ebc49dc9a51379d0ca2d9",
+    "local_sha256": "e76d394a1098aeb54587c4c2ed38a6c521f5cd0df0623638896c7bbb95ccfddc",
+    "local_patch": "Exl3Backend.run: key the noise generators by activation device. Upstream pins one generator to the compute device, so the noise-floor pass dies on the very first module ('Expected a cpu device type for generator but found cuda'): prefer_cpu modules (the embedding) are loaded on CPU and emit CPU activations. TransformersBackend._noise_hooks already keys generators by device; this makes the exl3 path match. Drop the patch and clear these two fields when upstream fixes it."
+  },
+  "eval/qbench/measure.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench/measure.py",
+    "sha256": "4ada99e11f998719aa77db249b7ef994fd1b217206efe54870fcadd2e829c111"
+  },
+  "eval/qbench/plot.py": {
+    "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench/plot.py",
+    "sha256": "3df7474a4fa0dcefeb5365407240f0662d1a60f2e4ede5d271b3cc13ae48d919"
   }
 }

@@ -119,7 +119,9 @@ def main(args):
         model = model,
         cache = cache,
         max_batch_size = args.max_batch_size,
-        tokenizer = tokenizer
+        tokenizer = tokenizer,
+        cpu_cache_size = int(args.cpu_cache_size * 1024 ** 3),
+        recurrent_cache_size = int(args.recurrent_cache_size * 1024 ** 3),
     )
     sampler = ComboSampler(
         temperature = args.temperature,
@@ -206,8 +208,11 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description = "Run HumanEval evaluation")
-    model_init.add_args(parser)
+    parser = argparse.ArgumentParser(description = "Run HumanEval evaluation", allow_abbrev = False)
+    model_init.add_args(
+        parser,
+        default_autosplit_max_batch_size = 16
+    )
     parser.add_argument("-o", "--output", type = str, help = "Output .jsonl filename", required = True)
     parser.add_argument("-spt", "--samples_per_task", type = int, default = 200)
     parser.add_argument("-pf", "--prompt_format", type = str, help = "Instruct format to apply. Default is raw completion (for base models) ")

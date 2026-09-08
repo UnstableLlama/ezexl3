@@ -94,6 +94,10 @@ tags:
     margin: 0 auto;
   }
 
+  .repo-graph + .repo-graph {
+    margin-top: 1.25rem;
+  }
+
   .table-wrapper {
     display: inline-block;
     margin: 0 auto;
@@ -181,15 +185,13 @@ tags:
   <div class="content-panel">
     <div class="panel-title">Repo Data</div>
     <div class="panel-body repo-data-body repo-data-panel">
-      <img class="repo-graph" src="{{GRAPH_FILE}}" alt="Quantization graph">
+      {{QBENCH_CHARTS}}
       <div class="table-wrapper">
         <table class="data-table">
           <thead>
             <tr>
               <th>REVISION</th>
               <th>GiB</th>
-              <th>KL DIV</th>
-              <th>PPL</th>
             </tr>
           </thead>
           <tbody>

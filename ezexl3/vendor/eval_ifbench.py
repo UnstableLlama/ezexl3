@@ -66,6 +66,8 @@ def main(args):
         max_batch_size = args.max_batch_size,
         tokenizer = tokenizer,
         show_visualizer = args.visualize_cache,
+        cpu_cache_size = int(args.cpu_cache_size * 1024 ** 3),
+        recurrent_cache_size = int(args.recurrent_cache_size * 1024 ** 3),
     )
     sampler = model_init.get_arg_sampler(args)
 
@@ -153,11 +155,12 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description = "Run IFBench evaluation")
+    parser = argparse.ArgumentParser(description = "Run IFBench evaluation", allow_abbrev = False)
     model_init.add_args(
         parser,
         add_sampling_args = True,
         default_cache_size = 65536,
+        default_autosplit_max_batch_size = 16,
         default_sampling_args = {
             "temperature": 0.0,
             "repetition_penalty": 1.0,

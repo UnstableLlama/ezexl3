@@ -14,7 +14,7 @@ import argparse
 import math
 import torch
 
-def get_test_tokens(tokenizer, rows, eval_len=2048, eval_stride=512):
+def get_test_tokens(tokenizer, rows, eval_len=2048, eval_stride=2048):
     from datasets import load_dataset
     from exllamav3.util.progress import ProgressBar
     
@@ -45,22 +45,20 @@ def get_test_tokens(tokenizer, rows, eval_len=2048, eval_stride=512):
 
     return torch.cat(seqs, dim=0)
 
-def ppl(input_ids_, logits_):
-    import torch.nn.functional as F
+def ppl(input_ids_, logits_, vocab_size_):
+    from exllamav3.util.measures import compute_target_log_probs
     logprob_sum_ = 0.0
     logprob_count_ = 0
-    seq_len = logits_.shape[0]
     # Chunk over sequence length to save memory if needed
-    chunksize = 1024 # Standard chunking
+    chunksize = 10240
     b_ = 0
-    while b_ < seq_len:
+    while b_ < logits_.shape[0]:
         a_ = b_
-        b_ = min(b_ + chunksize, seq_len)
-        logits_f = logits_[a_:b_, :].float() + 1e-10
+        b_ = min(b_ + chunksize, logits_.shape[0])
+        logits_f = logits_[a_:b_, :]
         # Target IDs for the current chunk are shifted by 1
         target_ids = input_ids_[a_ + 1:b_ + 1].to(logits_.device)
-        log_probs = F.log_softmax(logits_f, dim = -1)
-        token_log_probs = log_probs.gather(-1, target_ids.unsqueeze(-1)).squeeze(-1)
+        token_log_probs = compute_target_log_probs(logits_f, target_ids, vocab_size_)
         logprob_sum_ += token_log_probs.sum().item()
         logprob_count_ += target_ids.numel()
     return logprob_sum_, logprob_count_
@@ -92,6 +90,7 @@ def main(args):
     config.override_dynamic_seq_len(2048)
     tokenizer = Tokenizer.from_config(config)
     model = Model.from_config(config)
+    vocab_size = tokenizer.actual_vocab_size
     print(f" -- Model created")
 
     # Override tensors
@@ -150,7 +149,7 @@ def main(args):
                     logits = state[j]
                     input_ids = eval_ids[j]
                     logits_for_ppl = logits[:-1, :]
-                    logprob_sum_, logprob_count_ = ppl(input_ids, logits_for_ppl)
+                    logprob_sum_, logprob_count_ = ppl(input_ids, logits_for_ppl, vocab_size)
                     logprob_sum += logprob_sum_
                     logprob_count += logprob_count_
 

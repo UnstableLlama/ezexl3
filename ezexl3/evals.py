@@ -435,7 +435,7 @@ def _parse_perf_progress(line: str) -> Optional[str]:
         # Strip the marker prefix and pass the rest through for display.
         return clean[len("PERF_HEARTBEAT"):].strip()
     # Throughput result lines
-    m = re.search(r"(Length|Context)\s+(\d+):\s+([\d.]+)\s+tokens/s", clean)
+    m = re.search(r"(Length|Context)\s+(\d+):\s+(?:S=1\s+)?([\d.]+)\s+tokens/s", clean)
     if m:
         kind = "prefill" if m.group(1) == "Length" else "gen"
         return f"{kind} @{m.group(2)}: {m.group(3)} t/s"
@@ -494,7 +494,7 @@ _PERF_PREFILL_RE = re.compile(
     r"Length\s+(\d+):\s+([\d.]+)\s+tokens/s"
 )
 _PERF_GEN_RE = re.compile(
-    r"Context\s+(\d+):\s+([\d.]+)\s+tokens/s"
+    r"Context\s+(\d+):\s+(?:S=1\s+)?([\d.]+)\s+tokens/s"
 )
 
 
@@ -735,7 +735,7 @@ def run_eval_subprocess(
     ticker_thread = threading.Thread(target=_asymptotic_ticker, daemon=True)
     ticker_thread.start()
 
-    # Read byte-by-byte to handle \r overwrites
+    # The unbuffered pipe exposes read(), not BufferedReader.read1().
     line_buf = bytearray()
     while True:
         chunk = proc.stdout.read(4096)

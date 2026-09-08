@@ -11,6 +11,7 @@ round-tripping through session save/load.
 import json
 import sys
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock
 
 # ---------------------------------------------------------------------------
@@ -39,25 +40,25 @@ class FakeGenerator:
         return len(self._jobs)
 
     def iterate(self):
+        # Interleaves all queued jobs token by token, like the real
+        # generator batching concurrent jobs (e.g. DPO duels).
         if not self._jobs:
             return
-        job = self._jobs[0]
-        if id(job) in self._cancelled:
-            self._jobs.pop(0)
-            return
+        jobs = [j for j in self._jobs if id(j) not in self._cancelled]
+        self._jobs = []
         for i, tok in enumerate(FAKE_TOKENS):
             is_last = i == len(FAKE_TOKENS) - 1
-            result = {"text": tok, "eos": is_last}
-            if is_last:
-                result.update({
-                    "eos_reason": "stop_token",
-                    "new_tokens": len(FAKE_TOKENS),
-                    "prompt_tokens": 10,
-                    "cached_tokens": 5,
-                    "time_prefill": 0.01,
-                })
-            yield result
-        self._jobs.pop(0)
+            for job in jobs:
+                result = {"text": tok, "eos": is_last, "job": job}
+                if is_last:
+                    result.update({
+                        "eos_reason": "stop_token",
+                        "new_tokens": len(FAKE_TOKENS),
+                        "prompt_tokens": 10,
+                        "cached_tokens": 5,
+                        "time_prefill": 0.01,
+                    })
+                yield result
 
     def cancel(self, job):
         self._cancelled.add(id(job))
@@ -76,12 +77,7 @@ class FakeTokenizer:
 
 
 # Install mocks before any project code is imported
-_mock_torch = MagicMock()
-_mock_torch.set_grad_enabled = MagicMock()
-_mock_torch.cuda.is_available.return_value = False
-_mock_torch.cuda.device_count.return_value = 0
-_mock_torch.cuda.empty_cache = MagicMock()
-sys.modules["torch"] = _mock_torch
+# Torch is shared with CPU tensor tests; never replace its global module.
 
 _mock_exl = MagicMock()
 _mock_exl.Job = FakeJob
@@ -110,7 +106,7 @@ class FakeCache:
 
 def make_test_engine():
     """Create a ChatEngine that uses fake model objects."""
-    engine = ChatEngine.__new__(ChatEngine)
+    engine = ChatEngine(model_dir="/fake/model")
     engine.model_dir = "/fake/model"
     engine._devices = [0]
     engine._device_ratios = None
@@ -128,6 +124,14 @@ def make_test_engine():
     engine.context = []
     engine._current_job = None
     engine._is_generating = False
+    engine.loras = []
+    engine.lora_dirs = []
+    engine.lora_weights = []
+    engine.draft_model = None
+    engine.draft_cache = None
+    engine.draft_config = None
+    engine.draft_model_dir = None
+    engine.draft_model_name = ""
     return engine
 
 
@@ -221,6 +225,81 @@ class TestChatServer(AioHTTPTestCase):
         self.assertEqual(self.engine.context[0][0], "Hi")
         self.assertEqual(self.engine.context[0][1], "Hello, world!")
 
+    async def test_chat_n2_streams_two_interleaved_candidates(self):
+        """DPO duel mode: n=2 batches two candidates in one pass, every
+        event tagged with its candidate index."""
+        self._fresh_generator()
+        resp = await self.client.request(
+            "POST", "/api/chat",
+            json={"message": "Hi", "n": 2},
+        )
+        self.assertEqual(resp.status, 200)
+        events = parse_sse_events(await resp.read())
+
+        token_events = [e for e in events
+                        if isinstance(e, dict) and e["type"] == "token"]
+        for cand in (0, 1):
+            text = "".join(e["text"] for e in token_events
+                           if e["cand"] == cand)
+            self.assertEqual(text, "Hello, world!", f"candidate {cand}")
+        # Candidates stream concurrently (interleaved), not one after
+        # the other: candidate 1 must emit before candidate 0 finishes.
+        cands = [e["cand"] for e in token_events]
+        self.assertLess(cands.index(1), len(cands) - 1 - cands[::-1].index(0))
+
+        dones = [e for e in events if isinstance(e, dict) and e["type"] == "done"]
+        self.assertEqual({d["cand"] for d in dones}, {0, 1})
+
+    async def test_chat_bad_n_falls_back_to_single(self):
+        for bad_n in (0, -1, 99, "2", True):
+            self._fresh_generator()
+            resp = await self.client.request(
+                "POST", "/api/chat",
+                json={"message": "Hi", "n": bad_n},
+            )
+            self.assertEqual(resp.status, 200)
+            events = parse_sse_events(await resp.read())
+            token_events = [e for e in events
+                            if isinstance(e, dict) and e["type"] == "token"]
+            self.assertEqual(len(token_events), len(FAKE_TOKENS), bad_n)
+            self.assertTrue(all(e["cand"] == 0 for e in token_events), bad_n)
+
+    async def test_chat_system_prompts_override_per_candidate(self):
+        """DPO generation prompts: system_prompts biases each candidate's
+        prompt build; None/"" entries fall back to the trained prompt."""
+        self._fresh_generator()
+        self.engine.settings.system_prompt = "TRAINED"
+        captured = []
+        orig = self.engine._build_input_ids
+
+        def spy(prompt_format, prefix="", system_prompt=None):
+            captured.append(system_prompt)
+            return orig(prompt_format, prefix=prefix,
+                        system_prompt=system_prompt)
+
+        self.engine._build_input_ids = spy
+        resp = await self.client.request(
+            "POST", "/api/chat",
+            json={"message": "Hi", "n": 2,
+                  "system_prompts": ["BE TERSE", ""]},
+        )
+        self.assertEqual(resp.status, 200)
+        events = parse_sse_events(await resp.read())
+        dones = [e for e in events
+                 if isinstance(e, dict) and e["type"] == "done"]
+        self.assertEqual({d["cand"] for d in dones}, {0, 1})
+        # Candidate 0 built with the override, candidate 1 ("" → trained)
+        self.assertEqual(captured, ["BE TERSE", None])
+
+    async def test_chat_bad_system_prompts_rejected(self):
+        for bad in ("BE TERSE", ["only one"], ["a", "b", "c"], [1, 2],
+                    [None, 5]):
+            resp = await self.client.request(
+                "POST", "/api/chat",
+                json={"message": "Hi", "n": 2, "system_prompts": bad},
+            )
+            self.assertEqual(resp.status, 400, bad)
+
     async def test_chat_empty_message_rejected(self):
         resp = await self.client.request(
             "POST", "/api/chat",
@@ -282,6 +361,50 @@ class TestChatServer(AioHTTPTestCase):
         self.assertEqual(self.engine.context[1][0], "More")
 
     # -- Stop generation -----------------------------------------------------
+
+    # -- Draft loading (post-load panel) --------------------------------------
+
+    async def test_draft_load_hot_loads_on_normal_model(self):
+        import tempfile
+        draft_dir = tempfile.mkdtemp()
+        (Path(draft_dir) / "config.json").write_text("{}")
+        self.engine.load_draft = MagicMock()
+        resp = await self.client.request(
+            "POST", "/api/draft/load", json={"draft_model_dir": draft_dir})
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertTrue(data["ok"])
+        self.assertFalse(data["reloaded"])
+        self.engine.load_draft.assert_called_once_with(draft_dir, False, 0)
+
+    async def test_draft_load_reloads_recurrent_model(self):
+        # Recurrent model without draft headroom: the server transparently
+        # reloads the model with the draft configured instead of erroring,
+        # carrying the chat settings across.
+        import tempfile
+        draft_dir = tempfile.mkdtemp()
+        (Path(draft_dir) / "config.json").write_text("{}")
+        self.engine.model.caps = {"recurrent_states": True}
+        self.engine.cache.max_history = 0
+        self.engine.settings.system_prompt = "keep me"
+        saved_settings = self.engine.settings
+        self.engine.load_model = MagicMock()
+        self.engine.load_draft = MagicMock()
+
+        resp = await self.client.request(
+            "POST", "/api/draft/load", json={"draft_model_dir": draft_dir})
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertTrue(data["ok"])
+        self.assertTrue(data["reloaded"])
+        self.engine.load_draft.assert_not_called()
+        kwargs = self.engine.load_model.call_args.kwargs
+        self.assertEqual(kwargs["model_dir"], self.engine.model_dir)
+        self.assertEqual(kwargs["draft_model_dir"], draft_dir)
+        self.assertEqual(kwargs["cache_quant"], "6,6")
+        # Settings survive the reload
+        self.assertIs(self.engine.settings, saved_settings)
+        self.assertEqual(self.engine.settings.system_prompt, "keep me")
 
     async def test_stop_endpoint(self):
         resp = await self.client.request("POST", "/api/stop")
@@ -460,6 +583,14 @@ class TestNoModelStartup(AioHTTPTestCase):
         self.engine.context = []
         self.engine._current_job = None
         self.engine._is_generating = False
+        self.engine.loras = []
+        self.engine.lora_dirs = []
+        self.engine.lora_weights = []
+        self.engine.draft_model = None
+        self.engine.draft_cache = None
+        self.engine.draft_config = None
+        self.engine.draft_model_dir = None
+        self.engine.draft_model_name = ""
         return create_app(self.engine)
 
     async def test_status_shows_not_loaded(self):
@@ -542,6 +673,14 @@ class TestBrowseEndpoint(AioHTTPTestCase):
         self.engine.context = []
         self.engine._current_job = None
         self.engine._is_generating = False
+        self.engine.loras = []
+        self.engine.lora_dirs = []
+        self.engine.lora_weights = []
+        self.engine.draft_model = None
+        self.engine.draft_cache = None
+        self.engine.draft_config = None
+        self.engine.draft_model_dir = None
+        self.engine.draft_model_name = ""
         return create_app(self.engine)
 
     async def test_browse_default_path(self):

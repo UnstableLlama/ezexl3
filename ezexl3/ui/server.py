@@ -22,6 +22,7 @@ from pathlib import Path
 
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionError
+from .build_locks import cleanup_locks, group_is_running, snapshot_locks
 
 STATIC_DIR = Path(__file__).parent / "static"
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -34,7 +35,7 @@ TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 class Job:
     __slots__ = (
         "id", "cmd", "process", "output", "status", "returncode",
-        "_waiters", "total_appended",
+        "_waiters", "total_appended", "_stopping",
     )
 
     def __init__(self, job_id: str, cmd: list[str]):
@@ -48,6 +49,7 @@ class Job:
         self.status: str = "starting"  # starting | running | stopped | done
         self.returncode: int | None = None
         self._waiters: list[asyncio.Event] = []
+        self._stopping = False
 
     def append_event(self, event: dict) -> None:
         self.output.append(event)
@@ -70,12 +72,47 @@ class Job:
 
 
 class JobManager:
+    # Finished jobs are kept so a reconnecting browser can still replay their output,
+    # but each one pins a 50k-event deque, so only keep a handful.
+    MAX_FINISHED = 8
+
     def __init__(self):
         self.current: Job | None = None
+        self.jobs: dict[str, Job] = {}
+
+    def live_job(self) -> Job | None:
+        """The job still holding the GPUs, or None.
+
+        Liveness is the subprocess's own exit state, never the cached `status`.
+        The two disagree exactly when it matters: stop() sets "stopped" up front,
+        and a job whose process outlived its parent reads as finished while it is
+        still very much running. Trusting `status` is what let a second job start
+        on the same GPUs and the same work dir.
+        """
+        for job in self.jobs.values():
+            if job._stopping:
+                return job
+            if job.process is None:
+                # Slot claimed by start() but the process is not spawned yet.
+                if job.status == "starting":
+                    return job
+            elif job.process.returncode is None:
+                return job
+        return None
+
+    def _prune(self) -> None:
+        # dicts keep insertion order, so this drops the oldest finished jobs first.
+        finished = [
+            j for j in self.jobs.values()
+            if j.process is not None and j.process.returncode is not None and not j._stopping
+        ]
+        for job in finished[:max(0, len(finished) - self.MAX_FINISHED)]:
+            self.jobs.pop(job.id, None)
 
     async def start(self, subcommand: str, args: list[str]) -> Job:
-        if self.current and self.current.status in ("starting", "running"):
-            raise RuntimeError("A job is already running")
+        live = self.live_job()
+        if live is not None:
+            raise RuntimeError(f"A job is already running: {' '.join(live.cmd)}")
 
         job_id = uuid.uuid4().hex[:12]
         # Prefer the installed entry-point script; fall back to python -m
@@ -85,15 +122,32 @@ class JobManager:
         else:
             cmd = [sys.executable, "-m", "ezexl3", subcommand] + args
         job = Job(job_id, cmd)
+        # Claim the slot before the await, so a second request landing while this one is
+        # still spawning loses the race instead of starting a concurrent job.
+        self.jobs[job_id] = job
         self.current = job
+        self._prune()
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
-        )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                # Own process group, so stop() can signal the whole tree. Quantization runs
+                # in a spawned grandchild, and signalling just the CLI leaves that worker
+                # orphaned and still writing to the work dir — where it collides with
+                # whatever job starts next.
+                start_new_session=True,
+            )
+        except BaseException:
+            # Never leave a "starting" job wedged in the map; it would block every
+            # subsequent start with a job that does not exist.
+            job.status = "done"
+            self.jobs.pop(job_id, None)
+            raise
+
         job.process = proc
         job.status = "running"
 
@@ -128,22 +182,69 @@ class JobManager:
 
     async def _wait_exit(self, job: Job, proc: asyncio.subprocess.Process):
         code = await proc.wait()
+        while job._stopping:
+            await asyncio.sleep(0.05)
         job.returncode = code
-        job.status = "done"
+        if job.status != "stopped":
+            job.status = "done"
         job.append_event({"type": "exit", "code": code})
         job.notify()
 
     async def stop(self, job_id: str):
-        job = self.current
-        if not job or job.id != job_id:
+        job = self.jobs.get(job_id)
+        if not job:
+            return
+        if job._stopping:
+            while job._stopping:
+                await asyncio.sleep(0.05)
             return
         if job.process and job.process.returncode is None:
+            locks = snapshot_locks()
+            job._stopping = True
             job.status = "stopped"
-            job.process.terminate()
+            # start_new_session=True makes the original PID the stable PGID,
+            # even after the parent exits while a compiler child stays alive.
+            pgid = job.process.pid
+
+            async def wait_tree():
+                await job.process.wait()
+                if sys.platform == "linux":
+                    while group_is_running(pgid):
+                        await asyncio.sleep(0.1)
+
             try:
-                await asyncio.wait_for(job.process.wait(), timeout=5)
-            except asyncio.TimeoutError:
-                job.process.kill()
+                # SIGINT first: KeyboardInterrupt unwinds finally blocks, so
+                # checkpoint writes complete and PyTorch's extension build
+                # releases its lock file. A SIGTERM'd Python process skips its
+                # finally blocks and leaves the lock behind, which is how the
+                # cache ended up wedged for every later import.
+                self._signal_tree(job, signal.SIGINT)
+                try:
+                    await asyncio.wait_for(wait_tree(), timeout=30)
+                except asyncio.TimeoutError:
+                    self._signal_tree(job, signal.SIGTERM)
+                    try:
+                        await asyncio.wait_for(wait_tree(), timeout=10)
+                    except asyncio.TimeoutError:
+                        self._signal_tree(job, signal.SIGKILL)
+                        await wait_tree()
+                for path in cleanup_locks(locks):
+                    job.append_event({"type": "stdout", "text":
+                                      f"Removed interrupted extension build lock: {path}\n"})
+                job.notify()
+            finally:
+                job._stopping = False
+
+    @staticmethod
+    def _signal_tree(job: Job, sig: int):
+        """Signal the job's whole process group, falling back to the direct child."""
+        try:
+            os.killpg(job.process.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            try:
+                job.process.send_signal(sig)
+            except ProcessLookupError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +331,35 @@ async def handle_gpus(request: web.Request) -> web.Response:
     return web.json_response({"gpus": gpus})
 
 
+async def handle_selfcal_check(request: web.Request) -> web.Response:
+    """Report what the -sc trace stage would pick as its donor for a model dir.
+
+    Reuses repo_selfcal's own detection so the UI and the pipeline can never
+    disagree about the threshold. A missing donor is advisory, not fatal: the
+    pipeline still runs, tracing from the unquantized model instead.
+    """
+    from ezexl3 import repo_selfcal
+
+    raw = request.query.get("path", "").strip()
+    if not raw:
+        return web.json_response({"error": "No path given"}, status=400)
+    model_dir = Path(raw).expanduser()
+    if not model_dir.is_dir():
+        return web.json_response({"error": "Not a directory"}, status=400)
+    model_dir = str(model_dir.resolve())
+
+    donor = repo_selfcal._find_trace_donor(model_dir)
+    anchor = repo_selfcal._find_probe_anchor(model_dir)
+    return web.json_response({
+        "min_bpw": repo_selfcal._TRACE_DONOR_MIN_BPW,
+        "donor": donor,
+        "donor_name": os.path.basename(donor) if donor else None,
+        "anchor_name": anchor[0] if anchor else None,
+        "has_base_model": os.path.isfile(os.path.join(model_dir, "config.json")),
+        "quants": [name for _v, name, _p in repo_selfcal._existing_quants(model_dir)],
+    })
+
+
 async def handle_templates(request: web.Request) -> web.Response:
     templates = []
     if TEMPLATES_DIR.is_dir():
@@ -251,12 +381,15 @@ async def handle_run(request: web.Request) -> web.Response:
     if not subcommand:
         return web.json_response({"error": "No command specified"}, status=400)
 
-    valid_commands = {"repo", "quantize", "quant", "measure", "readme", "upload"}
+    valid_commands = {"repo", "quantize", "quant", "qbench", "measure", "readme", "upload"}
     if subcommand not in valid_commands:
         return web.json_response({"error": f"Invalid command: {subcommand}"}, status=400)
 
-    if manager.current and manager.current.status in ("starting", "running"):
-        return web.json_response({"error": "A job is already running"}, status=409)
+    live = manager.live_job()
+    if live is not None:
+        return web.json_response(
+            {"error": f"A job is already running: {' '.join(live.cmd)}"}, status=409
+        )
 
     try:
         job = await manager.start(subcommand, args)
@@ -273,8 +406,8 @@ async def handle_run_stream(request: web.Request) -> web.Response:
     manager: JobManager = request.app["job_manager"]
     job_id = request.match_info["job_id"]
 
-    job = manager.current
-    if not job or job.id != job_id:
+    job = manager.jobs.get(job_id)
+    if not job:
         return web.json_response({"error": "Job not found"}, status=404)
 
     response = web.StreamResponse(
@@ -296,9 +429,16 @@ async def handle_run_stream(request: web.Request) -> web.Response:
     try:
         # Track progress with a cursor that indexes into job.total_appended
         # (the monotonic counter) so we stay correct even after the bounded
-        # deque rolls over. The first loop iteration replays everything
-        # currently buffered; subsequent iterations send only new events.
-        cursor = 0
+        # deque rolls over. The first loop iteration replays everything the
+        # client hasn't seen; subsequent iterations send only new events.
+        #
+        # ?from=N lets a client that lost its socket resume at event N instead
+        # of re-rendering the whole run. A fresh page sends no ?from and gets
+        # the full replay.
+        try:
+            cursor = max(0, int(request.query.get("from", 0)))
+        except (TypeError, ValueError):
+            cursor = 0
 
         def _pending_events() -> list[dict]:
             """Return any events the client hasn't seen yet, in order."""
@@ -349,7 +489,9 @@ async def handle_run_stop(request: web.Request) -> web.Response:
 
 async def handle_run_status(request: web.Request) -> web.Response:
     manager: JobManager = request.app["job_manager"]
-    job = manager.current
+    # Prefer whatever is actually holding the GPUs over whatever started most recently,
+    # so the UI can never report "done" while a run is still going.
+    job = manager.live_job() or manager.current
     if not job:
         return web.json_response({"status": "idle"})
     return web.json_response({
@@ -416,46 +558,38 @@ async def handle_perf_data(request: web.Request) -> web.Response:
         return web.json_response({"bpws": [], "data": {}, "error": str(e)})
 
 
-async def handle_graph(request: web.Request) -> web.Response:
-    """Generate SVG graph from current DB state and return it."""
+async def handle_qbench_chart(request: web.Request) -> web.Response:
+    """Serve qbench's rendered charts for a model dir.
+
+    Two modes (distinguished by ``file`` query param):
+
+    * ``?model_dir=X``             → JSON listing of the charts that exist
+    * ``?model_dir=X&file=Y.png``  → serve that chart inline
+
+    ``file`` must be one of ``ezexl3.qbench.UI_CHARTS``; nothing else under
+    the model dir is reachable through this route.
+    """
     model_dir = request.query.get("model_dir", "").strip()
+    fname = request.query.get("file", "").strip()
     if not model_dir:
         return web.json_response({"error": "No model_dir"}, status=400)
 
-    db_path = _resolve_db_path(model_dir)
-    if not db_path:
-        return web.json_response({"error": "No measurement data yet"}, status=404)
+    from ezexl3.qbench import chart_path, list_charts
 
-    try:
-        from ezexl3.measure_db import export_csv, read_all_rows
+    if not fname:
+        try:
+            items = await asyncio.to_thread(list_charts, model_dir)
+            return web.json_response({"items": items})
+        except Exception as e:
+            return web.json_response({"items": [], "error": str(e)}, status=500)
 
-        # Need at least 2 numeric rows to draw
-        rows = await asyncio.to_thread(read_all_rows, db_path)
-        numeric = [r for r in rows.values()
-                   if r.get("KL Div") and r.get("PPL r-100") and r.get("GiB")]
-        if len(numeric) < 2:
-            return web.json_response({"error": "Need at least 2 completed measurements"}, status=404)
-
-        # Export to temp CSV, generate SVG, return inline
-        model_name = _resolve_model_name(model_dir)
-        with tempfile.TemporaryDirectory() as tmp:
-            csv_path = os.path.join(tmp, "data.csv")
-            svg_path = os.path.join(tmp, "graph.svg")
-            await asyncio.to_thread(export_csv, db_path, csv_path)
-
-            from ezexl3.graph_svg import generate_iceblink_svg
-            await asyncio.to_thread(
-                generate_iceblink_svg, csv_path, svg_path, model_name,
-            )
-
-            svg_content = Path(svg_path).read_text(encoding="utf-8")
-        return web.Response(
-            text=svg_content,
-            content_type="image/svg+xml",
-            headers={"Cache-Control": "no-cache"},
-        )
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=500)
+    path = await asyncio.to_thread(chart_path, model_dir, fname)
+    if not path:
+        return web.json_response({"error": "Not found"}, status=404)
+    return web.FileResponse(
+        path,
+        headers={"Content-Type": "image/png", "Cache-Control": "no-cache"},
+    )
 
 
 def _bpw_key(label: str) -> float:
@@ -705,29 +839,14 @@ async def handle_chat_launch(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
-# Persistent user config (~/.config/ezexl3/ui.json)
+# Persistent user config (shared with chat server: ~/.config/ezexl3/ui.json)
 # ---------------------------------------------------------------------------
+# Implementation lives in ezexl3.userconfig because the chat server writes
+# the same file concurrently. Bound to the old private names so existing
+# call sites — and the tests that patch _load_config — keep working.
 
-def _config_path() -> Path:
-    xdg = os.environ.get("XDG_CONFIG_HOME", "")
-    base = Path(xdg) if xdg else Path.home() / ".config"
-    return base / "ezexl3" / "ui.json"
-
-
-def _load_config() -> dict:
-    p = _config_path()
-    if p.is_file():
-        try:
-            return json.loads(p.read_text("utf-8"))
-        except Exception:
-            pass
-    return {}
-
-
-def _save_config(data: dict) -> None:
-    p = _config_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, indent=2), "utf-8")
+from ..userconfig import load_config as _load_config      # noqa: E402
+from ..userconfig import update_config as _update_config  # noqa: E402
 
 
 async def handle_config_get(request: web.Request) -> web.Response:
@@ -736,9 +855,7 @@ async def handle_config_get(request: web.Request) -> web.Response:
 
 async def handle_config_set(request: web.Request) -> web.Response:
     incoming = await request.json()
-    cfg = await asyncio.to_thread(_load_config)
-    cfg.update(incoming)
-    await asyncio.to_thread(_save_config, cfg)
+    await asyncio.to_thread(_update_config, incoming)
     return web.json_response({"ok": True})
 
 
@@ -795,6 +912,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/gpus", handle_gpus)
     app.router.add_get("/api/hf-auth", handle_hf_auth)
     app.router.add_get("/api/templates", handle_templates)
+    app.router.add_get("/api/selfcal-check", handle_selfcal_check)
     app.router.add_post("/api/run", handle_run)
     app.router.add_get("/api/run/{job_id}/stream", handle_run_stream)
     app.router.add_post("/api/run/{job_id}/stop", handle_run_stop)
@@ -803,7 +921,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/perf-data", handle_perf_data)
     app.router.add_get("/api/perf-graph", handle_perf_graph)
     app.router.add_get("/api/catbench-file", handle_catbench_file)
-    app.router.add_get("/api/graph", handle_graph)
+    app.router.add_get("/api/qbench-chart", handle_qbench_chart)
     app.router.add_get("/api/metadata", handle_metadata_get)
     app.router.add_post("/api/metadata", handle_metadata_set)
     app.router.add_post("/api/chat/launch", handle_chat_launch)

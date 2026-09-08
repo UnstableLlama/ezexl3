@@ -32,6 +32,7 @@ from ezexl3.repo_progress import (
 )
 import ezexl3.repo_measure as repo_measure
 import ezexl3.repo_optimized as repo_optimized
+import ezexl3.repo_selfcal as repo_selfcal
 from ezexl3.repo_subprocess import (
     _run_catbench_subprocess,
     _run_cmd,
@@ -296,10 +297,6 @@ def _parse_measure_args(measure_args: List[str], default_devices: List[int]) -> 
     return repo_measure._parse_measure_args(measure_args, default_devices)
 
 
-def _maybe_update_graph(model_dir: str, csv_path: str) -> None:
-    return repo_measure._maybe_update_graph(model_dir, csv_path)
-
-
 def _init_measure_db(model_dir: str, devices: List[int]) -> Tuple[str, str]:
     return repo_measure._init_measure_db(
         model_dir=model_dir,
@@ -404,6 +401,7 @@ def run_measure_single_bpw(
     ppl_rows: int = 100,
     write_logs: bool = True,
     include_base_ppl: bool = False,
+    legacy_measure: bool = False,
 ) -> int:
     return repo_measure.run_measure_single_bpw(
         model_dir=model_dir,
@@ -413,6 +411,7 @@ def run_measure_single_bpw(
         ppl_rows=ppl_rows,
         write_logs=write_logs,
         include_base_ppl=include_base_ppl,
+        legacy_measure=legacy_measure,
         read_db_rows_fn=_read_db_rows,
         task_to_csv_label_fn=_task_to_csv_label,
         process_cls=Process,
@@ -423,7 +422,6 @@ def run_measure_single_bpw(
         print_msg_with_progress_fn=_print_msg_with_progress,
         cleanup_gpu_progress_fn=_cleanup_gpu_progress,
         export_csv_fn=export_csv,
-        maybe_update_graph_fn=_maybe_update_graph,
         default_csv_path_fn=default_csv_path,
         sleep_fn=time.sleep,
     )
@@ -439,6 +437,8 @@ def run_measure_stage(
     evals: Optional[Dict[str, Any]] = None,
     skip_kl: bool = False,
     skip_ppl: bool = False,
+    legacy_measure: bool = False,
+    qbench_opts: Optional[Dict[str, Any]] = None,
     prompt_for_model_name: bool = True,
 ) -> int:
     return repo_measure.run_measure_stage(
@@ -451,6 +451,8 @@ def run_measure_stage(
         evals=evals,
         skip_kl=skip_kl,
         skip_ppl=skip_ppl,
+        legacy_measure=legacy_measure,
+        qbench_opts=qbench_opts,
         prompt_for_model_name=prompt_for_model_name,
         parse_measure_args_fn=_parse_measure_args,
         init_measure_db_fn=_init_measure_db,
@@ -471,7 +473,6 @@ def run_measure_stage(
         clear_and_redraw_progress_fn=_clear_and_redraw_progress,
         print_above_progress_fn=_print_above_progress,
         export_csv_fn=export_csv,
-        maybe_update_graph_fn=_maybe_update_graph,
         run_catbench_subprocess_fn=_run_catbench_subprocess,
         catbench_cache_tokens=_CATBENCH_CACHE_TOKENS,
         executable=sys.executable,
@@ -501,16 +502,38 @@ def run_repo(
     evals: Optional[Dict[str, Any]] = None,
     skip_kl: bool = False,
     skip_ppl: bool = False,
+    legacy_measure: bool = False,
     hq_bpws: Optional[set] = None,
     hb8_bpws: Optional[set] = None,
     opt_bpws: Optional[set] = None,
+    sc_bpws: Optional[set] = None,
+    sc_donor: Optional[str] = None,
+    head_bits: Optional[int] = None,
 ) -> int:
-    bpw_plan = _plan_repo_bpws(bpws, opt_bpws=opt_bpws)
+    bpw_plan = _plan_repo_bpws(bpws, opt_bpws=opt_bpws, sc_bpws=sc_bpws)
     quant_bpws = bpw_plan["quant_integer_queue"]
     optimized_bpws = bpw_plan["requested_optimizeds"]
+    selfcal_bpws = bpw_plan["requested_selfcal"]
     measure_bpws = bpw_plan["measure_queue"]
 
-    all_requested = set(bpw_plan["requested_integers"] + bpw_plan["requested_optimizeds"])
+    # Fail fast on an exllamav3 that can't do recipe conversion, before any
+    # GPU time is spent on the plain quants.
+    if selfcal_bpws:
+        support_err = repo_selfcal.check_selfcal_support()
+        if support_err:
+            print(f"🔴 {support_err}")
+            return 1
+
+    def _selfcal_forwarded(bpw: str) -> List[str]:
+        return _build_quant_forwarded_for_bpw(
+            quant_args, devices, device_ratios, bpw, hq_bpws, hb8_bpws,
+        )
+
+    all_requested = set(
+        bpw_plan["requested_integers"]
+        + bpw_plan["requested_optimizeds"]
+        + bpw_plan["requested_selfcal"]
+    )
     all_requested.update(_normalize_bpw_str(b) for raw in bpws for b in raw.split(",") if b.strip())
     auto_added = [b for b in quant_bpws if b not in all_requested]
     if auto_added:
@@ -575,6 +598,7 @@ def run_repo(
                 ppl_rows=ppl_rows,
                 write_logs=write_logs,
                 include_base_ppl=(i == 0),
+                legacy_measure=legacy_measure,
             )
             if rc == 0:
                 first_verify_passed = True
@@ -587,6 +611,45 @@ def run_repo(
                     f"(first verify already passed)"
                 )
                 verify_failures.append(str(bpw))
+
+        # Stage 1.5: self-calibrated quants (trace donor / probe anchor can
+        # reuse the integer quants built above when any were requested)
+        if selfcal_bpws:
+            repo_selfcal.run_selfcal_stage(
+                model_dir=model_dir,
+                sc_bpws=selfcal_bpws,
+                devices=devices,
+                forwarded_for_bpw=_selfcal_forwarded,
+                head_bits=head_bits,
+                write_logs=write_logs,
+                trace_donor=sc_donor,
+            )
+            # Verify each self-calibrated BPW
+            for sc_bpw in selfcal_bpws:
+                rc = run_measure_single_bpw(
+                    model_dir=model_dir,
+                    bpw=str(sc_bpw),
+                    devices=measure_devices,
+                    db_path=db_path,
+                    ppl_rows=ppl_rows,
+                    write_logs=write_logs,
+                    include_base_ppl=(not first_verify_passed and not quant_bpws),
+                    legacy_measure=legacy_measure,
+                )
+                if rc == 0:
+                    first_verify_passed = True
+                else:
+                    if not first_verify_passed:
+                        print(
+                            f"🔴 Verification failed for first (self-calibrated) "
+                            f"BPW {sc_bpw} — halting"
+                        )
+                        return 1
+                    print(
+                        f"⚠️  Verification failed for self-calibrated BPW {sc_bpw} "
+                        f"— continuing (first verify already passed)"
+                    )
+                    verify_failures.append(str(sc_bpw))
 
         # Stage 2: optimized optimize (needs all integer quants done)
         if optimized_bpws:
@@ -606,6 +669,7 @@ def run_repo(
                     db_path=db_path,
                     ppl_rows=ppl_rows,
                     write_logs=write_logs,
+                    legacy_measure=legacy_measure,
                 )
                 if rc == 0:
                     first_verify_passed = True
@@ -643,6 +707,7 @@ def run_repo(
                 evals=evals,
                 skip_kl=skip_kl,
                 skip_ppl=skip_ppl,
+                legacy_measure=legacy_measure,
             )
             if rc != 0:
                 return rc
@@ -663,6 +728,18 @@ def run_repo(
             )
             if rc != 0:
                 return rc
+
+        # Stage 1.5: self-calibrated quants
+        if do_quant and selfcal_bpws:
+            repo_selfcal.run_selfcal_stage(
+                model_dir=os.path.abspath(model_dir),
+                sc_bpws=selfcal_bpws,
+                devices=devices,
+                forwarded_for_bpw=_selfcal_forwarded,
+                head_bits=head_bits,
+                write_logs=write_logs,
+                trace_donor=sc_donor,
+            )
 
         # Stage 2: optimized optimize
         if do_quant and optimized_bpws:
@@ -686,6 +763,7 @@ def run_repo(
                 evals=evals,
                 skip_kl=skip_kl,
                 skip_ppl=skip_ppl,
+                legacy_measure=legacy_measure,
             )
             if rc != 0:
                 return rc

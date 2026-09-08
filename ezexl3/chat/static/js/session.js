@@ -66,6 +66,7 @@ function handleSessionFileLoad(e) {
     }
 
     renderActiveTree();
+    if (typeof refreshRatings === 'function') refreshRatings();
     e.target.value = '';
     scrollToBottom();
   });

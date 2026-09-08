@@ -23,8 +23,18 @@ col_gray = "\u001b[37;1m"
 def main(args):
 
     # Load model
-    model, config, cache, tokenizer = model_init.init(args)
-    generator = Generator(model, cache, tokenizer, show_visualizer = args.visualize_cache)
+    model, config, cache, tokenizer, draft_model, draft_config, draft_cache = model_init.init(args)
+    generator = Generator(
+        model,
+        cache,
+        tokenizer,
+        draft_model = draft_model,
+        draft_cache = draft_cache,
+        show_visualizer = args.visualize_cache,
+        max_chunk_size = 2048,
+        cpu_cache_size = int(args.cpu_cache_size * 1024 ** 3),
+        recurrent_cache_size = int(args.recurrent_cache_size * 1024 ** 3),
+    )
     bpw_layer, bpw_head, vram_bits = model.get_storage_info()
 
     print(f" -- Model: {args.model_dir}")
@@ -48,6 +58,11 @@ def main(args):
         text_vm_sum = file.read()
     with open(os.path.join(texts_dir, "variable_man_char.txt"), "r") as file:
         text_vm_char = file.read()
+    if args.extra_long:
+        with open(os.path.join(texts_dir, "pride_prejudice_mod.txt"), "r") as file:
+            text_pp_mod = file.read()
+        with open(os.path.join(texts_dir, "pride_prejudice_chap.txt"), "r") as file:
+            text_pp_chap = file.read()
 
     # Template
     def make_job(instruction):
@@ -55,12 +70,12 @@ def main(args):
             "role": "user",
             "content": instruction
         }]
-        input_ids = tokenizer.hf_chat_template(chat, add_generation_prompt = True)
+        input_ids = tokenizer.hf_chat_template(chat, add_generation_prompt = True, enable_thinking = True)
         job = Job(
             input_ids = input_ids,
-            max_new_tokens = 768,
+            max_new_tokens = 16384 if args.extra_long else 1024,
             stop_conditions = config.eos_token_id_list,
-            sampler = GreedySampler()
+            # sampler = GreedySampler()
         )
         return job, input_ids.shape[-1]
 
@@ -81,6 +96,9 @@ def main(args):
     job_vm_q3, _ = make_job(text_vm_mod + f"\n\n---\n\nAnswer in one paragraph: {vm_q3}")
     job_vm_char, _ = make_job(text_vm_mod + "\n\n---\n\nList all the named characters in the story.")
     job_vm_pony, _ = make_job(text_vm_pony+ "\n\n---\n\nA passage from an unrelated story is inserted in the middle of the text. Can you find it?")
+    if args.extra_long:
+        job_pp_mod, len_pp_mod = make_job(text_pp_mod + "\n\n---\n\nA passage from an unrelated story is inserted in the middle of the text. Can you find it?")
+        job_pp_chap, _ = make_job(text_pp_mod + "\n\n---\n\nCan you provide a short, succinct title for each chapter in the story?")
 
     # Inference
     jobs = [
@@ -94,6 +112,11 @@ def main(args):
         job_vm_pony,
         job_vm_char,
     ]
+    if args.extra_long:
+        jobs += [
+            job_pp_mod,
+            job_pp_chap,
+        ]
     generator.enqueue(jobs)
 
     with ProgressBar("Inference", len(jobs)) as pb:
@@ -179,10 +202,31 @@ def main(args):
     print(job_vm_char.full_completion.strip())
     print()
 
+    if args.extra_long:
+        print()
+        print(f"{col_green}---------------{col_default}")
+        print(f"{col_green}EXTRA LONG TEST{col_default}")
+        print(f"{col_green}---------------{col_default}")
+        print(f"{col_blue}An unrelated passage has snuck into Pride & Prejudice, {len_pp_mod} tokens. Can we find it?{col_default}")
+        print()
+        print(job_pp_mod.full_completion.strip())
+        print()
+        print(f"{col_blue}Coming up with a title for each chapter. Reference answer:{col_default}")
+        print(f"{col_gray}{text_pp_chap}{col_default}")
+        print()
+        print(job_pp_chap.full_completion.strip())
+        print()
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    model_init.add_args(parser, default_cache_size = 65536)
+    parser = argparse.ArgumentParser(allow_abbrev = False)
+    model_init.add_args(
+        parser,
+        add_draft_model_args = True,
+        default_cache_size = 65536,
+        default_autosplit_max_batch_size = 9
+    )
     parser.add_argument("-vis", "--visualize_cache", action = "store_true", help = "Show cache visualizer (slow)")
+    parser.add_argument("-xl", "--extra_long", action = "store_true", help = "Run harder test with longer inputs and room for long reasoning traces (increase --cache_size to ~200k tokens when using this)")
     _args = parser.parse_args()
     main(_args)

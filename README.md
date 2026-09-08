@@ -1,12 +1,22 @@
 # ezexl3
 
-**ezexl3** is a simplified interface for exllamav3: quantize, verify, benchmark, visualize, upload, and chat. One pip install, one CLI.
+**Quantize, evaluate, publish, and chat with EXL3 models.**
+
+ezexl3 brings the exllamav3 workflow into one CLI and a local web dashboard. Build several quantizations, compare them against the base model, generate a model card with charts, and upload to Hugging Face. Open chat to try the results, test LoRA adapters, or collect preference data.
+
+Version 1.0.0 adds self-calibrated quantization, qbench evaluation, speculative decoding, CPU offload controls, and KTO/DPO dataset creation.
+
+## Get started
+
+Install ezexl3 into your exllamav3 environment:
 
 ```bash
-pip install ezexl3
+pip install -U ezexl3
 ```
 
-or for custom templates, use a local editable install
+You need Python 3.10+, a working [exllamav3](https://github.com/turboderp-org/exllamav3) installation, and CUDA GPUs suitable for your model. Dependencies include Transformers 5+, seaborn, and PyYAML. Qbench requires a recent exllamav3 build with its measurement APIs; self-calibration needs 1.4.3+, and PLE n-gram controls need 1.4.5+. Model-specific chat features depend on support in the installed build.
+
+For an editable checkout, including local template customization:
 
 ```bash
 git clone https://github.com/UnstableLlama/ezexl3/
@@ -14,212 +24,232 @@ cd ezexl3
 pip install -e .
 ```
 
+Start the dashboard:
 
-Requires a local installation of [exllamav3](https://github.com/turboderp-org/exllamav3).
-
----
-
-## Quick Start
-
-### Dashboard
 ```bash
 ezexl3 ui
 ```
-Launches a web dashboard on port 8801. Every CLI subcommand is a clickable form with live terminal output via SSE streaming. Real-time measurement table and SVG graph update as your quant runs. GPU auto-detection. Boolean arguments exposed as toggles. This is the easiest way to use ezexl3.
+
+Open `http://127.0.0.1:8801`. Choose a base model directory, enter your target bits per weight (BPW), select GPUs, and run. The dashboard provides command forms, live terminal output, quantization controls, and README metadata fields.
 
 <p align="center">
-  <img src="docs/ezUI1.png" width="65%" />
-
+  <img src="docs/ezUI1.png" width="100%" alt="ezexl3 dashboard with the Repo form, BPW controls, evaluation options, and README metadata" />
 </p>
 
-The Evals tab shows perf measurements (prefill and generation tokens/s across context lengths) on a dual-axis chart, and the catbench gallery if you ran one. Switch between BPWs with the dropdown.
+The **Results** tab brings together the KL/PPL measurement table, qbench charts, performance measurements, and catbench gallery. Use its **Eval** selector to switch views.
 
-<p align="center">
-  <img src="docs/performance.png" width="65%" />
-</p>
+Prefer the terminal? Run the same pipeline directly:
 
-### Chat
-```bash
-ezexl3 chat
-```
-Launches a lightweight chat web interface for testing quantized models. Browse to your model in the file picker, select GPUs, click load. Branching conversation tree with regeneration, message editing, and sibling navigation. Exllama native, based on chat.py and the generator. No CLI flags needed.
-
-Supports multi-GPU (`-d 0,1`), configurable sequence length (cache is sized 2x behind the scenes), and cache quantization (`-cq 6,6`). Auto-detects prompt format from the model name. Useful for spot-checking quant quality at different BPW levels before uploading.
-
-<p align="center">
-  <img src="docs/chat.png" width="65%" />
-</p>
-
-### CLI Pipeline
-Run the full pipeline from the command line:
 ```bash
 ezexl3 repo -m /path/to/base_model -b 2,2.5,3,4,5,6 -d 0,1 -t basic
 ```
 
----
+## From base model to published quants
 
-## What the pipeline does
+The default `repo` workflow quantizes each BPW and verifies it with qbench before continuing. A failed verification stops the run. Optional evaluations follow, then ezexl3 generates a model README from the results. Upload is a separate step with a dry-run preview.
 
-ezexl3 wraps the exllamav3 quantization and evaluation workflow into a single command that:
-- Interleaves quantize → verify per BPW: each BPW is quantized then immediately verified (KL + PPL) before proceeding, halting on error
-- Multi-GPU acceleration for both quantization and verification. KL and PPL run in parallel on 2+ GPUs
-- Supports optimized BPWs (2.1 bpw, 3.5 bpw etc.)
-- Measures KL divergence + PPL @ 200k tokens, recording data to CSV
-- Optional perf measurement (prefill and generation tokens/s across context lengths) with its own SQLite database
-- Generates a HuggingFace-ready `README.md` with your measurements using customizable templates
-- Embeds an SVG graph from the measurement CSV in the README
-- Optional catbench integration. Generates SVG kitten drawings at each BPW and assembles them into a grid
-- Optional HuggingFace upload, with metadata locks and a dry-run preview before any repos are created
-- Checkpoints and resumes intelligently
-
-```
-model → [quantize → verify KL+PPL] per BPW → optimize → evals → graph → README → upload
+```text
+Base model → quantize + verify each BPW → optional evals → charts + README → upload
 ```
 
----
+Completed stages and measurements are reused on later runs. You can also run stages individually:
 
-### Single-stage subcommands
-If you only want to run specific stages:
+| Command | What it does |
+| --- | --- |
+| `ezexl3 repo` | Quantize, verify, run selected evaluations, and generate a README |
+| `ezexl3 quantize` | Build quants at the requested BPWs |
+| `ezexl3 measure` | Measure KL/PPL with qbench and run selected evaluations |
+| `ezexl3 qbench` | Configure and run quant comparisons against a reference |
+| `ezexl3 mtp` | Extract and quantize MTP tensors from a base checkpoint |
+| `ezexl3 evals` | Run standalone evaluations |
+| `ezexl3 readme` | Regenerate model cards from existing results |
+| `ezexl3 upload` | Preview or upload Hugging Face repositories |
+| `ezexl3 chat` | Test models and collect preference data |
+| `ezexl3 ui` | Open the dashboard |
+
+Use `ezexl3 <command> --help` for the full options.
+
+## Quantization controls
+
+Integer and fractional BPWs are supported. Use `-sc` for the new optimized, self-calibrated quantization workflow.
+
 ```bash
 # Quantize only
 ezexl3 quantize -m /path/to/base_model -b 2,2.5,3,4,5,6 -d 0,1
 
-# Quantize with optimized target (automatically ensures integer neighbors)
-ezexl3 repo -m /path/to/base_model -b 4.07 -d 0
+# Build an optimized, self-calibrated 4.07 BPW quant
+ezexl3 repo -m /path/to/base_model -b 4.07 -sc -scd /path/to/6bpw_quant -d 0
+```
 
-# Measure only
-ezexl3 measure -m /path/to/base_model -b 2,3,4,5,6 -d 0,1
+The dashboard's BPW controls expose `-hq` for selected targets, plus global `-sc` and `-pm` toggles. `-sc` applies self-calibration to every requested BPW in the form; `-pm` enables exllamav3's parallel-module conversion for MoE models. The CLI supports selecting individual BPWs for `-hq` and `-sc`, or using either flag bare to apply it to all targets.
 
-# Generate README only (from existing CSV)
+| Option | Control |
+| --- | --- |
+| `-hb N` | Output head bitrate, 1–8; overrides the older `-hb8` flag |
+| `-vb N` | Vision tower bitrate, 1–8, or 16 for unquantized weights |
+| `-mb N` | MTP layer bitrate, 1–8, or 16 for unquantized weights |
+| `-ngb N` | PLE hashed n-gram table bitrate, 1–8 |
+| `-ngf FILE` | Reuse a pre-quantized n-gram table from exllamav3's `util/convert_ngram.py` |
+
+Head, vision, and MTP bitrates have numeric fields in the dashboard. PLE table controls live in its collapsed **N-gram** group.
+
+### Self-calibrated quants
+
+`-sc` is the new way to make optimized, self-calibrated quants at integer or fractional BPWs. It is an in-depth process: the pipeline learns which tensors are most affected by quantization, then uses those measurements to decide how to allocate the final quant's bit budget.
+
+The process has four stages:
+
+1. **Start with a 6 BPW or higher quant.** This is the calibration donor used to generate the model's own calibration data.
+2. **Generate 500,000 tokens for self-calibration.** The donor produces a substantial calibration trace for the optimization process.
+3. **Measure the relative impact of quantization on each tensor.** Sensitivity measurements identify where reduced precision does the most damage and where fewer bits have less impact.
+4. **Build the final quant from those measurements.** The pipeline creates a per-tensor bitrate recipe for each requested BPW and uses it to produce the optimized weights.
+
+The dashboard's **`-sc` button automates the workflow**. With your 6 BPW or higher donor available, choose your targets and enable `-sc`; ezexl3 handles trace generation, sensitivity measurement, recipe creation, and conversion. This is a substantial calibration and measurement run, so expect it to take longer than standard quantization.
+
+```bash
+# Self-calibrate selected targets using an existing 6 BPW donor
+ezexl3 repo -m /path/to/base_model -b 2.5,3.14,4 -sc 2.5,3.14 -scd /path/to/6bpw_quant -hb 4 -d 0,1
+
+# Self-calibrate every target using an explicit calibration donor
+ezexl3 repo -m /path/to/base_model -b 2,3,4 -sc -scd /path/to/6bpw_quant -d 0,1
+```
+
+Use **SC Trace Generation Model** in the dashboard or `-scd` / `--sc-donor` on the CLI to select your calibration donor explicitly.
+
+Stages save their work under `<model>/selfcal/`. Sensitivity measurement loads the full model when memory permits or streams one module at a time, keeping activation caches and reference logits in system RAM. With multiple GPUs, independent workers share the measurement work and merge their checkpoints. Completed worker results can be reused after changing GPU count.
+
+Self-calibration remains experimental, and MoE sensitivity measurement remains unvalidated. Streaming still requires the largest module and workspace to fit in VRAM. It adds weight-loading overhead, and each additional worker needs its own RAM caches; multiple GPUs do not pool memory or guarantee linear speedups. Automatic loading can fall back to streaming after an initial OOM, but an OOM later in measurement stops the run.
+
+## Evaluate with qbench
+
+Qbench is the default KL divergence and perplexity backend for `repo` and `measure`. It compares quants against a shared reference, caches completed passes, and produces charts for the dashboard and model README. In the dashboard, open **Evals** and expand **KL / PPL (qbench)** to configure the comparison.
+
+```bash
+# Discover BPW subdirectories and compare them against the base model
+ezexl3 qbench -m /path/to/base_model
+
+# Use an explicit text dataset
+ezexl3 qbench -m /path/to/base_model -b 3,4,5 --dataset wiki2 --template chat
+
+# Use an existing evaluation trace
+ezexl3 qbench -m /path/to/base_model --trace /path/to/eval_trace.json
+```
+
+<p align="center">
+  <img src="docs/qbench.png" width="100%" alt="Evals dashboard form with the KL/PPL qbench controls expanded" />
+</p>
+
+Results include mean, median, and p90 KLD, buckets by reference confidence, and perplexity. A second reference pass measures the BF16 self-noise floor, giving small differences between quants some context. Charts show KL/PPL versus BPW and per-token KL distributions, including a combined distribution plot with the noise baseline.
+
+By default, qbench generates a separate in-domain evaluation trace with the vendored `qbench_prompts.py`. It uses the highest completed quant at 5 BPW or above, or the base model when none exists. The generation defaults target 20,000 response tokens, with a 4,096-token cap per turn and a 0.3 tool-conversation fraction. The base-model fallback requires enough memory for a full generation load.
+
+Trace generation can split across the GPUs selected with `measure -d`; qbench's streamed comparison passes use the first GPU. The trace is saved as `<model>/qbench/qbench_prompts_gen.json` and reused across quants and later runs. An existing trace at `<model>/qbench_prompts_gen.json` is also recognized. Self-calibration's `selfcal/cal_trace.json` is not automatically reused for evaluation.
+
+Trace mode scores response positions and ignores `--rows`, `--length`, and `--template`. Choose `--dataset wiki2` or `--dataset openwebtext` to evaluate text instead. Failed trace generation stops the run rather than silently changing datasets.
+
+### Caches and custom comparisons
+
+The generated `<model>/qbench/project.yml` is preserved across runs. Edit it to add GGUF entries with `engine: llamacpp` or Hugging Face checkpoints with `engine: transformers`, using the corresponding engine dependencies. Explicit `--dataset` and `--trace` options update the test source; `--regen` rewrites the project while retaining matching cached measurements and the generated trace.
+
+Keep `<model>/qbench/logit_cache/qbench/`: it holds keyed checkpoints for completed model passes, including the reference and noise floor. Adding a BPW measures the new quant; an interrupted pass restarts. `qb_results.json` and CSV exports alone cannot replace the cache. Changed model files or test settings invalidate the corresponding entries.
+
+Saved measurements can regenerate reports even after reference logits are evicted. Adding a new quant then rebuilds those logits as needed. `--cache-gb` caps the reference-logit cache; `--no-noise-floor` skips the extra reference pass and its dependent histogram charts.
+
+## Chat and adapter testing
+
+```bash
+ezexl3 chat
+```
+
+Open `http://127.0.0.1:8800`, browse to a quantized model, select GPUs, and load. Conversations branch: edit a message, regenerate a reply, and navigate sibling responses without losing the other paths.
+
+<p align="center">
+  <img src="docs/chat.png" width="100%" alt="Full ezexl3 chat window displaying an example conversation, a formatted command, sampling settings, and the message input" />
+</p>
+
+The chat screenshot shows an imported example conversation in the current interface.
+
+Chat supports multi-GPU loading, configurable sequence length and cache quantization, thinking controls, and a plain-text display option that strips formatting. The cache is allocated at twice the selected sequence length for generation headroom.
+
+- **Speculative decoding:** choose DFlash or a smaller draft model, a compatible model's built-in MTP head, or n-gram drafting without a separate model. Draft sources are mutually exclusive.
+- **LoRA adapters:** load adapters with the model, then add, remove, or adjust individual adapter weights through the LoRA panel. `python -m ezexl3.model_diff_lora --help` exposes a separate layerwise comparison utility for inspecting adapter effects.
+- **CPU offload:** move supported MoE experts and KV cache to system RAM, with controls for draft models too. Expert offload trades speed for VRAM, requires eligible expert weights and layer splitting, and cannot combine with tensor parallelism. The UI checks installed-build support and expert eligibility.
+- **PLE n-gram tables:** `-ngr` or **N-gram table in RAM** keeps the hashed embedding table in system RAM instead of reading rows from disk per token. This is separate from n-gram speculative drafting and can require tens of GB of RAM.
+- **Prompt formats:** built-in formats include Gemma, Qwen, GPT-OSS/Harmony, Metharme, Mistral Tekken, DeepSeek, Kimi, Laguna, and Muse/Glimmer. Model names guide auto-detection. Select `jinja` explicitly to use the model's own chat template, with JSON template kwargs for model-specific options.
+
+You can also select a model and draft source at startup:
+
+```bash
+ezexl3 chat -m /path/to/quant -d 0,1 -cq 6,6
+ezexl3 chat -m /path/to/quant --mtp
+ezexl3 chat -m /path/to/quant --ngram 3
+```
+
+## Build preference datasets
+
+Switch from **Chat** to **Preference** to collect training examples. Capture is off by default.
+
+<p align="center">
+  <img src="docs/preference.png" width="340" alt="Preference Data panel with dataset settings, candidate count, a prompt queue, and generation prompts" />
+</p>
+
+**KTO** records positive or negative ratings on individual replies. **DPO** generates 2–8 candidates side by side: mark one chosen and one rejected, flag failures, regenerate failed candidates, then commit the pair. Optional generation system prompts can steer candidates in different directions while the saved training prompt keeps the main system prompt.
+
+Load a prompt queue from text, JSON, or JSONL to work through a dataset. Bulk generation can fill its chosen or rejected side, with browser review or unattended generation. When carrying an existing counterpart, saved rows retain that side of the source pair.
+
+Datasets are local `<name>.kto.jsonl` and `<name>.dpo.jsonl` files in the configured directory. KTO rows use `prompt` / `completion` / `label`; DPO rows use `prompt` / `chosen` / `rejected`. Ratings persist across sessions, externally added rows are preserved, and thinking spans can be removed from captured data. These controls collect data; training happens in your preference-training pipeline.
+
+The setup screenshots use example paths; no model is loaded for these captures.
+
+## Model cards, catbench, and publishing
+
+Generate a Hugging Face model card with measurements, qbench charts, per-BPW links and sizes, and optional catbench samples:
+
+```bash
 ezexl3 readme -m /path/to/base_model -t fire
-
-# Upload to HuggingFace (dry-run by default)
-ezexl3 upload -m /path/to/base_model
-
-(but really everything is checkpointed so it usually doesn't hurt to just run the "repo" command every time)
 ```
 
-### Per-BPW Paint Flags
-The dashboard exposes four paint buttons that toggle quantization flags on individual BPW tokens. Click a button, then click a BPW in the parsed-token row to apply it:
+Choose `basic`, `fire`, `green`, or `punk`, or provide a custom template through `-t` / `--template`. Templates live in `ezexl3/templates/`; preserve their placeholders and structural elements when changing the appearance. Use `{{QBENCH_CHARTS}}` for the chart panel. Generated READMEs are refreshed in the BPW subdirectories too.
 
-- `-hq` — high-quality boost, useful on low BPWs where the head needs the extra precision
-- `-hb 8` — 8-bit head, useful on high BPWs where the rest is small enough to spare the head
-- `-opt` — opt-in optimized fractional pipeline (only applies to fractional BPWs)
-- `-pm` — global MoE speedup, applies to all BPWs at once
 <p align="center">
-  <img src="docs/args2.png" width="45%" />
-</p>
-The same flags work from the CLI via `--quant-args`, but the dashboard is faster for mixing them across BPWs.
-
-### Template System
-You can customize the generated README by providing a template name via `--template` or `-t`.
-Templates are stored in the `/ezexl3/templates/` directory — just use the short name:
-
-```bash
-ezexl3 repo -m /path/to/base_model -t fire -b 2,3,4,5,6 -d 0,1
-```
-
-If no template is specified, it defaults to `basic`.
-
-**Easily generate your own custom template with AI assistance!**
-
-Copy and paste any template from `/ezexl3/templates/` into your favorite LLM (Gemini, Claude, ChatGPT) along with this example prompt, followed by your own description:
-
-```bash
-Take this template, keep the main layout and variables, and modify it aesthetically based on my following prompts. Preserve all of the labels and title strings, only change the aesthetic, not the words or numbers:
-
-*Make it dark and understated, high contrast, professional, metallic.*
-```
-Then save the result in `/ezexl3/templates/` and use it with `-t yourname`.
-<p align="center">
-  <img src="ezexl3/templates/basicTemplate.png" width="35%" />
-  <img src="ezexl3/templates/punkTemplate.png" width="35%" />
-  <img src="ezexl3/templates/fireTemplate.png" width="45%" />
-  <img src="ezexl3/templates/greenTemplate.png" width="45%" />
+  <img src="ezexl3/templates/basicTemplate.png" width="45%" alt="Basic model-card template style preview" />
+  <img src="ezexl3/templates/punkTemplate.png" width="45%" alt="Punk model-card template style preview" />
 </p>
 
-###  Catbench
-SVG Catbench is available as a measurement option via the `-cb` flag. It runs catbench inference at every BPW level (including optimized fractionals), extracts SVGs, and assembles them into a grid in the final README.
+These template previews illustrate the visual styles; v1.0.0 model cards use qbench charts in place of the older graph.
+
+Add `-cb` to the pipeline to generate SVG kittens at each BPW. `-cb` uses three samples; `-cb 5` requests five. Catbench checks available VRAM, selects a valid SVG for each quant, and assembles a gallery for the README. Samples are checkpointed, and a BF16 baseline is included when memory permits.
 
 ```bash
-ezexl3 repo -m /path/to/base_model -b 2,3,4,5,6,8 -d 0,1 -t punk -cb
+ezexl3 repo -m /path/to/base_model -b 2,3,4,5,6 -d 0,1 -t punk -cb
 ```
 
-- `-cb` alone runs 3 samples per BPW (default), `-cb 5` runs 5
-- Catbench runs as a batch pass after KL/PPL/perf complete, using the multi-GPU queue
-- VRAM pre-flight check before each catbench load — skips gracefully if model won't fit, automatically uses multi-GPU for large models
-- Best valid SVG is selected from N samples for the grid
-- SVG extraction and grid assembly happen in a batch pass after all inference completes
-- Catbench results are checkpointed like everything else — rerunning skips completed samples
-- bf16 baseline included when VRAM allows
-
-###  HuggingFace Upload
-The Upload tab (or `ezexl3 upload`) creates HuggingFace repos for your quants. Defaults to dry-run mode so you see exactly what repo names will be created before anything is published.
+Preview the upload before publishing:
 
 ```bash
-# Preview what would be created
-ezexl3 upload -m /path/to/base_model
+# Preview the repositories without contacting Hugging Face
+ezexl3 upload -m /path/to/base_model -b 2,3,4,5,6 --dry-run
 
-# Actually create and upload
-ezexl3 upload -m /path/to/base_model --no-dry-run
+# Create repositories and upload
+ezexl3 upload -m /path/to/base_model -b 2,3,4,5,6
 ```
 
-- Single mode (default): one standalone repo per BPW, named `MODEL-exl3-BPW`. Recommended.
-- Branched mode: one repo with each BPW as a separate branch. Note that HuggingFace's download counter does not count branches — branched repos show only the main branch's downloads. Standalone repos preserve your download numbers.
-- Metadata fields (Author, Model Name, Repo Link, Quantized By) lock during the README write phase so the values can't drift mid-pipeline.
-- Preflight check verifies your HF token before any repos are created.
+The dashboard enables **Dry Run** by default. On the CLI, pass `--dry-run` explicitly to preview; omitting it performs the upload.
 
-### Inference Evaluation with WebUI
-ezexl3 includes a lightweight chat web interface for quickly testing quantized models. Exllama native, based on chat.py and the generator.
+Single mode creates one repository per BPW, named `MODEL-exl3-BPW`. Branched mode puts the quants in separate branches of one repository. The upload preflight checks your Hugging Face token, and shared qbench charts accompany the model cards. Dashboard metadata fields lock during README generation to keep a run's values consistent.
+
+## Automation and upgrading
+
+Use `--no-prompt` / `-np` for unattended metadata defaults. `--no-verify` / `-nv` switches to batch ordering: build all quants first, then measure them. It does not disable the measurement stage.
+
+Pass additional conversion arguments through `--quant-args --`. Normal CLI options must come first because a passthrough block consumes arguments until the next passthrough block:
 
 ```bash
-ezexl3 chat -m /path/to/quantized_model -d 0
+ezexl3 repo -m /path/to/base_model -b 4 -np --quant-args -- -pm
 ```
 
-### Advanced: Passthrough Flags
-You can pass custom arguments directly to the underlying quantization (`multiConvert`) or measurement scripts using the `--quant-args` and `--measure-args` flags.
+`--measure-args -- -r 200 -d 0` controls the older measurement path when using `--legacy-measure`. For qbench, use its named options such as `--dataset`, `--trace`, `--rows`, and `--length` on `measure` or `qbench`.
 
-**Important**: These flags require a double-dash `--` delimiter to separate the passthrough block from the rest of the arguments.
+If upgrading from v0.1.0, re-measure the BPWs you want to compare together. The default measurement backend and evaluation data have changed, and the legacy KL direction was corrected to `KL(quant || base)`. Old and new scores are not directly comparable. `--legacy-measure` retains the previous measurement pipeline. Older cache entries may need a one-time remeasurement after the cache-key changes.
 
-```bash
-# Pass custom calibration dataset to quantization
-ezexl3 repo -m /path/to/model -b 4.0 --quant-args -- -pm
-
-# Pass custom rows/device settings to measurement
-ezexl3 repo -m /path/to/model -b 4.0 --measure-args -- -r 200 -d 0
-```
-
-Common Use Cases:
-- **Quantization**: `-pm` (MoE speedup)
-- **Measurement**: `-r` / `--rows` (number of rows for PPL)
-
-Note: passthrough blocks consume remaining args until another passthrough block starts, so keep normal CLI flags (like `--no-readme`) before `--measure-args -- ...`
-
-###  `--no-verify` (Legacy Batch Mode)
-By default, ezexl3 interleaves quantization with KL/PPL verification per BPW. Use `--no-verify` (or `-nv`) to revert to the old batch pipeline (all quants first, then all measurements):
-
-```bash
-ezexl3 repo -m /path/to/model -b 2,3,4,5,6 -d 0,1 --no-verify
-```
-
-This is useful if you're confident in your quantization setup and want to let everything run unattended without per-BPW halting.
-
-### Optimized BPW workflow
-
-If you request an optimized BPW (for example `4.07`), ezexl3 executes the following order:
-
-1. Detect optimized targets and remove them from the initial integer quant queue.
-2. Ensure required neighboring integers exist in the quant queue (`4` and `5` for `4.07`).
-3. Quantize each integer BPW one at a time, verifying KL+PPL immediately after each (halts on error). With 2+ GPUs, KL and PPL run in parallel during verification.
-4. Run exllamav3 `util/measure.py` in a dynamic multi-GPU queue for required integer pairs (resume-safe: skips if `measurements/<low>-<high>_measurement.json` exists), with terminal logs when jobs are assigned and completed per GPU.
-5. Run exllamav3 `util/optimize.py` to build the optimized output directory.
-6. Verify each optimized BPW with KL+PPL measurement (halts on error).
-
-To locate exllamav3 utility scripts, ezexl3 uses bundled vendored copies (no manual path configuration needed).
-
-###  Headless Mode
-For automated pipelines, use the `--no-prompt` (or `-np`) flag to skip interactive metadata collection for the README. It will use sensible defaults based on the model directory name and your environment.
-
-```bash
-ezexl3 repo -m /path/to/model -b 4.0 --no-prompt
-```
+Custom README templates should replace the old `{{GRAPH_FILE}}` image with `{{QBENCH_CHARTS}}`; the previous SVG graph is no longer generated. For the detailed development history, see [CHANGELOG.md](CHANGELOG.md).

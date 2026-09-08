@@ -19,7 +19,11 @@ import sqlite3
 import time
 from typing import Dict, List, Optional, Set
 
-CSV_CORE_FIELDS = ["weights", "KL Div", "PPL r-100", "GiB"]
+CSV_CORE_FIELDS = ["weights", "KL Div", "PPL", "GiB"]
+# Pre-qbench header for the perplexity column. Measurements now come from
+# qbench's test data rather than ppl_layer's 100 wiki2 rows, so the row count
+# is no longer part of the name — but old CSVs still carry it and must import.
+_LEGACY_PPL_FIELD = "PPL r-100"
 CSV_EVAL_FIELDS = ["Diversity", "HumanEval", "IFBench", "LongCtx",
                    "MMLU", "Perf Prefill t/s", "Perf Gen t/s"]
 # Legacy name kept for any external importers; describes the *full* column
@@ -166,7 +170,7 @@ def read_all_rows(db_path: str) -> Dict[str, dict]:
             d: dict = {
                 "weights": weights,
                 "KL Div": kl_div,
-                "PPL r-100": ppl,
+                "PPL": ppl,
                 "GiB": gib,
             }
             for i, col in enumerate(_EVAL_COLUMNS):
@@ -193,7 +197,7 @@ def export_csv(db_path: str, csv_path: str) -> None:
     """Write the database contents to a CSV file (sorted by BPW).
 
     Columns are emitted dynamically: the 4 core columns
-    (``weights``, ``KL Div``, ``PPL r-100``, ``GiB``) are always
+    (``weights``, ``KL Div``, ``PPL``, ``GiB``) are always
     included. Each eval column is included only if at least one row
     has a non-empty value for it, so a baseline KL/PPL/GiB run
     produces a clean 4-column CSV while hidden-flag runs that set
@@ -236,7 +240,7 @@ def migrate_csv_to_db(csv_path: str, db_path: str) -> int:
                 db_path,
                 weights=w,
                 kl_div=(row.get("KL Div") or "").strip(),
-                ppl=(row.get("PPL r-100") or "").strip(),
+                ppl=(row.get("PPL") or row.get(_LEGACY_PPL_FIELD) or "").strip(),
                 gib=(row.get("GiB") or "").strip(),
             )
             count += 1

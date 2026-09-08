@@ -44,7 +44,15 @@ def _get_ignore_patterns(small_only: bool) -> List[str]:
 
 
 def _find_shared_artifacts(model_dir: str) -> List[str]:
-    """Find shared artifact files/dirs in the model root."""
+    """Find shared artifact files/dirs in the model root.
+
+    The qbench charts are matched by exact name rather than by extension:
+    they are copied up from qbench/, which also holds the logit cache, and a
+    blanket *.png sweep would pick up unrelated images from the source
+    checkpoint.
+    """
+    from ezexl3.qbench import README_CHARTS
+
     found = []
     for item in os.listdir(model_dir):
         path = os.path.join(model_dir, item)
@@ -52,7 +60,7 @@ def _find_shared_artifacts(model_dir: str) -> List[str]:
             found.append(item)
         elif item == "evals" and os.path.isdir(path):
             found.append(item)
-        elif item.endswith((".csv", ".svg")):
+        elif item.endswith((".csv", ".svg")) or item in README_CHARTS:
             found.append(item)
     return found
 

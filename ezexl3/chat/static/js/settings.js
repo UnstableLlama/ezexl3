@@ -15,6 +15,11 @@ function populateUI(status) {
   // System prompt
   document.getElementById('s-system').value = settings.system_prompt || '';
 
+  // Template kwargs
+  const tk = settings.template_kwargs || {};
+  document.getElementById('s-tplkwargs').value =
+    Object.keys(tk).length ? JSON.stringify(tk) : '';
+
   // Sliders
   setSlider('s-temp',  'v-temp',  settings.temperature, v => v.toFixed(2));
   setSlider('s-topk',  'v-topk',  settings.top_k,       v => String(Math.round(v)));
@@ -37,9 +42,17 @@ function populateUI(status) {
 
   // Model info
   if (status.loaded) {
+    const loraInfo = status.lora_count
+      ? `LoRAs: ${status.lora_count}<br>`
+      : '';
+    const draftInfo = status.draft_model_loaded
+      ? `Draft: ${status.draft_model_name}<br>`
+      : '';
     document.getElementById('model-info').innerHTML =
       `<strong>${status.model_name}</strong><br>` +
       `Context: ${(status.context_length || 0).toLocaleString()} tokens<br>` +
+      loraInfo +
+      draftInfo +
       `${status.model_dir || ''}`;
   } else {
     document.getElementById('model-info').innerHTML = '<em>No model loaded</em>';
@@ -123,6 +136,25 @@ function syncSettings() {
     };
     const tb = document.getElementById('s-thinkbudget').value;
     s.think_budget = tb ? parseInt(tb) : null;
+
+    // Template kwargs: must be a JSON object. While the text is invalid
+    // (mid-edit), keep the last good value and flag the field instead of
+    // wiping the server-side setting.
+    const tkEl = document.getElementById('s-tplkwargs');
+    const tkRaw = tkEl.value.trim();
+    let tk = {};
+    let tkOk = true;
+    if (tkRaw) {
+      try {
+        tk = JSON.parse(tkRaw);
+        if (typeof tk !== 'object' || tk === null || Array.isArray(tk)) throw 0;
+      } catch {
+        tkOk = false;
+        tk = settings.template_kwargs || {};
+      }
+    }
+    tkEl.classList.toggle('invalid', !tkOk);
+    s.template_kwargs = tk;
     settings = s;
     await fetch('/api/settings', {
       method: 'POST',
