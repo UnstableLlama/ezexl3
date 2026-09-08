@@ -152,7 +152,7 @@ def _norm_bpw(b: str) -> str:
 _QBENCH_TUNING_DEFAULTS = {
     "rows": 10,
     "length": 2048,
-    "dataset": "wiki2",
+    "dataset": None,
     "template": "none",
     "trace": None,
     "ref_engine": "exllamav3",
@@ -168,7 +168,7 @@ def _add_qbench_tuning_args(p: argparse.ArgumentParser, explicit_only: bool = Fa
     With *explicit_only* every option defaults to None instead of its real
     default, so _collect_qbench_opts() can tell "the user asked for this"
     from "the user left it alone". `measure` needs that distinction: it only
-    forwards what was typed, and forwarding anything forces a re-measure.
+    forwards what was typed without overriding saved project settings.
     """
     def dflt(key):
         return None if explicit_only else _QBENCH_TUNING_DEFAULTS[key]
@@ -178,12 +178,12 @@ def _add_qbench_tuning_args(p: argparse.ArgumentParser, explicit_only: bool = Fa
     p.add_argument("--length", type=int, default=dflt("length"),
                    help="Tokens per row (default: 2048)")
     p.add_argument("--dataset", choices=["wiki2", "openwebtext"], default=dflt("dataset"),
-                   help="Test dataset (default: wiki2)")
+                   help="Use a text dataset instead of the default separate, self-generated eval trace")
     p.add_argument("--template", choices=["none", "chat", "assistant"], default=dflt("template"),
                    help="Apply the model's chat template to test rows "
                         "(none = raw text, default)")
     p.add_argument("--trace", default=dflt("trace"),
-                   help="In-domain test trace JSON from qbench_prompts.py "
+                   help="Use an existing in-domain eval trace JSON from qbench_prompts.py "
                         "(replaces --dataset/--rows/--length)")
     p.add_argument("--ref-engine", choices=["exllamav3", "transformers"],
                    default=dflt("ref_engine"),

@@ -11,6 +11,10 @@ reference pass with BF16-rounding noise gives the model's self-noise floor.
 KLD is reported as mean/median/p90 plus confidence buckets, with scatter,
 spread and histogram plots.
 
+The default test data is a separate self-generated evaluation trace, sampled
+once with qbench_prompts.py and then reused. SC calibration traces are not
+automatically selected. Explicit --dataset/--trace overrides remain available.
+
 The generated project file lives at <model>/qbench/project.yml and is
 REUSED on later runs unless --regen is given, so it can be hand-edited —
 e.g. to add GGUF entries (llamacpp engine), HF checkpoints (transformers
@@ -31,6 +35,7 @@ from typing import Dict, List, Optional
 from ezexl3.measure import run_cmd_capture
 
 _QBENCH_SCRIPT = os.path.join(os.path.dirname(__file__), "vendor", "eval", "qbench.py")
+_TRACE_SCRIPT = os.path.join(os.path.dirname(__file__), "vendor", "eval", "qbench_prompts.py")
 
 # Output files written next to project.yml (relative paths in the project
 # resolve against the project file's directory)
@@ -40,13 +45,136 @@ _OUTPUT_FILES = {
     "plot_kld": "qb_kld.png",
     "plot_kld_spread": "qb_kld_spread.png",
     "plot_kld_hist": "qb_kld_hist.png",
+    "plot_kld_hist_combined": "qb_kld_hist_combined.png",
 }
 
 # The charts the generated README embeds, in display order: mean KLD vs bpw,
 # perplexity vs bpw, then the per-token KLD panels. Copied up to the model
 # root by publish_charts() so uploads never have to reach into qbench/, which
 # also holds the (very large) logit cache.
-README_CHARTS = ["qb_kld.png", "qb_ppl.png", "qb_kld_hist.png"]
+README_CHARTS = ["qb_kld.png", "qb_ppl.png", "qb_kld_hist.png", "qb_kld_hist_combined.png"]
+
+_TRACE_CANDIDATES = (
+    "qbench/qbench_prompts_gen.json", "qbench_prompts_gen.json",
+)
+_DATA_FIELDS = ("test_trace", "test_data", "tokenizer")
+
+
+def _trace_summary(path: str) -> str:
+    """Validate qbench's JSON format; packed SC safetensors lack response boundaries."""
+    with open(path, encoding="utf8") as f:
+        trace = json.load(f)
+    if not isinstance(trace, dict) or type(trace.get("vocab_size")) is not int or trace["vocab_size"] <= 0:
+        raise ValueError("trace needs a positive vocab_size")
+    rows = trace.get("rows")
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("trace needs nonempty rows")
+    inputs = outputs = max_length = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("each trace row must be an object")
+        for field in ("input_ids", "response_ids"):
+            ids = row.get(field)
+            if not isinstance(ids, list) or not ids or any(type(t) is not int or t < 0 for t in ids):
+                raise ValueError(f"each trace row needs nonempty {field} token IDs")
+        inputs += len(row["input_ids"])
+        outputs += len(row["response_ids"])
+        max_length = max(max_length, len(row["input_ids"]) + len(row["response_ids"]))
+    return f"{len(rows):,} rows, {inputs:,} input + {outputs:,} response tokens; longest row {max_length:,}"
+
+
+def ensure_eval_trace(model_dir: str, device: int, trace_devices: Optional[List[int]] = None) -> str:
+    """Reuse a dedicated eval trace, or generate one with upstream's eval prompts."""
+    for rel in _TRACE_CANDIDATES:
+        path = os.path.join(model_dir, rel)
+        if not os.path.isfile(path):
+            continue
+        try:
+            _trace_summary(path)
+        except (OSError, ValueError) as e:
+            raise ValueError(f"Invalid evaluation trace {path}: {e}") from e
+        print(f" -- Reusing dedicated evaluation trace: {path}")
+        return path
+
+    from ezexl3.repo_selfcal import _TRACE_DONOR_MIN_BPW, _find_trace_donor, _run_script
+
+    donor = _find_trace_donor(model_dir) or model_dir
+    devices = list(trace_devices) if trace_devices is not None else [device]
+    if not devices:
+        raise ValueError("Evaluation trace generation requires at least one GPU")
+    visible_devices = ",".join(str(d) for d in devices)
+    path = os.path.join(model_dir, _TRACE_CANDIDATES[0])
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    print(f" -- Generating a separate evaluation trace with qbench_prompts.py from: {donor}")
+    print(f" -- Trace generation GPUs: {visible_devices}; model and KV cache automatically split across these GPUs.")
+    print(" -- Upstream defaults: target 20,000 response tokens, up to 4,096 per turn, 30% tool conversations.")
+    if donor == model_dir:
+        print(f" -- No completed >= {_TRACE_DONOR_MIN_BPW:g} bpw donor found; using the base model (full generation load across the selected GPUs).")
+    tmp = path + ".tmp"
+    _run_script(
+        [sys.executable, _TRACE_SCRIPT, "-m", donor, "-o", tmp,
+         "--min_tokens", "20000", "--max_new_tokens", "4096", "--tool_frac", "0.3"],
+        env_extra={"CUDA_VISIBLE_DEVICES": visible_devices},
+        log_path=os.path.join(os.path.dirname(path), "eval_trace.log"),
+    )
+    _trace_summary(tmp)
+    os.replace(tmp, path)
+    print(f" -- Saved evaluation trace: {path}; later runs reuse these same samples.")
+    return path
+
+
+def _data_fields(project: dict) -> dict:
+    return {k: project[k] for k in _DATA_FIELDS if k in project}
+
+
+def _configure_test_source(project: dict, model_dir: str, project_path: str,
+                           trace: Optional[str], dataset: Optional[str],
+                           rows: int, length: int, template: str, fresh: bool, device: int,
+                           trace_devices: Optional[List[int]] = None) -> None:
+    """Auto-upgrade generated defaults, while preserving hand-edited test settings."""
+    current = _data_fields(project)
+    legacy_default = _data_fields(build_project(model_dir, []))
+    generated = False
+    if not fresh and os.path.isfile(project_path):
+        with open(project_path, encoding="utf8") as f:
+            generated = f.readline().startswith("# qbench project generated by ezexl3.")
+    automatic = fresh or project.get("_ezexl3_auto_data") == current or (
+        generated and "_ezexl3_auto_data" not in project
+        and not project.get("_ezexl3_explicit_data") and current == legacy_default
+    )
+    if trace is not None or dataset is not None or automatic:
+        selected = os.path.abspath(trace) if trace else (
+            ensure_eval_trace(model_dir, device, trace_devices) if dataset is None else None
+        )
+        if selected:
+            _trace_summary(selected)  # Explicit invalid traces fail; never silently substitute.
+        replacement = build_project(model_dir, [], rows=rows, length=length,
+                                    dataset=dataset or "wiki2", template=template, trace=selected)
+        for key in _DATA_FIELDS:
+            project.pop(key, None)
+        project.update(_data_fields(replacement))
+        if trace is None and dataset is None:
+            project["_ezexl3_auto_data"] = json.loads(json.dumps(_data_fields(project)))
+            project.pop("_ezexl3_explicit_data", None)
+        else:
+            project.pop("_ezexl3_auto_data", None)
+            project["_ezexl3_explicit_data"] = True
+        if current != _data_fields(project) and not fresh:
+            print(" -- Test source changed; measurements for this test source use a separate cache.")
+    else:
+        print(" -- Keeping the existing project's test settings.")
+
+    if project.get("test_trace"):
+        path = project["test_trace"]
+        if not os.path.isabs(path):
+            path = os.path.normpath(os.path.join(os.path.dirname(project_path), path))
+        print(f" -- QBench test source: self-generated in-domain trace: {path}")
+        print(f" -- {_trace_summary(path)}; scoring response positions (dataset/rows/length do not apply).")
+        if os.path.basename(path) == "cal_trace.json":
+            print(" -- Reusing SC calibration data for evaluation; this is not an independent eval trace.")
+    else:
+        td = project["test_data"]
+        print(f" -- QBench test source: dataset {td['source']}, {td['rows']} rows x {td['length']} tokens.")
 
 # Labels build_project() gives EXL3 quant entries, e.g. "4 bpw" / "4.5 bpw".
 _BPW_LABEL_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*bpw$", re.IGNORECASE)
@@ -74,6 +202,14 @@ def check_qbench_support() -> Optional[str]:
             f"qbench needs {', '.join(missing)} which "
             f"{'is' if len(missing) == 1 else 'are'} not installed. "
             f"Fix with: pip install {pkgs}"
+        )
+    try:
+        from transformers import TokenizersBackend  # noqa: F401
+    except ImportError:
+        return (
+            "qbench needs transformers>=5.0.0 for TokenizersBackend chat tokenizers. "
+            "Upgrade in the environment running ezexl3: "
+            f'{sys.executable} -m pip install -U "transformers>=5.0.0"'
         )
     try:
         from exllamav3.util import measures  # noqa: F401
@@ -105,7 +241,7 @@ def build_project(
         project["test_trace"] = os.path.abspath(trace)
     else:
         project["test_data"] = {
-            "source": dataset,
+            "source": "openwebtext10k" if dataset == "openwebtext" else dataset,
             "rows": rows,
             "length": length,
             "stride": length,
@@ -247,13 +383,14 @@ def run_qbench(
     device: int = 0,
     rows: int = 10,
     length: int = 2048,
-    dataset: str = "wiki2",
+    dataset: Optional[str] = None,
     template: str = "none",
     trace: Optional[str] = None,
     ref_engine: str = "exllamav3",
     cache_gb: float = 50.0,
     noise_floor: bool = True,
     regen: bool = False,
+    trace_devices: Optional[List[int]] = None,
 ) -> int:
     """Generate (or reuse) the project file for *model_dir* and run qbench."""
     model_dir = os.path.abspath(model_dir)
@@ -285,18 +422,25 @@ def run_qbench(
         import yaml
         with open(project_path, "r", encoding="utf8") as f:
             project = yaml.safe_load(f)
+        before = json.dumps(project, sort_keys=True)
         print(f" -- Reusing existing project: {project_path}")
+        _configure_test_source(project, model_dir, project_path, trace, dataset,
+                               rows, length, template, fresh=False, device=device, trace_devices=trace_devices)
+        project.setdefault("output", {}).setdefault("plot_kld_hist_combined", "qb_kld_hist_combined.png")
         added = sync_project_models(project, model_dir, bpws)
-        if added:
+        if before != json.dumps(project, sort_keys=True):
             write_project(project_path, project)
+        if added:
             print(f" -- Added quant(s) to the project: {', '.join(added)}")
     else:
         project = build_project(
             model_dir, bpws,
-            rows=rows, length=length, dataset=dataset, template=template,
+            rows=rows, length=length, dataset=dataset or "wiki2", template=template,
             trace=trace, ref_engine=ref_engine, cache_gb=cache_gb,
             noise_floor=noise_floor,
         )
+        _configure_test_source(project, model_dir, project_path, trace, dataset,
+                               rows, length, template, fresh=True, device=device, trace_devices=trace_devices)
         write_project(project_path, project)
         print(f" -- Wrote project: {project_path}")
 

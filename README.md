@@ -170,15 +170,58 @@ median and high-confidence buckets isolate actual quantization damage).
 # Auto-detects <bpw>/ quant subdirs; writes results + plots to <model>/qbench/
 ezexl3 qbench -m /path/to/base_model
 
-# In-domain testset instead of wiki2, chat-template framing, specific BPWs
-ezexl3 qbench -m /path/to/base_model -b 3,4,5 --template chat
+# Explicitly evaluate WikiText instead of generating an evaluation trace
+ezexl3 qbench -m /path/to/base_model -b 3,4,5 --dataset wiki2 --template chat
 ```
 
-The generated `<model>/qbench/project.yml` is reused on later runs (hand-edits survive;
-`--regen` rewrites it), so you can add GGUF entries (`engine: llamacpp`) or HF checkpoints
+By default, qbench generates a **separate evaluation trace** with the vendored upstream
+`eval/qbench_prompts.py`, following the calibration/evaluation split in
+[Turbo's model card](https://huggingface.co/turboderp/Qwen3.8-27B-exl3). It uses the highest
+completed quant at 5 bpw or above (the same selection rule as SC), or the base model if none exists. Generation uses upstream
+defaults: a target of 20,000 response tokens, a 4,096-token cap per turn, and a 0.3 tool
+conversation fraction. These are the script defaults, not a claim about Turbo's exact run.
+The base-model fallback requires a full generation load. Trace generation makes every GPU
+supplied to `measure -d` available for automatically splitting the donor and KV cache
+(for example, `-d 0,1,2,3` makes all four available);
+qbench's streamed comparison passes use the first GPU. The log lists the trace-generation
+GPUs explicitly.
+
+The trace is saved to `<model>/qbench/qbench_prompts_gen.json` and reused across all quants
+and later runs. An existing `<model>/qbench_prompts_gen.json` is also recognized. SC's
+`selfcal/cal_trace.json` is not automatically reused. Logs announce generation/reuse, the
+donor, the actual trace path and token counts, or the selected text dataset. Use `--trace`
+to supply another evaluation JSON; trace mode scores response positions and ignores
+`--rows`, `--length`, and `--template`. Failed trace generation stops the run and leaves no
+completed trace; it does not silently fall back to WikiText.
+
+The generated `<model>/qbench/project.yml` is reused on later runs; old generated default
+WikiText settings migrate automatically to the separate eval trace. Custom test settings
+are preserved, and explicit `--dataset`/`--trace` overrides update the test source without
+requiring `--regen`. Changing test data requires new measurements; the old cache is retained.
+`--regen` rewrites the project but reuses the evaluation trace. You can add GGUF entries
+(`engine: llamacpp`) or HF checkpoints
 (`engine: transformers`) for cross-format comparisons — cached results make each addition
 cheap. Outputs: `qb_results.json` plus PPL/KLD scatter, KLD spread, and per-token KLD
-histogram plots. Requires seaborn and pyyaml (installed with ezexl3) and a recent exllamav3.
+histogram plots. The README also includes `qb_kld_hist_combined.png`: all quants' raw
+per-token KL distributions on one log-axis plot with the noise-floor distribution, like
+Turbo's bottom chart. It uses cached per-token measurements and requires the noise-floor
+pass. Requires Transformers >= 5.0.0 (including `TokenizersBackend`), seaborn and pyyaml
+(installed with ezexl3), and a recent exllamav3. For an existing environment reporting
+`Tokenizer class TokenizersBackend does not exist`, run
+`python -m pip install -U "transformers>=5.0.0" "seaborn>=0.13"` with that environment's Python.
+
+Checkpointing is automatic, per completed model pass (including BF16 and the noise floor),
+under `<model>/qbench/logit_cache/qbench/`. Rerun the same command after an interruption;
+completed passes print `Cached`, while an interrupted pass restarts. Keep this directory:
+`qb_results.json` and the measurement CSV alone cannot replace the keyed cache. ezexl3's
+README metadata updates do not invalidate it. Older entries keyed to that metadata's
+timestamp may require a one-time remeasurement after upgrading.
+
+If reference logits have been evicted or deleted, saved measurements still regenerate
+reports without inference. Adding a new quant then rebuilds the BF16 logits as needed,
+while reusing completed quant and noise-floor measurements. Model changes or changes to
+the project's test settings invalidate the corresponding cache; `--regen` rewrites the
+project settings but does not clear matching cached measurements.
 
 ### Template System
 You can customize the generated README by providing a template name via `--template` or `-t`.

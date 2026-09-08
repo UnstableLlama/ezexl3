@@ -113,7 +113,24 @@ def main(args):
     # ------ Reference pass: cache logits + confidence, measure ppl
     ref_results_key = f"{data_key}_{ref_key}_self_m{METRICS_VERSION}"
     ref_results = cache.load_results(ref_results_key)
-    if ref_results is None or not os.path.exists(ref_meta):
+    floor_enabled = project.get("noise_floor", True) and ref["engine"] != "llamacpp"
+    floor_results_key = f"{data_key}_{ref_key}_{model_key(ref, noise = True)}_m{METRICS_VERSION}"
+    floor_results = cache.load_results(floor_results_key) if floor_enabled else None
+    quant_results = []
+    for mspec in models:
+        if mspec is not ref:
+            key = f"{data_key}_{ref_key}_{model_key(mspec)}_m{METRICS_VERSION}"
+            quant_results.append((mspec, key, cache.load_results(key)))
+    needs_logits = (floor_enabled and floor_results is None) or any(
+        res is None for _, _, res in quant_results
+    )
+    # Completed measurements can regenerate reports even after logit eviction.
+    # Only rebuild logits when an unfinished comparison actually needs them.
+    logits_complete = all(os.path.isfile(p) for p in (
+        [ref_meta, os.path.join(ref_store, "conf.safetensors")]
+        + [os.path.join(ref_store, f"row_{r:06d}.safetensors") for r in range(ids.shape[0])]
+    ))
+    if ref_results is None or (needs_logits and not logits_complete):
         os.makedirs(ref_store, exist_ok = True)
         backend = open_backend(ref, max_len, device)
         stats = DiffStats(ids, ranges, vocab_size, None)
@@ -129,22 +146,24 @@ def main(args):
         ref_results.update(backend.info)
         cache.save_results(ref_results_key, ref_results)
         backend.close()
+    else:
+        print(f" -- Cached: {ref['label']}")
     print_stats(ref["label"], ref_results)
     all_results.append({"label": ref["label"], "group": ref["group"], **ref_results})
 
     # ------ Noise floor: reference engine + bf16-rounding noise per layer, vs cached logits
-    if project.get("noise_floor", True) and ref["engine"] != "llamacpp":
-        floor_results_key = f"{data_key}_{ref_key}_{model_key(ref, noise = True)}_m{METRICS_VERSION}"
-        floor_results = cache.load_results(floor_results_key)
+    if floor_enabled:
         if floor_results is None:
             backend = open_backend(ref, max_len, device)
             stats = DiffStats(ids, ranges, vocab_size, ref_store)
             backend.run(ids, stats, noise_eps = BF16_ROUNDING_EPS)
             floor_results = stats.results()
             floor_results.update(backend.info)
-            cache.save_results(floor_results_key, floor_results)
             cache.save_kl(floor_results_key, stats.kl_vector())
+            cache.save_results(floor_results_key, floor_results)
             backend.close()
+        else:
+            print(" -- Cached: Noise floor")
         print_stats("Noise floor", floor_results)
         all_results.append({"label": "Noise floor", "group": "noise_floor", **floor_results})
         floor_kl = cache.load_kl(floor_results_key)
@@ -153,20 +172,18 @@ def main(args):
 
     # ------ Quantized models
     model_kl_keys = []  # (label, group, results_key) in project order, for the histogram plot
-    for mspec in models:
-        if mspec is ref:
-            continue
-        results_key = f"{data_key}_{ref_key}_{model_key(mspec)}_m{METRICS_VERSION}"
-        res = cache.load_results(results_key)
+    for mspec, results_key, res in quant_results:
         if res is None:
             backend = open_backend(mspec, max_len, device)
             stats = DiffStats(ids, ranges, vocab_size, ref_store)
             backend.run(ids, stats)
             res = stats.results()
             res.update(backend.info)
-            cache.save_results(results_key, res)
             cache.save_kl(results_key, stats.kl_vector())
+            cache.save_results(results_key, res)
             backend.close()
+        else:
+            print(f" -- Cached: {mspec['label']}")
         print_stats(mspec["label"], res)
         all_results.append({"label": mspec["label"], "group": mspec["group"], **res})
         if "kld" in res:

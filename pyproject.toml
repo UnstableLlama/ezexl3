@@ -12,6 +12,7 @@ dependencies = [
     "exllamav3>=0.0.1",
     "torch>=2.0",
     "datasets>=2.0",
+    "transformers>=5.0.0",
     "safetensors>=0.4",
     "numpy>=1.24",
     "pandas>=2.0",

@@ -26,6 +26,18 @@ def _make_model_dir(tmp, bpws=("3.0", "4.0")):
     return model_dir
 
 
+def _write_trace(path):
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(json.dumps({
+        "vocab_size": 10, "rows": [{"input_ids": [1, 2], "response_ids": [3, 4]}],
+        "meta": {"input_tokens": 2, "output_tokens": 2},
+    }))
+
+
+def _generate_trace(cmd, **kwargs):
+    _write_trace(cmd[cmd.index("-o") + 1])
+
+
 class QbenchCliParserTests(unittest.TestCase):
     def test_defaults(self):
         parser = cli.build_parser()
@@ -35,7 +47,7 @@ class QbenchCliParserTests(unittest.TestCase):
         self.assertEqual(args.device, 0)
         self.assertEqual(args.rows, 10)
         self.assertEqual(args.length, 2048)
-        self.assertEqual(args.dataset, "wiki2")
+        self.assertIsNone(args.dataset)
         self.assertEqual(args.template, "none")
         self.assertEqual(args.ref_engine, "exllamav3")
         self.assertFalse(args.no_noise_floor)
@@ -103,6 +115,7 @@ class QbenchProjectTests(unittest.TestCase):
 class QbenchRunnerTests(unittest.TestCase):
     def _run(self, model_dir, **kwargs):
         with patch("ezexl3.qbench.run_cmd_capture", return_value="") as mock_cmd, \
+             patch("ezexl3.repo_selfcal._run_script", side_effect=_generate_trace), \
              patch("ezexl3.qbench.check_qbench_support", return_value=None):
             rc = qbench.run_qbench(model_dir, **kwargs)
         return rc, mock_cmd
@@ -180,6 +193,19 @@ class QbenchRunnerTests(unittest.TestCase):
 
 
 class QbenchVendorTests(unittest.TestCase):
+    def test_old_transformers_reports_upgrade_before_loading_exllamav3(self):
+        import sys
+        import types
+        with patch.dict(sys.modules, {
+            "yaml": types.ModuleType("yaml"),
+            "seaborn": types.ModuleType("seaborn"),
+            "transformers": types.ModuleType("transformers"),
+        }):
+            error = qbench.check_qbench_support()
+        self.assertIn("transformers>=5.0.0", error)
+        self.assertIn("TokenizersBackend", error)
+        self.assertIn(f"{sys.executable} -m pip install", error)
+
     def test_vendored_files_present_and_in_manifest(self):
         vendor_dir = REPO_ROOT / "ezexl3" / "vendor"
         manifest = json.loads((vendor_dir / "VENDOR_MANIFEST.json").read_text())
@@ -266,6 +292,152 @@ class MeasureQbenchTuningTests(unittest.TestCase):
             rc = cli.main(["measure", "-m", "/m", "-b", "4"])
         self.assertEqual(rc, 0)
         self.assertIsNone(mock_stage.call_args.kwargs["qbench_opts"])
+
+
+class EvalTraceTests(unittest.TestCase):
+    def test_trace_generation_receives_every_requested_gpu(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model = _make_model_dir(tmp)
+            devices = [3, 1, 5, 7]
+            with patch("ezexl3.repo_selfcal._run_script", side_effect=_generate_trace) as generate, \
+                 patch("ezexl3.qbench.run_cmd_capture") as measure, \
+                 patch("ezexl3.qbench.check_qbench_support", return_value=None):
+                qbench.run_qbench(model, bpws=["3.0"], device=3, trace_devices=devices)
+            self.assertEqual(generate.call_args.kwargs["env_extra"],
+                             {"CUDA_VISIBLE_DEVICES": "3,1,5,7"})
+            cmd = measure.call_args.args[0]
+            self.assertEqual(cmd[cmd.index("-d") + 1], "3")
+
+    def test_five_bpw_donor_matches_selfcal_selection(self):
+        from ezexl3.repo_selfcal import _find_trace_donor
+        with tempfile.TemporaryDirectory() as tmp:
+            model = _make_model_dir(tmp, ("3", "5", "8"))
+            for bpw in ("3", "5"):
+                Path(model, bpw, "config.json").write_text("{}")
+            # The incomplete 8 bpw directory must not displace the completed 5.
+            with patch("ezexl3.repo_selfcal._run_script", side_effect=_generate_trace) as generate:
+                qbench.ensure_eval_trace(model, 0)
+            cmd = generate.call_args.args[0]
+            self.assertEqual(cmd[cmd.index("-m") + 1], _find_trace_donor(model))
+            self.assertEqual(cmd[cmd.index("-m") + 1], str(Path(model, "5")))
+
+    def test_generates_separate_trace_once_from_high_precision_donor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model = _make_model_dir(tmp, ("3", "6", "8"))
+            for bpw in ("3", "6", "8"):
+                Path(model, bpw, "config.json").write_text("{}")
+            _write_trace(Path(model, "selfcal/cal_trace.json"))
+            with patch("ezexl3.repo_selfcal._run_script", side_effect=_generate_trace) as generate:
+                path = qbench.ensure_eval_trace(model, 2)
+                self.assertEqual(qbench.ensure_eval_trace(model, 2), path)
+            generate.assert_called_once()
+            cmd = generate.call_args.args[0]
+            self.assertTrue(cmd[1].endswith("qbench_prompts.py"))
+            self.assertEqual(cmd[cmd.index("-m") + 1], str(Path(model, "8")))
+            self.assertEqual(generate.call_args.kwargs["env_extra"], {"CUDA_VISIBLE_DEVICES": "2"})
+            self.assertEqual(path, str(Path(model, "qbench/qbench_prompts_gen.json")))
+            self.assertFalse(Path(path + ".tmp").exists())
+
+    def test_generation_failure_does_not_publish_partial_trace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model = _make_model_dir(tmp)
+            def fail(cmd, **kwargs):
+                Path(cmd[cmd.index("-o") + 1]).write_text('{')
+                raise RuntimeError("generation failed")
+            with patch("ezexl3.repo_selfcal._run_script", side_effect=fail):
+                with self.assertRaisesRegex(RuntimeError, "generation failed"):
+                    qbench.ensure_eval_trace(model, 0)
+            self.assertFalse(Path(model, "qbench/qbench_prompts_gen.json").exists())
+            with patch("ezexl3.repo_selfcal._run_script", side_effect=_generate_trace) as generate:
+                qbench.ensure_eval_trace(model, 0)
+            cmd = generate.call_args.args[0]
+            self.assertEqual(cmd[cmd.index("-m") + 1], model)
+
+    def test_reuses_root_eval_trace_and_rejects_invalid_trace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model = _make_model_dir(tmp)
+            path = Path(model, "qbench_prompts_gen.json")
+            _write_trace(path)
+            with patch("ezexl3.repo_selfcal._run_script") as generate:
+                self.assertEqual(qbench.ensure_eval_trace(model, 0), str(path))
+                generate.assert_not_called()
+                path.write_text("{}")
+                with self.assertRaisesRegex(ValueError, "Invalid evaluation trace"):
+                    qbench.ensure_eval_trace(model, 0)
+                generate.assert_not_called()
+
+    def test_legacy_default_project_migrates_but_custom_settings_survive(self):
+        import yaml
+        with tempfile.TemporaryDirectory() as tmp:
+            model = _make_model_dir(tmp)
+            path = qbench.default_project_path(model)
+            project = qbench.build_project(model, ["3.0"])
+            project["title"] = "Custom title"
+            project["output"].pop("plot_kld_hist_combined")
+            qbench.write_project(path, project)
+            _write_trace(Path(model, "qbench_prompts_gen.json"))
+            with patch("ezexl3.qbench.run_cmd_capture"), patch("ezexl3.qbench.check_qbench_support", return_value=None):
+                qbench.run_qbench(model, bpws=["3.0"])
+                migrated = yaml.safe_load(Path(path).read_text())
+                self.assertIn("test_trace", migrated)
+                self.assertEqual(migrated["title"], "Custom title")
+                self.assertIn("plot_kld_hist_combined", migrated["output"])
+                # Manual changes to the test source override the auto-selection snapshot.
+                custom = Path(model, "custom.json")
+                _write_trace(custom)
+                migrated["test_trace"] = "../custom.json"
+                qbench.write_project(path, migrated)
+                qbench.run_qbench(model, bpws=["3.0"])
+                self.assertEqual(yaml.safe_load(Path(path).read_text())["test_trace"], "../custom.json")
+
+    def test_explicit_dataset_and_trace_override_existing_project(self):
+        import yaml
+        with tempfile.TemporaryDirectory() as tmp:
+            model = _make_model_dir(tmp)
+            path = qbench.default_project_path(model)
+            _write_trace(Path(model, "qbench_prompts_gen.json"))
+            with patch("ezexl3.qbench.run_cmd_capture"), patch("ezexl3.qbench.check_qbench_support", return_value=None), \
+                 patch("ezexl3.repo_selfcal._run_script") as generate:
+                qbench.run_qbench(model, bpws=["3.0"], dataset="wiki2")
+                qbench.run_qbench(model, bpws=["3.0"])
+                self.assertNotIn("test_trace", yaml.safe_load(Path(path).read_text()))
+                generate.assert_not_called()
+                trace = str(Path(model, "qbench_prompts_gen.json"))
+                qbench.run_qbench(model, bpws=["3.0"], trace=trace)
+                self.assertEqual(yaml.safe_load(Path(path).read_text())["test_trace"], trace)
+
+    def test_combined_chart_is_published_and_allowlisted_for_upload(self):
+        from ezexl3.upload import _find_shared_artifacts
+        from ezexl3.readme import run_readme
+        with tempfile.TemporaryDirectory() as tmp:
+            chart = Path(tmp, "qbench/qb_kld_hist_combined.png")
+            chart.parent.mkdir()
+            chart.write_bytes(b"chart")
+            self.assertIn(chart.name, qbench.publish_charts(tmp))
+            self.assertIn(chart.name, _find_shared_artifacts(tmp))
+            Path(tmp, Path(tmp).name + "Measured.csv").write_text(
+                "weights,KL Div,PPL,GiB\n3,0.1,2,1\nbf16,0,1.9,2\n"
+            )
+            run_readme(tmp, interactive=False)
+            self.assertIn(chart.name, Path(tmp, "README.md").read_text())
+
+    def test_pipeline_uses_keyed_cache_even_when_csv_rows_are_complete(self):
+        from ezexl3.repo_measure import run_qbench_stage
+        from unittest.mock import Mock
+        existing = {"3": {"KL Div": "1", "PPL": "9"}, "bf16": {"PPL": "8"}}
+        results = {"3": {"kld": 0.1, "ppl": 2}, "bf16": {"ppl": 1.9}}
+        upsert = Mock()
+        with patch("ezexl3.qbench.check_qbench_support", return_value=None), \
+             patch("ezexl3.qbench.run_qbench", return_value=0) as run, \
+             patch("ezexl3.qbench.read_results", return_value=results), \
+             patch("ezexl3.qbench.publish_charts", return_value=qbench.README_CHARTS):
+            rc = run_qbench_stage("/model", ["3"], 0, "/db", "/csv", existing_rows=existing,
+                                  trace_devices=[0, 1, 2, 3],
+                                  file_size_gib_fn=lambda _: 1, upsert_row_fn=upsert, export_csv_fn=Mock())
+        self.assertEqual(rc, 0)
+        run.assert_called_once()
+        self.assertEqual(run.call_args.kwargs["trace_devices"], [0, 1, 2, 3])
+        self.assertEqual(upsert.call_count, 2)
 
 
 if __name__ == "__main__":

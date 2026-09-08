@@ -194,6 +194,7 @@ def run_qbench_stage(
     file_size_gib_fn: Callable = file_size_gib,
     upsert_row_fn: Callable = upsert_row,
     export_csv_fn: Callable = export_csv,
+    trace_devices: Optional[List[int]] = None,
 ) -> int:
     """Measure KL divergence + perplexity for *bpws* with qbench.
 
@@ -205,28 +206,13 @@ def run_qbench_stage(
 
     *qbench_opts* are run_qbench() keyword overrides (rows, length, dataset,
     template, trace, ref_engine, cache_gb, noise_floor, regen) built from the
-    tuning flags the user actually typed. Passing any of them also means
-    "measure this differently", so the already-measured short-circuit below
-    is bypassed — otherwise a re-run with new test data would no-op.
+    tuning flags the user actually typed. Qbench's keyed cache decides which
+    measurements can be reused, including after a change of test source.
     """
     from ezexl3 import qbench
 
-    # Decide there is work to do BEFORE checking for qbench's dependencies:
-    # a resumed run with everything already measured must not fail just
-    # because seaborn isn't installed.
-    # qbench itself caches per (test data, reference, model), but skipping
-    # here avoids paying for the subprocess at all.
-    if existing_rows is not None and not qbench_opts:
-        wanted = [_task_to_csv_label(b) for b in bpws] + ["bf16"]
-        if all(
-            (existing_rows.get(lbl, {}).get("KL Div") or "").strip()
-            and (existing_rows.get(lbl, {}).get("PPL") or "").strip()
-            for lbl in wanted
-            if lbl != "bf16"
-        ) and (existing_rows.get("bf16", {}).get("PPL") or "").strip():
-            print("🟦 skipping qbench: all BPWs already measured")
-            return 0
-
+    # Projects and evaluation traces carry the dataset identity; the CSV does
+    # not. Always let qbench consult its keyed cache and regenerate its plots.
     quant_bpws = [str(b) for b in bpws if b != "base"]
     if not quant_bpws:
         return 0
@@ -240,6 +226,7 @@ def run_qbench_stage(
     print(f"\n🔬 qbench: measuring {len(quant_bpws)} quant(s) + BF16 reference on GPU {device}...")
     try:
         rc = qbench.run_qbench(model_dir, bpws=quant_bpws, device=device,
+                               trace_devices=trace_devices,
                                **(qbench_opts or {}))
     except Exception as e:
         print(f"🔴 qbench failed: {e}")
@@ -254,7 +241,7 @@ def run_qbench_stage(
 
     # Refresh the README's copies at the model root. run_qbench() does this
     # too for the standalone command; repeating it here keeps the stage
-    # correct on its own terms and costs three small file copies.
+    # correct on its own terms and costs only a few small file copies.
     copied = qbench.publish_charts(model_dir)
     missing = [c for c in qbench.README_CHARTS if c not in copied]
     if missing:
@@ -485,6 +472,7 @@ def run_measure_single_bpw(
             model_dir=model_dir,
             bpws=[bpw],
             device=devices[0],
+            trace_devices=devices,
             db_path=db_path,
             out_csv=default_csv_path_fn(model_dir),
             existing_rows=existing_rows,
@@ -684,6 +672,7 @@ def run_measure_stage(
                 model_dir=model_dir,
                 bpws=bpws,
                 device=devices[0],
+                trace_devices=devices,
                 db_path=db_path,
                 out_csv=out_csv,
                 existing_rows=existing_rows,

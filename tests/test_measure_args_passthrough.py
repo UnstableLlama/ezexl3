@@ -114,7 +114,7 @@ class MeasureCheckpointingTests(unittest.TestCase):
         existing = {"3", "bf16"}
         self.assertEqual(repo._filter_measure_tasks_for_checkpoint(requested, existing), ["2"])
 
-    def test_run_measure_stage_returns_early_when_all_rows_measured(self):
+    def test_legacy_measure_stage_returns_early_when_all_rows_measured(self):
         full_rows = {
             "2": {"weights": "2", "KL Div": "0.1", "PPL": "11.0", "GiB": "4.2"},
             "bf16": {"weights": "bf16", "KL Div": "0.0", "PPL": "10.0", "GiB": "12.3"},
@@ -128,6 +128,7 @@ class MeasureCheckpointingTests(unittest.TestCase):
                 devices=[0],
                 write_logs=False,
                 measure_args=[],
+                legacy_measure=True,
             )
 
         self.assertEqual(rc, 0)
@@ -528,6 +529,13 @@ class InterleavedPipelineTests(unittest.TestCase):
 
 class GiBGapFillTests(unittest.TestCase):
     """Tests for GiB gap detection and filling in run_measure_stage."""
+
+    def setUp(self):
+        # Qbench now owns dataset-aware checkpointing; these tests exercise
+        # only the independent GiB gap-fill pass, not inference.
+        patcher = patch("ezexl3.repo_measure.run_qbench_stage", return_value=0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_gib_gaps_filled_before_measurement(self):
         """Missing GiB values are filled from filesystem before GPU work starts."""

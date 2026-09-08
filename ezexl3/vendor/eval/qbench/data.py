@@ -50,6 +50,10 @@ def source_stamp(path: str):
             files = [
                 os.path.join(path, f) for f in os.listdir(path)
                 if f.endswith((".safetensors", ".gguf", ".json", ".py"))
+                # ezexl3 writes this after measurements/README publication. It is
+                # bookkeeping, not model content, and must not re-key every quant.
+                and f != ".ezexl3_readme_meta.json"
+                and os.path.isfile(os.path.join(path, f))
             ]
             return max((int(os.path.getmtime(f)) for f in files), default = 0)
         if path.endswith(".gguf"):
@@ -131,8 +135,10 @@ class QCache:
             return None
 
     def save_results(self, key, results: dict):
-        with open(self.results_file(key), "w") as f:
+        filename = self.results_file(key)
+        with open(filename + ".tmp", "w") as f:
             json.dump(results, f, indent = 2)
+        os.replace(filename + ".tmp", filename)
 
     # Per-token KLD sidecar next to each results JSON (fp32, ~4 bytes/token): lets the
     # histogram outputs pair tokens across passes ((model KLD - floor KLD) per token) without

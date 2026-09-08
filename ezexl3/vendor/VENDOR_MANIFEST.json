@@ -60,7 +60,9 @@
   },
   "eval/qbench.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench.py",
-    "sha256": "4ffd23d59fdae82270d3ce6a662841e9d095e9c2f57bcba31090d47f6679631c"
+    "sha256": "4ffd23d59fdae82270d3ce6a662841e9d095e9c2f57bcba31090d47f6679631c",
+    "local_sha256": "5137112068ff6a25409f57f13204a24a256ad90a742c3dbb57abd02a87cc01f5",
+    "local_patch": "Reuse completed measurements without rebuilding evicted reference logits unless a pending comparison needs them; check reference row files, log cache hits, and commit per-token sidecars before result checkpoints."
   },
   "eval/qbench/__init__.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench/__init__.py",
@@ -68,7 +70,9 @@
   },
   "eval/qbench/data.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench/data.py",
-    "sha256": "b6c79d06e9a0f4977981d727b71772e2fe7a770412054d35c67411dd7001e0e8"
+    "sha256": "b6c79d06e9a0f4977981d727b71772e2fe7a770412054d35c67411dd7001e0e8",
+    "local_sha256": "b012202c837a7d4b18163ab722100e3864535a99455fc88fff466501eaf5a8b5",
+    "local_patch": "Exclude ezexl3 README bookkeeping metadata and non-files from model source stamps so publication does not invalidate BF16 and every quant; preserve upstream stamp format for cache compatibility. Write result checkpoints atomically."
   },
   "eval/qbench/engines.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/eval/qbench/engines.py",

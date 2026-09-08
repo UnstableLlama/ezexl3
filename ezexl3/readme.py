@@ -418,6 +418,7 @@ def run_readme(
             "qb_kld.png": "Mean KL divergence vs bits per weight",
             "qb_ppl.png": "Perplexity vs bits per weight",
             "qb_kld_hist.png": "Per-token KL divergence distribution",
+            "qb_kld_hist_combined.png": "Combined per-token KL divergence distributions and noise floor",
         }
         imgs = [
             f'<img class="repo-graph" src="{name}" alt="{alts[name]}">'

@@ -108,9 +108,9 @@ const COMMANDS = {
       // box would emit the bare flag.
       { name: "qb_rows", flag: "--rows", type: "number", default: "10", label: "Test Rows", help: "Number of test rows", toggleable: true, group: "qbench" },
       { name: "qb_length", flag: "--length", type: "number", default: "2048", label: "Row Length", help: "Tokens per row", toggleable: true, group: "qbench" },
-      { name: "qb_dataset", flag: "--dataset", type: "select", choices: ["wiki2", "openwebtext"], default: "wiki2", label: "Dataset", toggleable: true, group: "qbench" },
+      { name: "qb_dataset", flag: "--dataset", type: "select", choices: ["wiki2", "openwebtext"], default: "wiki2", label: "Dataset Override", help: "Off: generate or reuse a separate in-domain eval trace. On: evaluate this text dataset instead.", toggleable: true, group: "qbench" },
       { name: "qb_template", flag: "--template", type: "select", choices: ["none", "chat", "assistant"], default: "none", label: "Chat Template", help: "Apply the model's chat template to test rows", toggleable: true, group: "qbench" },
-      { name: "qb_trace", flag: "--trace", type: "text", label: "Test Trace", placeholder: "(optional) qbench_prompts.py JSON", help: "In-domain test trace; replaces dataset/rows/length", group: "qbench" },
+      { name: "qb_trace", flag: "--trace", type: "text", label: "Eval Trace Override", placeholder: "(optional) qbench_prompts.py JSON", help: "Use this existing eval trace; otherwise one is generated and cached automatically. Replaces dataset/rows/length.", group: "qbench" },
       { name: "qb_ref_engine", flag: "--ref-engine", type: "select", choices: ["exllamav3", "transformers"], default: "exllamav3", label: "Reference Engine", help: "Engine for the BF16 reference pass (transformers needs transformers+accelerate)", toggleable: true, group: "qbench" },
       { name: "qb_cache_gb", flag: "--cache-gb", type: "number", default: "50", label: "Logit Cache (GB)", help: "Cache size limit; oldest entries evicted", toggleable: true, group: "qbench" },
       { name: "qb_no_noise_floor", flag: "--no-noise-floor", type: "boolean", label: "Skip Noise Floor", help: "Faster, but disables histogram plots and the floor line", toggleable: true, group: "qbench" },
