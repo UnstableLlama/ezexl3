@@ -25,7 +25,7 @@ Requires a local installation of [exllamav3](https://github.com/turboderp-org/ex
 ```bash
 ezexl3 ui
 ```
-Launches a web dashboard on port 8801. Every CLI subcommand is a clickable form with live terminal output via SSE streaming. Real-time measurement table and SVG graph update as your quant runs. GPU auto-detection. Boolean arguments exposed as toggles. This is the easiest way to use ezexl3.
+Launches a web dashboard on port 8801. Every CLI subcommand is a clickable form with live terminal output via SSE streaming. The Results tab shows the live KL/PPL measurement table alongside qbench's own charts (KL and PPL vs bpw, the per-token KL histograms, the noise-floor comparison). GPU auto-detection. Boolean arguments exposed as toggles. This is the easiest way to use ezexl3.
 
 <p align="center">
   <img src="docs/ezUI1.png" width="65%" />

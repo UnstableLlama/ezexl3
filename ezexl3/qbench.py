@@ -54,6 +54,17 @@ _OUTPUT_FILES = {
 # also holds the (very large) logit cache.
 README_CHARTS = ["qb_kld.png", "qb_ppl.png", "qb_kld_hist.png", "qb_kld_hist_combined.png"]
 
+# The charts the UI's Results tab offers, in display order, with the short
+# label shown on the chart picker. These are qbench's own renders (see
+# vendor/eval/qbench/plot.py), not anything ezexl3 draws itself.
+UI_CHARTS = [
+    ("qb_kld.png", "KL vs bpw"),
+    ("qb_ppl.png", "PPL vs bpw"),
+    ("qb_kld_hist_combined.png", "KL histogram"),
+    ("qb_kld_hist.png", "KL \u2212 noise floor"),
+    ("qb_kld_spread.png", "KL spread"),
+]
+
 _TRACE_CANDIDATES = (
     "qbench/qbench_prompts_gen.json", "qbench_prompts_gen.json",
 )
@@ -358,6 +369,32 @@ def read_results(model_dir: str) -> Dict[str, dict]:
         if m:
             out[m.group(1)] = res
     return out
+
+
+def chart_path(model_dir: str, name: str) -> Optional[str]:
+    """Path of one of UI_CHARTS for *model_dir*, or None if it isn't rendered yet.
+
+    qbench writes into qbench/; publish_charts() copies a subset up to the
+    model root, which is all that survives if someone clears the qbench dir
+    (or downloads a published repo), so the root copy is the fallback.
+    """
+    if name not in {f for f, _ in UI_CHARTS}:
+        return None
+    for d in (default_qbench_dir(model_dir), os.path.abspath(model_dir)):
+        path = os.path.join(d, name)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def list_charts(model_dir: str) -> List[dict]:
+    """The UI_CHARTS that exist for *model_dir*: [{file, label, mtime}] in display order."""
+    items = []
+    for name, label in UI_CHARTS:
+        path = chart_path(model_dir, name)
+        if path:
+            items.append({"file": name, "label": label, "mtime": int(os.path.getmtime(path))})
+    return items
 
 
 def publish_charts(model_dir: str) -> List[str]:

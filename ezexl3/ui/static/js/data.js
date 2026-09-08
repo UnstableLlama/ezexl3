@@ -1,4 +1,4 @@
-// ── Results tab: live measurement table + SVG graph ──────────────
+// ── Results tab: live measurement table + qbench charts ──────────
 //
 // The KL/PPL table+graph is one of the views in the Results tab, picked
 // from the same "Eval:" dropdown as Performance and Catbench — KL and PPL
@@ -101,27 +101,60 @@ function renderTable(rows) {
 }
 
 
+// Which of qbench's charts the graph pane shows. The picker lists whatever
+// charts exist on disk for the model (see UI_CHARTS in ezexl3/qbench.py).
+let dataChartSelected = "qb_kld.png";
+let dataChartKey = "";  // last rendered (files + mtimes + selection) signature
+
 async function fetchGraph(modelDir) {
   const graphEl = document.getElementById("data-graph");
+  const tabsEl = document.getElementById("data-graph-tabs");
   const placeholder = document.getElementById("data-graph-placeholder");
 
   try {
-    const res = await fetch(`/api/graph?model_dir=${encodeURIComponent(modelDir)}`);
-    if (!res.ok) {
-      // Transient: while a run is in progress the server 404s until 2+
-      // BPWs are measured. Keep the last drawn chart visible.
+    const res = await fetch(`/api/qbench-chart?model_dir=${encodeURIComponent(modelDir)}`);
+    const json = res.ok ? await res.json() : {};
+    const items = json.items || [];
+    if (!items.length) {
+      // Nothing rendered yet: qbench only writes its charts once a run
+      // finishes. Keep the last drawn chart visible mid-run.
       if (hasRenderedDataGraph) return;
       graphEl.innerHTML = "";
+      tabsEl.innerHTML = "";
       placeholder.style.display = "";
       return;
     }
-    const svg = await res.text();
+
+    if (!items.some(it => it.file === dataChartSelected)) {
+      dataChartSelected = items[0].file;
+    }
+    // Skip the re-render (and the image re-fetch) unless a chart file
+    // changed or the user picked a different chart.
+    const key = items.map(it => `${it.file}:${it.mtime}`).join("|") + "#" + dataChartSelected;
+    if (key === dataChartKey) return;
+    dataChartKey = key;
+
+    tabsEl.innerHTML = items.map(it =>
+      `<button type="button" class="data-chart-tab${it.file === dataChartSelected ? " active" : ""}"`
+      + ` data-file="${esc(it.file)}">${esc(it.label)}</button>`
+    ).join("");
+    tabsEl.querySelectorAll("button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        dataChartSelected = btn.dataset.file;
+        fetchGraph(getModelDir());
+      });
+    });
+
+    const cur = items.find(it => it.file === dataChartSelected);
+    const src = `/api/qbench-chart?model_dir=${encodeURIComponent(modelDir)}`
+      + `&file=${encodeURIComponent(cur.file)}&v=${cur.mtime}`;
     placeholder.style.display = "none";
-    graphEl.innerHTML = svg;
+    graphEl.innerHTML = `<img src="${src}" alt="${esc(cur.label)}">`;
     hasRenderedDataGraph = true;
   } catch (e) {
     if (hasRenderedDataGraph) return;
     graphEl.innerHTML = "";
+    tabsEl.innerHTML = "";
     placeholder.style.display = "";
   }
 }
@@ -133,9 +166,11 @@ function showDataEmpty(msg) {
   document.getElementById("data-empty").style.display = "";
   document.getElementById("data-table").style.display = "none";
   document.getElementById("data-graph").innerHTML = "";
+  document.getElementById("data-graph-tabs").innerHTML = "";
   document.getElementById("data-graph-placeholder").style.display = "";
   hasRenderedDataTable = false;
   hasRenderedDataGraph = false;
+  dataChartKey = "";
 }
 
 

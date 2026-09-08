@@ -558,46 +558,38 @@ async def handle_perf_data(request: web.Request) -> web.Response:
         return web.json_response({"bpws": [], "data": {}, "error": str(e)})
 
 
-async def handle_graph(request: web.Request) -> web.Response:
-    """Generate SVG graph from current DB state and return it."""
+async def handle_qbench_chart(request: web.Request) -> web.Response:
+    """Serve qbench's rendered charts for a model dir.
+
+    Two modes (distinguished by ``file`` query param):
+
+    * ``?model_dir=X``             → JSON listing of the charts that exist
+    * ``?model_dir=X&file=Y.png``  → serve that chart inline
+
+    ``file`` must be one of ``ezexl3.qbench.UI_CHARTS``; nothing else under
+    the model dir is reachable through this route.
+    """
     model_dir = request.query.get("model_dir", "").strip()
+    fname = request.query.get("file", "").strip()
     if not model_dir:
         return web.json_response({"error": "No model_dir"}, status=400)
 
-    db_path = _resolve_db_path(model_dir)
-    if not db_path:
-        return web.json_response({"error": "No measurement data yet"}, status=404)
+    from ezexl3.qbench import chart_path, list_charts
 
-    try:
-        from ezexl3.measure_db import export_csv, read_all_rows
+    if not fname:
+        try:
+            items = await asyncio.to_thread(list_charts, model_dir)
+            return web.json_response({"items": items})
+        except Exception as e:
+            return web.json_response({"items": [], "error": str(e)}, status=500)
 
-        # Need at least 2 numeric rows to draw
-        rows = await asyncio.to_thread(read_all_rows, db_path)
-        numeric = [r for r in rows.values()
-                   if r.get("KL Div") and r.get("PPL") and r.get("GiB")]
-        if len(numeric) < 2:
-            return web.json_response({"error": "Need at least 2 completed measurements"}, status=404)
-
-        # Export to temp CSV, generate SVG, return inline
-        model_name = _resolve_model_name(model_dir)
-        with tempfile.TemporaryDirectory() as tmp:
-            csv_path = os.path.join(tmp, "data.csv")
-            svg_path = os.path.join(tmp, "graph.svg")
-            await asyncio.to_thread(export_csv, db_path, csv_path)
-
-            from ezexl3.graph_svg import generate_iceblink_svg
-            await asyncio.to_thread(
-                generate_iceblink_svg, csv_path, svg_path, model_name,
-            )
-
-            svg_content = Path(svg_path).read_text(encoding="utf-8")
-        return web.Response(
-            text=svg_content,
-            content_type="image/svg+xml",
-            headers={"Cache-Control": "no-cache"},
-        )
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=500)
+    path = await asyncio.to_thread(chart_path, model_dir, fname)
+    if not path:
+        return web.json_response({"error": "Not found"}, status=404)
+    return web.FileResponse(
+        path,
+        headers={"Content-Type": "image/png", "Cache-Control": "no-cache"},
+    )
 
 
 def _bpw_key(label: str) -> float:
@@ -929,7 +921,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/perf-data", handle_perf_data)
     app.router.add_get("/api/perf-graph", handle_perf_graph)
     app.router.add_get("/api/catbench-file", handle_catbench_file)
-    app.router.add_get("/api/graph", handle_graph)
+    app.router.add_get("/api/qbench-chart", handle_qbench_chart)
     app.router.add_get("/api/metadata", handle_metadata_get)
     app.router.add_post("/api/metadata", handle_metadata_set)
     app.router.add_post("/api/chat/launch", handle_chat_launch)
