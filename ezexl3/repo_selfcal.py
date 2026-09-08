@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import sys
 from typing import Callable, List, Optional, Tuple
@@ -22,6 +23,7 @@ _VENDOR_DIR = os.path.join(os.path.dirname(__file__), "vendor")
 _SC_TRACE_SCRIPT = os.path.join(_VENDOR_DIR, "sc_trace.py")
 _SC_RFN_PROBE_SCRIPT = os.path.join(_VENDOR_DIR, "sc_rfn_probe.py")
 _SC_MEASURE_SCRIPT = os.path.join(_VENDOR_DIR, "sc_measure.py")
+_SC_MEASURE_PARALLEL_SCRIPT = os.path.join(os.path.dirname(__file__), "sc_measure_parallel.py")
 _SC_OPTIMIZE_SCRIPT = os.path.join(_VENDOR_DIR, "sc_optimize.py")
 
 # The trace should come from a minimally-distorted model; upstream recommends
@@ -122,6 +124,7 @@ def _run_script(
         log_f = open(log_path, "a")
         log_f.write(f"$ {' '.join(cmd)}\n")
         log_f.flush()
+    proc = None
     try:
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env
@@ -144,6 +147,20 @@ def _run_script(
         if rc != 0:
             raise RuntimeError(f"Command failed with exit code {rc}: {' '.join(cmd)}")
     finally:
+        if proc is not None and proc.poll() is None:
+            # SIGINT first: KeyboardInterrupt unwinds the child's finally
+            # blocks, which is what releases PyTorch's extension build lock
+            # (a SIGTERM'd Python process skips them and leaves it behind).
+            proc.send_signal(signal.SIGINT)
+            try:
+                proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
         if log_f:
             log_f.close()
 
@@ -263,12 +280,16 @@ def run_selfcal_stage(
             "-m", model_dir,
             "-d", "0",
             "--shaped",
+            "--load-mode", "auto",
             "-tr", paths["trace_st"],
             "-rs", "1.0,0.5",
             "-o", paths["attrib"],
         ]
         if rfn_path:
             cmd += ["-rr", rfn_path]
+        if len(devices) > 1 or os.path.isdir(paths["attrib"] + ".workers"):
+            cmd[1] = _SC_MEASURE_PARALLEL_SCRIPT
+            cmd += ["--devices", ",".join(str(i) for i in range(len(devices)))]
         run_script_fn(cmd, env_extra=device_env, log_path=_log("selfcal_measure.log"))
         with open(paths["attrib_done"], "w") as f:
             f.write("ok\n")

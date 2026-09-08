@@ -83,7 +83,7 @@ class SelfcalDiscoveryTests(unittest.TestCase):
 
 
 class SelfcalStageTests(unittest.TestCase):
-    def _run(self, model_dir, sc_bpws, head_bits=None, run_script_fn=None):
+    def _run(self, model_dir, sc_bpws, head_bits=None, run_script_fn=None, devices=None):
         script_calls = []
         quant_calls = []
 
@@ -99,7 +99,7 @@ class SelfcalStageTests(unittest.TestCase):
         repo_selfcal.run_selfcal_stage(
             model_dir=model_dir,
             sc_bpws=sc_bpws,
-            devices=[0, 1],
+            devices=[0, 1] if devices is None else devices,
             forwarded_for_bpw=lambda b: ["-d", "0,1"],
             head_bits=head_bits,
             write_logs=False,
@@ -118,7 +118,7 @@ class SelfcalStageTests(unittest.TestCase):
         scripts = [os.path.basename(c["cmd"][1]) for c in script_calls]
         self.assertEqual(
             scripts,
-            ["sc_trace.py", "sc_rfn_probe.py", "sc_measure.py", "sc_optimize.py"],
+            ["sc_trace.py", "sc_rfn_probe.py", "sc_measure_parallel.py", "sc_optimize.py"],
         )
 
         trace = script_calls[0]
@@ -131,6 +131,7 @@ class SelfcalStageTests(unittest.TestCase):
         measure = script_calls[2]
         self.assertIn("--shaped", measure["cmd"])
         self.assertIn("-rr", measure["cmd"])
+        self.assertEqual(measure["cmd"][measure["cmd"].index("--devices") + 1], "0,1")
 
         optimize = script_calls[3]
         self.assertIn("-b", optimize["cmd"])
@@ -157,6 +158,7 @@ class SelfcalStageTests(unittest.TestCase):
         self.assertNotIn("sc_rfn_probe.py", scripts)
         measure = next(c for c in script_calls if "sc_measure" in c["cmd"][1])
         self.assertNotIn("-rr", measure["cmd"])
+        self.assertEqual(measure["cmd"][measure["cmd"].index("--load-mode") + 1], "auto")
 
     def test_completed_stages_are_skipped_on_resume(self):
         with tempfile.TemporaryDirectory() as model_dir:
@@ -173,6 +175,60 @@ class SelfcalStageTests(unittest.TestCase):
 
         self.assertEqual(script_calls, [])
         self.assertEqual(quant_calls, [])
+
+    def test_arbitrary_device_list_uses_logical_indices(self):
+        with tempfile.TemporaryDirectory() as model_dir:
+            calls, _ = self._run(model_dir, ["3"], devices=[2, 4, 6, 7])
+        measure = next(c for c in calls if "sc_measure" in c["cmd"][1])
+        self.assertEqual(measure["env"]["CUDA_VISIBLE_DEVICES"], "2,4,6,7")
+        self.assertEqual(measure["cmd"][measure["cmd"].index("--devices") + 1], "0,1,2,3")
+
+    def test_single_gpu_uses_original_worker_unless_recovering_shards(self):
+        with tempfile.TemporaryDirectory() as model_dir:
+            calls, _ = self._run(model_dir, ["3"], devices=[4])
+            measure = next(c for c in calls if "sc_measure" in c["cmd"][1])
+            self.assertEqual(os.path.basename(measure["cmd"][1]), "sc_measure.py")
+            paths = repo_selfcal._selfcal_paths(model_dir)
+            os.remove(paths["attrib_done"])
+            os.makedirs(paths["attrib"] + ".workers")
+            calls, _ = self._run(model_dir, ["3"], devices=[4])
+            measure = next(c for c in calls if "sc_measure" in c["cmd"][1])
+            self.assertEqual(os.path.basename(measure["cmd"][1]), "sc_measure_parallel.py")
+            self.assertEqual(measure["cmd"][measure["cmd"].index("--devices") + 1], "0")
+
+    def test_worker_failure_does_not_mark_stage_complete(self):
+        def fail(cmd):
+            if "sc_measure" in cmd[1]:
+                raise RuntimeError("worker failed")
+
+        with tempfile.TemporaryDirectory() as model_dir:
+            with self.assertRaisesRegex(RuntimeError, "worker failed"):
+                self._run(model_dir, ["3"], run_script_fn=fail)
+            paths = repo_selfcal._selfcal_paths(model_dir)
+            self.assertFalse(os.path.exists(paths["attrib_done"]))
+
+    def test_cancelled_script_interrupts_coordinator_before_terminating(self):
+        import signal
+        import subprocess
+        proc = MagicMock()
+        proc.stdout.read1.side_effect = KeyboardInterrupt
+        proc.poll.return_value = None
+        with patch.object(repo_selfcal.subprocess, "Popen", return_value=proc):
+            with self.assertRaises(KeyboardInterrupt):
+                repo_selfcal._run_script(["python", "sc_measure_parallel.py"])
+        # SIGINT lets the worker's finally blocks release torch's build lock.
+        proc.send_signal.assert_called_once_with(signal.SIGINT)
+        proc.wait.assert_called_once_with(timeout=15)
+        proc.terminate.assert_not_called()
+
+        proc.reset_mock()
+        proc.wait.side_effect = [subprocess.TimeoutExpired("cmd", 15), subprocess.TimeoutExpired("cmd", 5), 0]
+        with patch.object(repo_selfcal.subprocess, "Popen", return_value=proc):
+            with self.assertRaises(KeyboardInterrupt):
+                repo_selfcal._run_script(["python", "sc_measure_parallel.py"])
+        proc.send_signal.assert_called_once_with(signal.SIGINT)
+        proc.terminate.assert_called_once()
+        proc.kill.assert_called_once()
 
     def test_unsupported_exllamav3_raises(self):
         with tempfile.TemporaryDirectory() as model_dir:

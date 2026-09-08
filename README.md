@@ -148,8 +148,30 @@ BPWs painted with `-sc` are built through exllamav3's experimental optimization 
 5. each BPW is converted with the recipe (`-rcp`) and the self-sampled calibration data (`-cd`).
 
 Every stage writes plain files under `<model>/selfcal/` and is skipped on re-runs when its
-output already exists, so interrupted pipelines resume. Sensitivity measurement holds the
-unquantized model plus per-layer Hessians on one GPU, so it needs the most VRAM of any stage.
+output already exists, so interrupted pipelines resume. Sensitivity measurement checks free
+VRAM against a conservative estimate of model weights, cached states, and Hessian/noise
+workspace. It loads the full model when there is room; otherwise it streams one unquantized
+module at a time, caching layer inputs, reference logits, and shaping factors in system RAM.
+The largest module plus workspace must still fit in VRAM. Each perturbation replays the
+remaining modules, so streaming adds weight-loading overhead. The estimate is a heuristic;
+an OOM during automatic full-model loading also triggers streaming, but an OOM later during
+measurement still stops the run. Standalone `sc_measure.py` accepts `--load-mode
+auto|resident|streaming`, or `--streaming` / `--no-streaming` to force either mode.
+MoE sensitivity measurement remains unvalidated.
+
+With multiple GPUs selected by `-d`, sensitivity measurement runs one independent worker
+per selected GPU (any GPU count). Modules are assigned by estimated suffix-replay cost,
+keeping each module's Hessian capture together; each worker independently selects resident
+or streaming mode using its GPU's free VRAM. A coordinator atomically merges completed
+tensors into `selfcal/noise_attrib.json`. Worker checkpoints in
+`selfcal/noise_attrib.json.workers/` survive interruption and are reused even if the next
+run selects a different number of GPUs, including switching back to one GPU.
+
+Workers each keep their own reference logits and activation caches, so system RAM use
+grows with worker count. Disk bandwidth, CPU work, and unequal GPU speeds can limit
+scaling; this does not pool GPU memory or guarantee an N-fold speedup. Select fewer GPUs
+with `-d` when RAM or storage bandwidth is the bottleneck. An already-running measurement
+continues with its original worker count; stop and rerun to use a new selection.
 
 ```bash
 # 2.5 and 3.14 bpw self-calibrated, 4 and 6 bpw standard, 4-bit head everywhere

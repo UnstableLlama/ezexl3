@@ -9,11 +9,13 @@ import json
 import math
 import zlib
 from collections import defaultdict
+from contextlib import contextmanager
 import torch
 
 from exllamav3 import Config, Model, Tokenizer
 from exllamav3.util.file import disk_lru_cache
 from exllamav3.util.measures import compute_kl_div
+from exllamav3.util.tensor import g_tensor_cache
 from exllamav3.modules.linear import Linear
 from exllamav3.modules.quant.fp16 import LinearFP16
 from exllamav3.modules.quant.exl3_lib.quantize import finalize_capture_H, get_hadamard_dt, had_k
@@ -51,12 +53,125 @@ the quadratic law.
 Output JSON feeds sc_optimize.py, which turns the sensitivities into a per-tensor bitrate
 recipe. Results are written incrementally and the script resumes from a partial output file.
 
-NOTE: Currently the script requires the ability to load the full model under measurement on a 
-      single GPU. Not validate don MoE models.
+With --streaming, weights are loaded one top-level module at a time and cached states
+and shaping factors live in system RAM. The largest module plus Hessian/noise workspace
+must still fit on the device. Streaming trades repeated weight reads for lower VRAM use.
+Not validated on MoE models.
 """
 
-# TODO: Add layer-streaming option
 # TODO: Validate on MoE models
+
+
+class ModuleRunner:
+    """Run all rows through one module before releasing its weights.
+
+    CPU copies must own their storage: modules may mutate their input in place,
+    including when prefer_cpu keeps the entire operation on the host.
+    """
+
+    def __init__(self, config, modules, device, streaming):
+        self.config = config
+        self.modules = modules
+        self.device = device
+        self.streaming = streaming
+
+    @contextmanager
+    def loaded(self, idx):
+        mod = self.modules[idx]
+        try:
+            if self.streaming:
+                defer = mod.can_defer_load()
+                if defer:
+                    self.config.stc.begin_deferred_load()
+                try:
+                    mod.load("cpu" if mod.caps.get("prefer_cpu") else self.device)
+                    if defer:
+                        self.config.stc.end_deferred_load()
+                except BaseException:
+                    if defer:
+                        self.config.stc.abort_deferred_load()
+                    raise
+            yield mod
+        finally:
+            if self.streaming:
+                mod.unload()
+                g_tensor_cache.drop_all()
+
+    def rows(self, mod, states, capture=None, consume=None):
+        outputs = []
+        for r, state in enumerate(states):
+            params = {} if capture is None else {"capture": capture}
+            x = mod.prepare_for_device(state.clone(), params)
+            x = mod.forward(x, params)
+            if consume is None:
+                outputs.append(x.to("cpu", copy=True))
+            else:
+                consume(r, x)
+            del x, params
+        return outputs
+
+
+def estimate_resident_bytes(modules, rows, length, vocab_size, shaped, h_rows, stc):
+    """Conservative preflight, not an allocator guarantee; no weights are loaded.
+
+    Include FP16 weights, GPU boundary/capture states, one row of logits, a saved
+    target weight, per-module Hessians/LDL workspace, and allocator/kernel headroom.
+    Shared qmaps need only one Hessian. Count CPU-preferred weights too for margin.
+    Use checkpoint headers: norms/convolutions may return None from weights_numel()
+    until loaded, which also breaks recursive counts on their parent modules.
+    """
+    def walk(mod):
+        yield mod
+        for child in getattr(mod, "modules", []):
+            yield from walk(child)
+
+    weights = 0
+    for key, filename in stc.tensor_file_map.items():
+        tensor = stc.file_headers[filename][key]
+        start, end = tensor["data_offsets"]
+        # FP8 checkpoints expand to FP16; retain the larger size for FP32 and
+        # auxiliary tensors. Counting unused components is conservative.
+        weights += max(2 * math.prod(tensor["shape"]), end - start)
+    linear_weights = 0
+    width = 0
+    largest_weight = 0
+    hessian_peak = 0
+    for mod in modules:
+        qmaps = {}
+        for lin in walk(mod):
+            if isinstance(lin, Linear):
+                weight_bytes = 2 * lin.in_features * lin.out_features
+                linear_weights += weight_bytes
+                width = max(width, lin.in_features)
+                largest_weight = max(largest_weight, weight_bytes)
+                if lin.qmap is not None:
+                    qmaps[lin.qmap] = max(qmaps.get(lin.qmap, 0), lin.in_features)
+        if qmaps:
+            hessian_peak = max(hessian_peak,
+                               4 * sum(k * k for k in qmaps.values())
+                               + 16 * max(qmaps.values()) ** 2)
+    weights = max(weights, linear_weights)  # account for padded/repeated linear modules
+    states = 2 * length * width * (rows * (len(modules) + 2) + (h_rows if shaped else 0))
+    logits = 2 * length * vocab_size + 16 * min(length, 256) * vocab_size
+    workspace = largest_weight + (hessian_peak if shaped else 0) + 3 * 1024 ** 3
+    return math.ceil(1.15 * (weights + states + logits + workspace))
+
+
+def assign_measurement_modules(targets_by_idx, num_mods, worker_count):
+    """Keep a module's Hessian work together; balance expensive early suffix replays.
+
+    Assign from the full target list, not the unfinished list, so every worker
+    agrees even when it reads a slightly newer resume checkpoint at startup.
+    """
+    costs = {idx: len(targets) * (num_mods - idx)
+             for idx, targets in targets_by_idx.items() if targets}
+    loads = [0] * worker_count
+    owners = {}
+    for idx in sorted(costs, key=lambda i: (-costs[i], i)):
+        owner = min(range(worker_count), key=lambda w: (loads[w], w))
+        owners[idx] = owner
+        loads[owner] += costs[idx]
+    return owners
 
 @disk_lru_cache("get_dataset_text")
 def get_dataset_text(spec: dict):
@@ -82,6 +197,8 @@ def get_test_tokens(tokenizer, rows, eval_len):
 
 @torch.inference_mode()
 def main(args):
+    if args.worker_count < 1 or not 0 <= args.worker_index < args.worker_count:
+        raise ValueError("worker-index must be in [0, worker-count)")
     device = torch.device("cuda", args.device)
     torch.manual_seed(0)
 
@@ -91,8 +208,32 @@ def main(args):
     vocab_size = tokenizer.actual_vocab_size
 
     model = Model.from_config(config)
-    print(f" -- Loading model: {args.model}")
-    model.load(device = device)
+    mode = args.load_mode
+    streaming = mode == "streaming"
+    if mode == "auto":
+        required = estimate_resident_bytes(model.modules, args.rows, args.length,
+                                           vocab_size, args.shaped, args.h_rows, config.stc)
+        free, _ = torch.cuda.mem_get_info(device)
+        streaming = required > free
+        print(f" -- VRAM preflight: {free / 1024 ** 3:.1f} GiB free, "
+              f"{required / 1024 ** 3:.1f} GiB estimated for resident measurement")
+    print(f" -- {'Streaming' if streaming else 'Loading'} model: {args.model}")
+    if not streaming:
+        try:
+            model.load(device = device)
+        except torch.cuda.OutOfMemoryError:
+            if mode != "auto":
+                raise
+            config.stc.abort_deferred_load()
+            model.unload()
+            g_tensor_cache.drop_all()
+            # Leave the exception handler before retrying so its traceback cannot
+            # retain temporary weight buffers from the failed full-model load.
+            streaming = True
+        if streaming:
+            torch.cuda.empty_cache()
+            print(" -- Full-model load exceeded VRAM; switching to layer streaming")
+    runner = ModuleRunner(config, model.modules, device, streaming)
 
     total_rows = args.rows + (args.h_rows if args.shaped else 0)
     if args.trace:
@@ -113,12 +254,36 @@ def main(args):
     mods = model.modules
     num_mods = len(mods)
 
+    def row_kld(r, x):
+        ref = ref_logits[r]
+        kl_vocab = min(vocab_size, x.shape[-1], ref.shape[-1])
+        x2 = x.reshape(-1, x.shape[-1])
+        ref2 = ref.reshape(-1, ref.shape[-1])
+        kl_row = 0.0
+        for a in range(0, x2.shape[0], 256):
+            b = min(a + 256, x2.shape[0])
+            kl_row += compute_kl_div(x2[a:b].float(), ref2[a:b].to(x.device), kl_vocab).sum().item()
+        return kl_row / x2.shape[0]
+
     @torch.inference_mode()
     def forward_rows(start_idx, states, collect_states = False):
         """
         Forward every row from module start_idx to the end, streaming the KL vs the reference
         per row. Returns (mean kld, per-row hidden state after module start_idx if requested).
         """
+        if streaming:
+            scores = []
+            out_states = []
+            for i in range(start_idx, num_mods):
+                with runner.loaded(i) as mod:
+                    states = runner.rows(
+                        mod, states,
+                        consume=(lambda r, x: scores.append(row_kld(r, x)))
+                        if i == num_mods - 1 else None,
+                    )
+                if collect_states and i == start_idx:
+                    out_states = states
+            return sum(scores) / len(scores), out_states
         kld_sum = 0.0
         out_states = []
         for r, state in enumerate(states):
@@ -149,6 +314,17 @@ def main(args):
         """Full reference pass, caching the input state to every module and the final logits"""
         boundary = [[] for _ in range(num_mods)]
         logits = []
+        if streaming:
+            states = rows
+            for i in range(num_mods):
+                boundary[i] = states
+                with runner.loaded(i) as mod:
+                    states = runner.rows(
+                        mod, states,
+                        consume=(lambda r, x: logits.append(x.half().to("cpu", copy=True)))
+                        if i == num_mods - 1 else None,
+                    )
+            return boundary, logits
         for ids_row in rows:
             params = {}
             x = ids_row
@@ -161,9 +337,6 @@ def main(args):
                 x = mod.forward(x, params)
             logits.append(x.half().cpu())
         return boundary, logits
-
-    print(" -- Reference pass")
-    boundary, ref_logits = ref_pass()
 
     # Collect perturbation targets: every quantizable Linear, grouped by top-level module
     def walk(mod, out):
@@ -178,10 +351,20 @@ def main(args):
         walk(mods[i], tree)
         for t in tree:
             if isinstance(t, Linear) and t.qmap is not None:
-                assert isinstance(t.inner, LinearFP16), \
-                    f"{t.key}: expected unquantized (fp16) tensor, got {type(t.inner).__name__}"
+                if not streaming:
+                    assert isinstance(t.inner, LinearFP16), \
+                        f"{t.key}: expected unquantized (fp16) tensor, got {type(t.inner).__name__}"
                 targets_by_idx[i].append(t)
                 num_targets += 1
+
+    if args.worker_count > 1:
+        owners = assign_measurement_modules(targets_by_idx, num_mods, args.worker_count)
+        targets_by_idx = {idx: targets for idx, targets in targets_by_idx.items()
+                          if owners[idx] == args.worker_index}
+        num_targets = sum(len(targets) for targets in targets_by_idx.values())
+        print(f" -- Worker {args.worker_index + 1}/{args.worker_count}: "
+              f"{num_targets} tensors in {len(targets_by_idx)} modules")
+    expected_keys = {lin.key for targets in targets_by_idx.values() for lin in targets}
 
     # Per-target noise levels
     if args.rfn_ref:
@@ -201,19 +384,20 @@ def main(args):
     # Resume from partial output
     results = []
     done = set()
-    if args.out and os.path.exists(args.out):
-        with open(args.out, "r") as f:
+    resume_path = args.resume_from or args.out
+    if resume_path and os.path.exists(resume_path):
+        with open(resume_path, "r") as f:
             prev = json.load(f)
-        results = prev["results"]
+        results = [r for r in prev["results"] if r["key"] in expected_keys]
         done = {r["key"] for r in results}
         print(f" -- Resuming: {len(done)} tensors already measured")
 
-    def save():
+    def save(complete=False):
         if not args.out:
             return
         tmp = args.out + ".tmp"
         with open(tmp, "w") as f:
-            json.dump(dict(
+            output = dict(
                 model = args.model,
                 rows = args.rows,
                 length = args.length,
@@ -225,8 +409,23 @@ def main(args):
                 rfn_scale = args.rfn_scale if args.rfn_ref else None,
                 rfn = None if args.rfn_ref else args.rfn,
                 results = results,
-            ), f, indent = 2)
+            )
+            if args.resume_from or args.worker_count > 1:
+                output["worker"] = dict(index=args.worker_index, count=args.worker_count,
+                                        expected_keys=sorted(expected_keys), complete=complete)
+            json.dump(output, f, indent = 2)
         os.replace(tmp, args.out)
+
+    if expected_keys <= done:
+        save(complete=True)
+        model.unload()
+        config.stc.close()
+        print(" -- All assigned tensors already measured")
+        return
+
+    save()
+    print(" -- Reference pass")
+    boundary, ref_logits = ref_pass()
 
     @torch.inference_mode()
     def perturb_iid(lin, rfn, seed):
@@ -320,6 +519,13 @@ def main(args):
         """Advance the capture rows through module top_idx, accumulating H per qmap if capture
         is a dict (shared across rows)"""
         nonlocal cap_states
+        if streaming:
+            with runner.loaded(top_idx) as mod:
+                cap_states = runner.rows(
+                    mod, cap_states, capture=capture,
+                    consume=(lambda r, x: None) if top_idx == num_mods - 1 else None,
+                )
+            return
         new_states = []
         for st in cap_states:
             params = {} if capture is None else {"capture": capture}
@@ -339,6 +545,8 @@ def main(args):
     quant_args = {"sigma_reg": 0.025}
 
     for top_idx in range(num_mods):
+        if top_idx > max(targets_by_idx, default=-1):
+            break
         tlist = targets_by_idx.get(top_idx, [])
         todo = [lin for lin in tlist if lin.key not in done]
 
@@ -349,14 +557,15 @@ def main(args):
             advance_capture(top_idx, capture)
             if todo:
                 torch.manual_seed(zlib.crc32(f"su|{top_idx}".encode()) & 0x7fffffff)
-                for qmap, h_data in capture.items():
+                for qmap in list(capture):
+                    h_data = capture.pop(qmap)
                     q_fallback, H, L, su, H_diag = finalize_capture_H(h_data, quant_args, False)
                     if q_fallback or L is None:
                         print(f" !! q_fallback for {qmap}, using iid noise")
                         shaping[qmap] = None
                     else:
-                        shaping[qmap] = (L, su)
-                    del H, H_diag
+                        shaping[qmap] = (L.cpu(), su.cpu()) if streaming else (L, su)
+                    del H, H_diag, L, su, h_data
                 del capture
 
         if not todo:
@@ -382,16 +591,43 @@ def main(args):
             for li, rfn in enumerate(levels[lin.key]):
                 for draw in range(args.draws):
                     seed = zlib.crc32(f"{lin.key}|{li}|{draw}".encode()) & 0x7fffffff
-                    if shape_lin is not None:
+                    if streaming:
+                        # Restore before unloading: Linear.unload() discards inner entirely.
+                        # Only the perturbed module's outputs are needed for suffix replay.
+                        scores = []
+                        collect = top_idx + 1 < num_mods
+                        with runner.loaded(top_idx) as mod:
+                            assert isinstance(lin.inner, LinearFP16), \
+                                f"{lin.key}: expected unquantized (fp16) tensor, got {type(lin.inner).__name__}"
+                            if shape_lin is not None:
+                                factors = tuple(t.to(lin.inner.weight.device) for t in shape_lin)
+                                saved, rfn_actual, w_norm = perturb_shaped(lin, rfn, seed, *factors)
+                                del factors
+                            else:
+                                saved, rfn_actual, w_norm = perturb_iid(lin, rfn, seed)
+                            try:
+                                states = runner.rows(
+                                    mod, boundary[top_idx],
+                                    consume=None if collect else lambda r, x: scores.append(row_kld(r, x)),
+                                )
+                            finally:
+                                lin.inner.weight.copy_(saved)
+                                del saved
+                        if collect:
+                            kld, _ = forward_rows(top_idx + 1, states)
+                        else:
+                            kld = sum(scores) / len(scores)
+                    elif shape_lin is not None:
                         saved, rfn_actual, w_norm = perturb_shaped(lin, rfn, seed, *shape_lin)
                     else:
                         saved, rfn_actual, w_norm = perturb_iid(lin, rfn, seed)
-                    try:
-                        collect = top_idx + 1 < num_mods
-                        kld, states = forward_rows(top_idx, boundary[top_idx], collect_states = collect)
-                    finally:
-                        lin.inner.weight.copy_(saved)
-                        del saved
+                    if not streaming:
+                        try:
+                            collect = top_idx + 1 < num_mods
+                            kld, states = forward_rows(top_idx, boundary[top_idx], collect_states = collect)
+                        finally:
+                            lin.inner.weight.copy_(saved)
+                            del saved
 
                     # Injected error at the top-level module output, relative to the clean state
                     inj_sq, ref_sq = 0.0, 0.0
@@ -411,7 +647,8 @@ def main(args):
                         inj_rfn = inj_rfn,
                     ))
                     res["w_norm"] = w_norm
-                    print(f"    {lin.key:60} rfn {rfn_actual:.5f}   kld {kld:11.8f}   inj_rfn {inj_rfn:.6f}")
+                    label = f"[worker {args.worker_index + 1}/{args.worker_count}] " if args.worker_count > 1 else ""
+                    print(f"    {label}{lin.key:60} rfn {rfn_actual:.5f}   kld {kld:11.8f}   inj_rfn {inj_rfn:.6f}")
 
             results.append(res)
             save()
@@ -419,6 +656,7 @@ def main(args):
         for v in shaping.values():
             del v
         shaping.clear()
+        shape_lin = None
         torch.cuda.empty_cache()
 
     # Summary
@@ -457,9 +695,11 @@ def main(args):
             print(f"\n -- Scaling exponent (kld ~ rfn^a): "
                   f"min {alphas[0]:.2f}  median {alphas[len(alphas) // 2]:.2f}  max {alphas[-1]:.2f}")
 
-    save()
+    save(complete=True)
     if args.out:
         print(f"\n -- Saved: {args.out}")
+    model.unload()
+    config.stc.close()
 
 
 if __name__ == "__main__":
@@ -468,6 +708,13 @@ if __name__ == "__main__":
     parser.add_argument("-r", "--rows", type = int, default = 10, help = "Number of eval rows, default: 10")
     parser.add_argument("-l", "--length", type = int, default = 1024, help = "Tokens per row, default: 1024")
     parser.add_argument("-d", "--device", type = int, default = 0, help = "CUDA device index")
+    loading = parser.add_mutually_exclusive_group()
+    loading.add_argument("--load-mode", choices = ("auto", "resident", "streaming"),
+                         default = "auto", help = "auto (default): check free VRAM before choosing full-model loading or streaming")
+    loading.add_argument("--streaming", dest = "load_mode", action = "store_const", const = "streaming",
+                         help = "Force one-module-at-a-time loading with states and shaping factors in system RAM")
+    loading.add_argument("--no-streaming", dest = "load_mode", action = "store_const", const = "resident",
+                         help = "Force full-model loading, bypassing the VRAM preflight")
     parser.add_argument("-tr", "--trace", type = str, default = None, help = "Packed self-sampled trace (safetensors from sc_trace.py) to use as eval")
     parser.add_argument("-sh", "--shaped", action = "store_true", help = "LDLQ-shaped noise from captured Hessians (recommended; extra capture pass)")
     parser.add_argument("-hr", "--h_rows", type = int, default = 64, help = "Calibration rows for Hessian capture in shaped mode, default: 64")
@@ -477,4 +724,7 @@ if __name__ == "__main__":
     parser.add_argument("-dr", "--draws", type = int, default = 1, help = "Noise draws per level, default: 1")
     parser.add_argument("-t", "--top", type = int, default = 15, help = "Top contributors to print")
     parser.add_argument("-o", "--out", type = str, default = None, help = "Output file (JSON), resumes if present")
+    parser.add_argument("--worker-index", type=int, default=0, help=argparse.SUPPRESS)
+    parser.add_argument("--worker-count", type=int, default=1, help=argparse.SUPPRESS)
+    parser.add_argument("--resume-from", type=str, default=None, help=argparse.SUPPRESS)
     main(parser.parse_args())
