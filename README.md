@@ -118,7 +118,7 @@ Use **SC Trace Generation Model** in the dashboard or `-scd` / `--sc-donor` on t
 
 Stages save their work under `<model>/selfcal/`. Sensitivity measurement loads the full model when memory permits or streams one module at a time, keeping activation caches and reference logits in system RAM. With multiple GPUs, independent workers share the measurement work and merge their checkpoints. Completed worker results can be reused after changing GPU count.
 
-Self-calibration remains experimental, and MoE sensitivity measurement remains unvalidated. Streaming still requires the largest module and workspace to fit in VRAM. It adds weight-loading overhead, and each additional worker needs its own RAM caches; multiple GPUs do not pool memory or guarantee linear speedups. Automatic loading can fall back to streaming after an initial OOM, but an OOM later in measurement stops the run.
+Self-calibration remains experimental, and MoE sensitivity measurement remains unvalidated. Streaming still requires the largest module and workspace to fit in VRAM. It re-reads the model once per pass rather than once per experiment, holding the pending perturbed states in system RAM (`--max-sys` caps this; default half of what is free), and each additional worker needs its own RAM caches; multiple GPUs do not pool memory or guarantee linear speedups. Automatic loading can fall back to streaming after an initial OOM, but an OOM later in measurement stops the run.
 
 ## Evaluate with qbench
 

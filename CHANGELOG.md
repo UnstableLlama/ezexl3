@@ -53,6 +53,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the same path.
 
 ### Changed
+- **`-sc` sensitivity measurement streams the model once per pass instead of
+  once per experiment.** Layer streaming used to replay the whole suffix
+  (perturbed layer → lm_head) from disk for every tensor × noise level ×
+  draw. It now fans out the way exllamav3's conversion measurement
+  (`measure_model.py`) does: each module is loaded once, every pending
+  perturbed state advances through it, and new experiments spawn from the
+  cached boundary state, so the pending batch grows with each noise site and
+  the last module consumes them all into KL. Pending states live in system
+  RAM; `--max-sys GB` caps them (default: half of what is free) by splitting
+  the target modules into passes, and results commit per pass so an
+  interrupted run resumes from the last completed pass. Resident
+  (full-model) mode is unchanged and both paths produce identical output.
 - **Vendored `convert_mtp.py` re-synced with upstream** (now tracked from
   `master`): picks up the `-hq` argument and the per-layer bpw reporting fix
   (bytes were previously accumulated across modules, inflating the reported

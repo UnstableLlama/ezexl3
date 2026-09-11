@@ -23,7 +23,7 @@ SOURCE = Path(__file__).parents[1] / "ezexl3/vendor/sc_measure.py"
 def harness(monkeypatch):
     if not isinstance(torch, ModuleType):
         pytest.skip("Another test replaced torch globally; covered by the isolated subprocess test")
-    tracker = SimpleNamespace(live=0, peak=0, full_loads=0, fail_load=False,
+    tracker = SimpleNamespace(live=0, peak=0, loads=0, full_loads=0, fail_load=False,
                               fail_forward=False, fail_perturbed=False,
                               finalized=0, models=[])
 
@@ -51,6 +51,7 @@ def harness(monkeypatch):
             assert self.inner is None
             self.inner = FP16()
             self.inner.weight = self.original.clone()
+            tracker.loads += 1
             tracker.live += 1
             tracker.peak = max(tracker.peak, tracker.live)
 
@@ -137,11 +138,12 @@ def harness(monkeypatch):
     return namespace, tracker
 
 
-def args(path, mode="streaming", shaped=False):
+def args(path, mode="streaming", shaped=False, max_sys=None):
     return SimpleNamespace(model="toy", device=0, load_mode=mode, rows=2, length=2,
                            h_rows=2, shaped=shaped, trace=None, rfn_ref=None,
                            rfn="0.29,0.145", rfn_scale="1.0,0.5", draws=2,
-                           out=str(path), top=2, worker_index=0, worker_count=1, resume_from=None)
+                           out=str(path), top=2, worker_index=0, worker_count=1, resume_from=None,
+                           max_sys=max_sys)
 
 
 @pytest.mark.parametrize("shaped", [False, True])
@@ -166,6 +168,62 @@ def test_streaming_matches_resident_and_resumes(harness, tmp_path, shaped):
     ns["main"](args(streamed, "streaming", shaped))
     assert json.loads(streamed.read_text()) == expected
     assert tracker.live == 0
+
+
+@pytest.mark.parametrize("shaped,expected_loads", [(False, 3 + 2), (True, 3 + 3)])
+def test_fanout_loads_each_module_once_per_pass(harness, tmp_path, shaped, expected_loads):
+    # Toy model: embed (no targets), layer.0, head. Reference pass loads all three; the
+    # single fan-out pass then loads each target module once, plus the embedding once
+    # more in shaped mode to advance the capture rows. Per-experiment suffix replay
+    # would have loaded the suffix for every control and every level x draw.
+    ns, tracker = harness
+    ns["main"](args(tmp_path / "fanout.json", shaped=shaped))
+    assert tracker.loads == expected_loads
+    assert tracker.peak == 1
+    assert tracker.live == 0
+
+
+@pytest.mark.parametrize("shaped", [False, True])
+def test_fanout_chunks_by_budget_and_resumes_per_pass(harness, tmp_path, shaped):
+    ns, tracker = harness
+    resident = tmp_path / "resident.json"
+    ns["main"](args(resident, "resident", shaped))
+    expected = json.loads(resident.read_text())
+    tracker.loads = tracker.peak = 0
+    chunked = tmp_path / "chunked.json"
+    # A one-byte budget forces one target module per pass; results must not change.
+    ns["main"](args(chunked, shaped=shaped, max_sys=1 / 1024 ** 3))
+    assert json.loads(chunked.read_text()) == expected
+    # Pass 1: layer.0 spawns, head advances; pass 2: head spawns. Shaped mode also
+    # advances the capture rows through the embedding in pass 1 and captures head once.
+    assert tracker.loads == (3 + 2 + 1) + (1 if shaped else 0)
+    assert tracker.peak == 1
+    # Each pass commits its results, so a run killed after pass 1 resumes from there.
+    partial = dict(expected, results=expected["results"][:1])
+    chunked.write_text(json.dumps(partial))
+    tracker.loads = 0
+    ns["main"](args(chunked, shaped=shaped, max_sys=1 / 1024 ** 3))
+    assert json.loads(chunked.read_text()) == expected
+    assert tracker.loads == 3 + 1 + (2 if shaped else 0)
+    assert tracker.live == 0
+
+
+def test_plan_fanout_passes_keeps_modules_whole(harness):
+    ns, _ = harness
+    plan = ns["plan_fanout_passes"]
+    counts = {3: 4, 1: 4, 7: 9, 5: 1}
+    assert plan(counts, state_bytes=10, budget=80) == [[1, 3], [5], [7]]
+    assert plan(counts, state_bytes=10, budget=1000) == [[1, 3, 5, 7]]
+    # An oversized module still gets its own pass instead of failing.
+    assert plan(counts, state_bytes=10, budget=1) == [[1], [3], [5], [7]]
+    assert plan({}, state_bytes=10, budget=1) == []
+
+
+def test_sysmem_budget_prefers_explicit_limit(harness, monkeypatch):
+    ns, _ = harness
+    budget = ns["sysmem_budget"]
+    assert budget(2.5) == int(2.5 * 1024 ** 3)
+    assert budget(None) > 0
 
 
 @pytest.mark.parametrize("free_gib,expected_loads", [(1, 0), (100, 1)])

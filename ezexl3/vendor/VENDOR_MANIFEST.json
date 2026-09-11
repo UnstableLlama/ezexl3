@@ -51,8 +51,8 @@
   "sc_measure.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/sc_measure.py",
     "sha256": "6d9b79c62b7d1099e6ab1b7fa90aeb04a57f5e0c1b924d796e8842ed9306c513",
-    "local_sha256": "bafec22374aa3eb7cf6d4bcdaa6b1815d356015f05e0b5bd33a3208578f73dcd",
-    "local_patch": "Add automatic VRAM preflight and explicit resident/streaming modes. Estimate weights from checkpoint headers because unloaded norms/convolutions can return None from weights_numel(). Streaming loads one top-level module at a time, keeps boundary/capture states and shaping factors on CPU, restores perturbed weights before unloading, and consumes final logits per row. Auto mode falls back on full-model load OOM; runtime workspace OOMs still propagate. Add deterministic module assignments for N independent GPU workers, canonical-checkpoint resume, and shard completion inventories consumed by ezexl3/sc_measure_parallel.py. Preserve the upstream hash for drift checks."
+    "local_sha256": "a26327d2078273261645abc835691764e4ffc1bbed355ca9e6c5a1f89572de50",
+    "local_patch": "Add automatic VRAM preflight and explicit resident/streaming modes. Estimate weights from checkpoint headers because unloaded norms/convolutions can return None from weights_numel(). Streaming loads one top-level module at a time, keeps boundary/capture states and shaping factors on CPU, restores perturbed weights before unloading, and consumes final logits per row. Streaming experiments fan out like exllamav3's conversion/measure_model.py: each module is loaded once per pass, pending perturbed states advance through it and new ones spawn from the cached boundary, chunked into passes by --max-sys; results commit per pass. Auto mode falls back on full-model load OOM; runtime workspace OOMs still propagate. Add deterministic module assignments for N independent GPU workers, canonical-checkpoint resume, and shard completion inventories consumed by ezexl3/sc_measure_parallel.py. Preserve the upstream hash for drift checks."
   },
   "sc_optimize.py": {
     "source": "https://raw.githubusercontent.com/turboderp-org/exllamav3/master/sc_optimize.py",
