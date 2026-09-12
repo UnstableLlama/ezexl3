@@ -53,14 +53,10 @@ the quadratic law.
 Output JSON feeds sc_optimize.py, which turns the sensitivities into a per-tensor bitrate
 recipe. Results are written incrementally and the script resumes from a partial output file.
 
-With --streaming, weights are loaded one top-level module at a time and cached states
-and shaping factors live in system RAM. The largest module plus Hessian/noise workspace
-must still fit on the device. Experiments fan out the way exllamav3's conversion
-measurement (measure_model.py) does: each module is loaded once per pass, every pending
-perturbed state advances through it, new experiments spawn from the cached boundary state,
-and the final module consumes them all into KL. Pending states grow with each noise site,
-so passes are chunked by module to fit --max-sys of system RAM; each pass re-reads the
-suffix once instead of once per experiment.
+With --streaming, load one top-level module at a time and keep cached states in system RAM.
+Experiments fan out at each noise site and share module loads. --max-sys budgets pending
+states by splitting the work into passes, with results saved after each pass.
+The largest module plus Hessian/noise workspace must still fit on the device.
 Not validated on MoE models.
 """
 
@@ -68,11 +64,8 @@ Not validated on MoE models.
 
 
 class ModuleRunner:
-    """Run all rows through one module before releasing its weights.
-
-    CPU copies must own their storage: modules may mutate their input in place,
-    including when prefer_cpu keeps the entire operation on the host.
-    """
+    """Run rows through one module at a time. Clone states because modules may mutate inputs,
+    including modules that run on CPU."""
 
     def __init__(self, config, modules, device, streaming):
         self.config = config
@@ -117,14 +110,8 @@ class ModuleRunner:
 
 
 def estimate_resident_bytes(modules, rows, length, vocab_size, shaped, h_rows, stc):
-    """Conservative preflight, not an allocator guarantee; no weights are loaded.
-
-    Include FP16 weights, GPU boundary/capture states, one row of logits, a saved
-    target weight, per-module Hessians/LDL workspace, and allocator/kernel headroom.
-    Shared qmaps need only one Hessian. Count CPU-preferred weights too for margin.
-    Use checkpoint headers: norms/convolutions may return None from weights_numel()
-    until loaded, which also breaks recursive counts on their parent modules.
-    """
+    """Estimate resident VRAM for weights, cached states, logits and noise/Hessian workspace.
+    Use checkpoint headers since unloaded modules may return None from weights_numel()."""
     def walk(mod):
         yield mod
         for child in getattr(mod, "modules", []):
@@ -134,8 +121,7 @@ def estimate_resident_bytes(modules, rows, length, vocab_size, shaped, h_rows, s
     for key, filename in stc.tensor_file_map.items():
         tensor = stc.file_headers[filename][key]
         start, end = tensor["data_offsets"]
-        # FP8 checkpoints expand to FP16; retain the larger size for FP32 and
-        # auxiliary tensors. Counting unused components is conservative.
+        # FP8 weights expand to FP16; retain the larger size for FP32 tensors
         weights += max(2 * math.prod(tensor["shape"]), end - start)
     linear_weights = 0
     width = 0
@@ -162,26 +148,8 @@ def estimate_resident_bytes(modules, rows, length, vocab_size, shaped, h_rows, s
     return math.ceil(1.15 * (weights + states + logits + workspace))
 
 
-def assign_measurement_modules(targets_by_idx, num_mods, worker_count):
-    """Keep a module's Hessian work together; balance expensive early suffix replays.
-
-    Assign from the full target list, not the unfinished list, so every worker
-    agrees even when it reads a slightly newer resume checkpoint at startup.
-    """
-    costs = {idx: len(targets) * (num_mods - idx)
-             for idx, targets in targets_by_idx.items() if targets}
-    loads = [0] * worker_count
-    owners = {}
-    for idx in sorted(costs, key=lambda i: (-costs[i], i)):
-        owner = min(range(worker_count), key=lambda w: (loads[w], w))
-        owners[idx] = owner
-        loads[owner] += costs[idx]
-    return owners
-
-
 def sysmem_budget(max_sys_gb):
-    """Bytes of system RAM for pending fan-out states: --max-sys, else half of what is
-    available now (read after the reference pass, so cached boundaries are already counted)."""
+    """Pending-state budget in bytes; default to half the RAM available after the reference pass"""
     if max_sys_gb is not None:
         return int(max_sys_gb * 1024 ** 3)
     try:
@@ -195,13 +163,8 @@ def sysmem_budget(max_sys_gb):
 
 
 def plan_fanout_passes(experiments_by_idx, state_bytes, budget):
-    """Group target modules into passes whose pending states fit the budget.
-
-    experiments_by_idx maps module index to its experiment count (including the control).
-    Every pending state is carried to the end of the model, so a pass peaks at its total
-    count. A module's experiments stay together: they share one Hessian capture and one
-    control replay. A single module over budget gets its own pass rather than failing.
-    """
+    """Group modules by pending-state budget, counting controls as experiments.
+    Keep each module's experiments together, even if that module exceeds the budget."""
     passes, current, pending = [], [], 0
     for idx in sorted(experiments_by_idx):
         count = experiments_by_idx[idx]
@@ -238,8 +201,6 @@ def get_test_tokens(tokenizer, rows, eval_len):
 
 @torch.inference_mode()
 def main(args):
-    if args.worker_count < 1 or not 0 <= args.worker_index < args.worker_count:
-        raise ValueError("worker-index must be in [0, worker-count)")
     device = torch.device("cuda", args.device)
     torch.manual_seed(0)
 
@@ -268,8 +229,7 @@ def main(args):
             config.stc.abort_deferred_load()
             model.unload()
             g_tensor_cache.drop_all()
-            # Leave the exception handler before retrying so its traceback cannot
-            # retain temporary weight buffers from the failed full-model load.
+            # Release the OOM traceback before retrying so it cannot retain weight buffers
             streaming = True
         if streaming:
             torch.cuda.empty_cache()
@@ -311,7 +271,7 @@ def main(args):
         """
         Forward every row from module start_idx to the end, streaming the KL vs the reference
         per row. Returns (mean kld, per-row hidden state after module start_idx if requested).
-        Resident mode only; streaming replays suffixes in fan-out passes below.
+        Resident mode only.
         """
         kld_sum = 0.0
         out_states = []
@@ -386,13 +346,6 @@ def main(args):
                 targets_by_idx[i].append(t)
                 num_targets += 1
 
-    if args.worker_count > 1:
-        owners = assign_measurement_modules(targets_by_idx, num_mods, args.worker_count)
-        targets_by_idx = {idx: targets for idx, targets in targets_by_idx.items()
-                          if owners[idx] == args.worker_index}
-        num_targets = sum(len(targets) for targets in targets_by_idx.values())
-        print(f" -- Worker {args.worker_index + 1}/{args.worker_count}: "
-              f"{num_targets} tensors in {len(targets_by_idx)} modules")
     expected_keys = {lin.key for targets in targets_by_idx.values() for lin in targets}
 
     # Per-target noise levels
@@ -413,15 +366,14 @@ def main(args):
     # Resume from partial output
     results = []
     done = set()
-    resume_path = args.resume_from or args.out
-    if resume_path and os.path.exists(resume_path):
-        with open(resume_path, "r") as f:
+    if args.out and os.path.exists(args.out):
+        with open(args.out, "r") as f:
             prev = json.load(f)
         results = [r for r in prev["results"] if r["key"] in expected_keys]
         done = {r["key"] for r in results}
         print(f" -- Resuming: {len(done)} tensors already measured")
 
-    def save(complete=False):
+    def save():
         if not args.out:
             return
         tmp = args.out + ".tmp"
@@ -439,17 +391,14 @@ def main(args):
                 rfn = None if args.rfn_ref else args.rfn,
                 results = results,
             )
-            if args.resume_from or args.worker_count > 1:
-                output["worker"] = dict(index=args.worker_index, count=args.worker_count,
-                                        expected_keys=sorted(expected_keys), complete=complete)
             json.dump(output, f, indent = 2)
         os.replace(tmp, args.out)
 
     if expected_keys <= done:
-        save(complete=True)
+        save()
         model.unload()
         config.stc.close()
-        print(" -- All assigned tensors already measured")
+        print(" -- All tensors already measured")
         return
 
     save()
@@ -565,11 +514,9 @@ def main(args):
 
     control_kld = {}
     quant_args = {"sigma_reg": 0.025}
-    label = f"[worker {args.worker_index + 1}/{args.worker_count}] " if args.worker_count > 1 else ""
 
     def finalize_shaping(top_idx, capture):
-        """Turn module top_idx's captured Hessians into per-qmap (L, su) shaping factors, or
-        None where the capture is unusable (q_fallback -> iid noise)"""
+        """Finalize per-qmap shaping factors, falling back to iid noise for unusable captures"""
         shaping = {}
         torch.manual_seed(zlib.crc32(f"su|{top_idx}".encode()) & 0x7fffffff)
         for qmap in list(capture):
@@ -619,7 +566,7 @@ def main(args):
             inj_rfn = inj_rfn,
         ))
         res["w_norm"] = w_norm
-        print(f"    {label}{res['key']:60} rfn {rfn_actual:.5f}   kld {kld:11.8f}   inj_rfn {inj_rfn:.6f}")
+        print(f"    {res['key']:60} rfn {rfn_actual:.5f}   kld {kld:11.8f}   inj_rfn {inj_rfn:.6f}")
 
     def check_control(top_idx, kld):
         # No-perturbation control: restarting from the cached boundary must reproduce the
@@ -628,10 +575,7 @@ def main(args):
         assert kld == 0.0, f"ctrl {kld} != 0 at module {top_idx}, restart machinery broken"
 
     if streaming:
-        # Fan-out passes, after exllamav3's conversion/measure_model.py: load each module
-        # once, advance every pending experiment through it, then spawn this module's
-        # experiments from the cached boundary state. The last module consumes states into
-        # KL. Passes are chunked so the pending states fit the system RAM budget.
+        # Load each module once per pass, advancing pending states and spawning new experiments
         todo_by_idx = {idx: [lin for lin in targets_by_idx[idx] if lin.key not in done]
                        for idx in sorted(targets_by_idx)}
         todo_by_idx = {idx: lins for idx, lins in todo_by_idx.items() if lins}
@@ -646,11 +590,11 @@ def main(args):
               f"{len(todo_by_idx)} module(s) in {len(passes)} pass(es); peak pending states "
               f"{peak * state_bytes / 1024 ** 3:.1f} GiB, budget {budget / 1024 ** 3:.1f} GiB")
 
-        cap_idx = 0  # capture rows have advanced through every module below this
+        cap_idx = 0  # next module for capture rows
         for pass_no, members in enumerate(passes):
             # Capture rows stop where the next pass starts, so each module is captured once
             cap_stop = passes[pass_no + 1][0] - 1 if pass_no + 1 < len(passes) else members[-1]
-            pending = []  # experiments and controls advancing through the suffix
+            pending = []
             pass_results = []
             start = min(cap_idx, members[0]) if args.shaped else members[0]
             for idx in range(start, num_mods):
@@ -707,7 +651,7 @@ def main(args):
                             try:
                                 states, kld = run(boundary[idx])
                             finally:
-                                # Restore before unloading: Linear.unload() discards inner entirely
+                                # Restore before unloading, which discards lin.inner
                                 lin.inner.weight.copy_(saved)
                                 del saved
                             pending.append(dict(
@@ -721,7 +665,7 @@ def main(args):
                         del v
                     shaping.clear()
 
-            # The last module consumed every pending state; commit the pass
+            # Check controls and save the completed pass
             for exp in pending:
                 if "control" in exp:
                     check_control(exp["control"], exp["kld"])
@@ -817,7 +761,7 @@ def main(args):
             print(f"\n -- Scaling exponent (kld ~ rfn^a): "
                   f"min {alphas[0]:.2f}  median {alphas[len(alphas) // 2]:.2f}  max {alphas[-1]:.2f}")
 
-    save(complete=True)
+    save()
     if args.out:
         print(f"\n -- Saved: {args.out}")
     model.unload()
@@ -848,7 +792,4 @@ if __name__ == "__main__":
     parser.add_argument("-dr", "--draws", type = int, default = 1, help = "Noise draws per level, default: 1")
     parser.add_argument("-t", "--top", type = int, default = 15, help = "Top contributors to print")
     parser.add_argument("-o", "--out", type = str, default = None, help = "Output file (JSON), resumes if present")
-    parser.add_argument("--worker-index", type=int, default=0, help=argparse.SUPPRESS)
-    parser.add_argument("--worker-count", type=int, default=1, help=argparse.SUPPRESS)
-    parser.add_argument("--resume-from", type=str, default=None, help=argparse.SUPPRESS)
     main(parser.parse_args())

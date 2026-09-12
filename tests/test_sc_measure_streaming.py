@@ -142,7 +142,7 @@ def args(path, mode="streaming", shaped=False, max_sys=None):
     return SimpleNamespace(model="toy", device=0, load_mode=mode, rows=2, length=2,
                            h_rows=2, shaped=shaped, trace=None, rfn_ref=None,
                            rfn="0.29,0.145", rfn_scale="1.0,0.5", draws=2,
-                           out=str(path), top=2, worker_index=0, worker_count=1, resume_from=None,
+                           out=str(path), top=2,
                            max_sys=max_sys)
 
 
@@ -305,48 +305,6 @@ def test_preflight_uses_headers_when_unloaded_norm_has_no_weight_count(harness):
     stc.file_headers["shard"]["norm.weight"]["data_offsets"] = [0, 32768]
     assert estimate([mod], 2, 1024, 128000, False, 0, stc) > required
     assert tracker.full_loads == 0
-
-
-@pytest.mark.parametrize("workers", [1, 2, 3, 5])
-def test_partitioned_measurements_match_single_worker(harness, tmp_path, workers):
-    ns, tracker = harness
-    baseline = tmp_path / "baseline.json"
-    ns["main"](args(baseline, shaped=True))
-    expected = json.loads(baseline.read_text())
-    # Simulate a partially completed single-GPU run before switching GPU count.
-    resume = tmp_path / "resume.json"
-    resume.write_text(json.dumps(dict(expected, results=expected["results"][:1])))
-    combined = {}
-    owners = set()
-    for index in range(workers):
-        path = tmp_path / f"worker-{index}.json"
-        options = args(path, shaped=True)
-        options.worker_count = workers
-        options.worker_index = index
-        options.resume_from = str(resume)
-        ns["main"](options)
-        result = json.loads(path.read_text())
-        inventory = set(result["worker"]["expected_keys"])
-        assert not owners & inventory
-        owners |= inventory
-        assert result["worker"]["complete"]
-        assert {r["key"] for r in result["results"]} == inventory
-        combined.update({r["key"]: r for r in result["results"]})
-    assert combined == {r["key"]: r for r in expected["results"]}
-    assert tracker.live == 0
-    assert tracker.peak == 1
-
-
-def test_module_assignment_balances_suffix_replay_cost(harness):
-    ns, _ = harness
-    targets = {i: [object()] * 4 for i in range(24)}
-    assign = ns["assign_measurement_modules"]
-    owners = assign(targets, 24, 4)
-    loads = [sum(len(targets[i]) * (24 - i) for i in targets if owners[i] == w)
-             for w in range(4)]
-    assert len(owners) == len(targets)
-    assert max(loads) - min(loads) <= 4 * 24
-    assert owners == assign(dict(reversed(list(targets.items()))), 24, 4)
 
 
 def test_perturbation_restored_before_unload_on_failure(harness, tmp_path):
