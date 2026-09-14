@@ -2,7 +2,7 @@
 
 **Quantize, evaluate, publish, and chat with EXL3 models.**
 
-ezexl3 brings the exllamav3 workflow into one CLI and a local web dashboard. Build several quantizations, compare them against the base model, generate a model card with charts, and upload to Hugging Face. Open chat to try the results, test LoRA adapters, or collect preference data.
+ezexl3 brings the exllamav3 workflow into one CLI and a local web dashboard. Build several quantizations, compare them against the base model, generate a model card with charts, and upload to Hugging Face. Open chat to try the results, test LoRA adapters, or build training datasets.
 
 Version 1.0.0 adds self-calibrated quantization, qbench evaluation, speculative decoding, CPU offload controls, and KTO/DPO dataset creation.
 
@@ -64,7 +64,7 @@ Completed stages and measurements are reused on later runs. You can also run sta
 | `ezexl3 evals` | Run standalone evaluations |
 | `ezexl3 readme` | Regenerate model cards from existing results |
 | `ezexl3 upload` | Preview or upload Hugging Face repositories |
-| `ezexl3 chat` | Test models and collect preference data |
+| `ezexl3 chat` | Test models and build training datasets |
 | `ezexl3 ui` | Open the dashboard |
 
 Use `ezexl3 <command> --help` for the full options.
@@ -185,19 +185,19 @@ ezexl3 chat -m /path/to/quant --mtp
 ezexl3 chat -m /path/to/quant --ngram 3
 ```
 
-## Build preference datasets
+## Build training datasets
 
-Switch from **Chat** to **Preference** to collect training examples. Capture is off by default.
+Switch from **Chat** to **Datasets** to collect training examples. Capture is off by default.
 
 <p align="center">
   <img src="docs/preference.png" width="340" alt="Preference Data panel with dataset settings, candidate count, a prompt queue, and generation prompts" />
 </p>
 
-**KTO** records positive or negative ratings on individual replies. **DPO** generates 2–8 candidates side by side: mark one chosen and one rejected, flag failures, regenerate failed candidates, then commit the pair. Optional generation system prompts can steer candidates in different directions while the saved training prompt keeps the main system prompt.
+**Single** saves plain conversations for SFT: 💾 any reply to record the conversation up to it as one `messages` row, or run a prompt queue and save every kept reply, reviewed batch by batch or fully unattended. **KTO** records positive or negative ratings on individual replies. **DPO** generates 2–8 candidates side by side: mark one chosen and one rejected, flag failures, regenerate failed candidates, then commit the pair. Optional generation system prompts can steer candidates in different directions while the saved training prompt keeps the main system prompt.
 
 Load a prompt queue from text, JSON, or JSONL to work through a dataset. Bulk generation can fill its chosen or rejected side, with browser review or unattended generation. When carrying an existing counterpart, saved rows retain that side of the source pair.
 
-Datasets are local `<name>.kto.jsonl` and `<name>.dpo.jsonl` files in the configured directory. KTO rows use `prompt` / `completion` / `label`; DPO rows use `prompt` / `chosen` / `rejected`. Ratings persist across sessions, externally added rows are preserved, and thinking spans can be removed from captured data. These controls collect data; training happens in your preference-training pipeline.
+Datasets are local `<name>.single.jsonl`, `<name>.kto.jsonl` and `<name>.dpo.jsonl` files in the configured directory. Single rows use `messages`; KTO rows use `prompt` / `completion` / `label`; DPO rows use `prompt` / `chosen` / `rejected`. Ratings persist across sessions, externally added rows are preserved, and thinking spans can be removed from captured data. These controls collect data; training happens in your preference-training pipeline.
 
 The setup screenshots use example paths; no model is loaded for these captures.
 

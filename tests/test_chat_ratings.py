@@ -1,14 +1,16 @@
 """
-Tests for chat preference-rating capture (KTO / DPO data collection).
+Tests for chat dataset capture (Single / KTO / DPO data collection).
 
-The chat UI captures in one of two modes — KTO (👍/👎 writes independent
-labeled rows) or DPO (each send generates two candidates; mark ▲/▼ and
-commit to write a single chosen/rejected pair) — plus an Off position
-(the default) that disables capture. Rows are JSONL shaped
-exactly like what UnstableLlama/exllamav3's training/qlora_train_pref.py
-reads with its default keys (--prompt-key prompt, --completion-key
+The chat UI captures in one of three modes — Single (💾 saves a plain
+{messages} conversation row; queue runs save every kept reply the same
+way), KTO (👍/👎 writes independent labeled rows) or DPO (each send
+generates two candidates; mark ▲/▼ and commit to write a single
+chosen/rejected pair) — plus an Off position (the default) that disables
+capture. Rows are JSONL shaped exactly like what the
+UnstableLlama/exllamav3 fork's trainers read with their default keys:
+training/qlora_train_pref.py (--prompt-key prompt, --completion-key
 completion, --label-key label, --chosen-key chosen, --rejected-key
-rejected).
+rejected) and the SFT trainers' --messages-key messages.
 
 Mocks torch and exllamav3 so no GPU or model download is required.
 """
@@ -326,6 +328,84 @@ class TestBulkStore(unittest.TestCase):
         self.assertLessEqual(set(rows[0]), set(rows[1]))
 
 
+class TestSingleStore(unittest.TestCase):
+    """Single mode: plain {messages} conversation rows (SFT data)."""
+
+    def test_rows_are_messages_format(self):
+        store, root = make_store()
+        n = store.add_single_rows(
+            "t", PROMPT,
+            [{"node_id": "a", "content": "reply A"},
+             {"node_id": None, "content": "reply B"}],
+            "m", source="bulk", source_row_id="r1", gen_system="be brief")
+        self.assertEqual(n, 2)
+        rows = [json.loads(l) for l in
+                (root / "t.single.jsonl").read_text().splitlines()]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["messages"],
+                         PROMPT + [{"role": "assistant", "content": "reply A"}])
+        self.assertEqual(rows[0]["node_id"], "a")
+        self.assertIsNone(rows[1]["node_id"])
+        for r in rows:
+            self.assertEqual(r["source"], "bulk")
+            self.assertEqual(r["source_row_id"], "r1")
+            self.assertEqual(r["gen_system"], "be brief")
+            self.assertEqual(r["model"], "m")
+            self.assertIn("ts", r)
+        # The caller's prompt list is not mutated
+        self.assertEqual(PROMPT[-1]["role"], "user")
+
+    def test_node_keyed_rows_upsert_and_remove(self):
+        store, root = make_store()
+        store.add_single_rows("t", PROMPT, [{"node_id": "a", "content": "v1"}],
+                              "m", source="manual")
+        store.add_single_rows("t", PROMPT, [{"node_id": "a", "content": "v2"}],
+                              "m", source="manual")
+        rows = [json.loads(l) for l in
+                (root / "t.single.jsonl").read_text().splitlines()]
+        self.assertEqual([r["messages"][-1]["content"] for r in rows], ["v2"])
+        self.assertEqual(rows[0]["source"], "manual")
+        store.remove_single_rows("t", ["a"])
+        self.assertEqual((root / "t.single.jsonl").read_text().strip(), "")
+
+    def test_unkeyed_rows_survive_upserts_and_removes(self):
+        store, root = make_store()
+        store.add_single_rows("t", PROMPT, [{"node_id": None, "content": "loose"}], "m")
+        store.add_single_rows("t", PROMPT, [{"node_id": "a", "content": "keyed"}], "m")
+        store.add_single_rows("t", PROMPT, [{"node_id": "a", "content": "keyed 2"}], "m")
+        store.remove_single_rows("t", ["a", None])
+        rows = [json.loads(l) for l in
+                (root / "t.single.jsonl").read_text().splitlines()]
+        self.assertEqual([r["messages"][-1]["content"] for r in rows], ["loose"])
+
+    def test_blank_completions_skipped(self):
+        store, _ = make_store()
+        n = store.add_single_rows(
+            "t", PROMPT,
+            [{"node_id": "a", "content": "  "}, {"node_id": "b", "content": "ok"}],
+            "m")
+        self.assertEqual(n, 1)
+
+    def test_invalid_source_raises(self):
+        store, _ = make_store()
+        with self.assertRaises(ValueError):
+            store.add_single_rows("t", PROMPT,
+                                  [{"node_id": "a", "content": "x"}], "m",
+                                  source="auto")
+
+    def test_state_and_listing(self):
+        store, _ = make_store()
+        store.add_single_rows(
+            "t", PROMPT,
+            [{"node_id": "a", "content": "x"}, {"node_id": None, "content": "y"}],
+            "m")
+        st = store.state("t")
+        self.assertEqual(st["single"], {"nodes": ["a"], "count": 2})
+        self.assertEqual(st["kto"], {})
+        self.assertEqual(st["dpo"], [])
+        self.assertEqual(store.list_datasets(), ["t"])
+
+
 class TestStripThink(unittest.TestCase):
 
     def test_strips_think_blocks(self):
@@ -508,6 +588,78 @@ class TestRatingRoutes(AioHTTPTestCase):
             resp = await self.client.request("POST", "/api/rate", json=body)
             self.assertEqual(resp.status, 400, body)
 
+    async def test_rate_single_saves_and_withdraws_conversation(self):
+        # Single mode 💾: one {messages} row; 💾 again removes it.
+        resp = await self.client.request("POST", "/api/rate", json={
+            "dataset": "t", "prompt": PROMPT,
+            "single": {"completions": [{"node_id": "a", "content": "reply"}],
+                       "source": "manual", "gen_system": None},
+        })
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(data["single"], {"nodes": ["a"], "count": 1})
+        self.assertEqual(data["datasets"], ["t"])
+        row = json.loads((Path(self.tmpdir) / "t.single.jsonl").read_text())
+        self.assertEqual(row["messages"],
+                         PROMPT + [{"role": "assistant", "content": "reply"}])
+        self.assertEqual(row["source"], "manual")
+        self.assertIsNone(row["gen_system"])
+        self.assertEqual(row["model"], "/fake/FakeModel-0.5B")
+
+        resp = await self.client.request("POST", "/api/rate", json={
+            "dataset": "t", "prompt": PROMPT, "single": {"remove": ["a"]},
+        })
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(data["single"], {"nodes": [], "count": 0})
+
+    async def test_rate_single_review_save_all(self):
+        # Review-flow "Save all" under Single: several kept candidates,
+        # one prompt, each its own conversation row.
+        resp = await self.client.request("POST", "/api/rate", json={
+            "dataset": "t", "prompt": PROMPT,
+            "single": {
+                "completions": [{"node_id": "n1", "content": "reply 1"},
+                                {"node_id": "n2", "content": "reply 2"}],
+                "source": "bulk", "gen_system": "be brief",
+                "source_row_id": "src-1",
+            },
+        })
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(data["single"], {"nodes": ["n1", "n2"], "count": 2})
+        rows = [json.loads(l) for l in
+                (Path(self.tmpdir) / "t.single.jsonl").read_text().splitlines()]
+        self.assertEqual([r["messages"][-1]["content"] for r in rows],
+                         ["reply 1", "reply 2"])
+        self.assertTrue(all(r["messages"][:-1] == PROMPT for r in rows))
+        self.assertTrue(all(r["source"] == "bulk" for r in rows))
+        self.assertTrue(all(r["gen_system"] == "be brief" for r in rows))
+        self.assertTrue(all(r["source_row_id"] == "src-1" for r in rows))
+        # Nothing leaked into the KTO/DPO files
+        self.assertFalse((Path(self.tmpdir) / "t.kto.jsonl").exists())
+        self.assertFalse((Path(self.tmpdir) / "t.dpo.jsonl").exists())
+
+    async def test_rate_single_rejects_bad_input(self):
+        ok = [{"node_id": "a", "content": "x"}]
+        cases = [
+            {"dataset": "t", "prompt": PROMPT, "single": {"completions": []}},
+            {"dataset": "t", "prompt": PROMPT,
+             "single": {"completions": [{"node_id": "a", "content": 7}]}},
+            {"dataset": "t", "prompt": PROMPT,
+             "single": {"completions": ok, "source": "auto"}},
+            {"dataset": "t", "prompt": PROMPT,
+             "single": {"completions": ok, "gen_system": 3}},
+            {"dataset": "t", "prompt": PROMPT,
+             "single": {"completions": ok, "source_row_id": {"x": 1}}},
+            {"dataset": "t", "prompt": PROMPT, "single": {"remove": []}},
+            {"dataset": "t", "prompt": PROMPT, "single": {"remove": [""]}},
+            {"dataset": "t", "prompt": "nope", "single": {"completions": ok}},
+        ]
+        for body in cases:
+            resp = await self.client.request("POST", "/api/rate", json=body)
+            self.assertEqual(resp.status, 400, body)
+
 
 class TestBulkRunRoute(AioHTTPTestCase):
     """The unattended bulk runner: /api/ratings/bulk streams SSE progress
@@ -605,9 +757,46 @@ class TestBulkRunRoute(AioHTTPTestCase):
         self.assertEqual(row["chosen"], "")            # column not carried
         self.assertEqual(row["source_row_id"], "r1")   # id still rides along
 
+    async def test_bulk_run_single_kind_writes_messages_rows(self):
+        # kind=single: every reply becomes a {messages} conversation row;
+        # target/carry are not needed.
+        self._arm_engine(n=2)
+        resp = await self.client.request("POST", "/api/ratings/bulk", json={
+            "dataset": "t",
+            "rows": [{"prompt": "Q1", "id": "r1"}, {"prompt": "Q2"}],
+            "n": 2, "kind": "single", "system_prompt": "be brief",
+            "strip_think": True,
+        })
+        self.assertEqual(resp.status, 200)
+        events = self._events(await resp.text())
+        done = [e for e in events if e["type"] == "bulk_done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["rows_written"], 4)
+        self.assertEqual(done[0]["items_done"], 2)
+
+        rows = [json.loads(l) for l in
+                (Path(self.tmpdir) / "t.single.jsonl").read_text().splitlines()]
+        self.assertEqual(len(rows), 4)
+        # System turn = the MAIN system prompt; the generation prompt is
+        # metadata only. strip_think removed the thought block.
+        self.assertEqual(rows[0]["messages"], [
+            {"role": "system", "content": "Be terse."},
+            {"role": "user", "content": "Q1"},
+            {"role": "assistant", "content": "reply 0-0"},
+        ])
+        self.assertTrue(all(r["source"] == "bulk" for r in rows))
+        self.assertTrue(all(r["node_id"] is None for r in rows))
+        self.assertTrue(all(r["gen_system"] == "be brief" for r in rows))
+        self.assertEqual({r["source_row_id"] for r in rows}, {"r1", None})
+        self.assertFalse((Path(self.tmpdir) / "t.dpo.jsonl").exists())
+
     async def test_bulk_run_validation(self):
         self._arm_engine(n=1)
         cases = [
+            {"dataset": "t", "rows": [{"prompt": "q"}],
+             "n": 1, "kind": "sft"},
+            {"dataset": "t", "rows": [{"prompt": "q"}],   # dpo needs target
+             "n": 1, "kind": "dpo"},
             {"dataset": "../evil", "rows": [{"prompt": "q"}],
              "n": 1, "target": "rejected"},
             {"dataset": "t", "rows": [], "n": 1, "target": "rejected"},
@@ -644,12 +833,13 @@ class TestUiWiring(unittest.TestCase):
         html = (REPO_ROOT / "ezexl3/chat/static/index.html").read_text()
         self.assertIn('id="ratings-dataset"', html)
         self.assertIn('id="ratings-dir"', html)
-        # Two-level top-bar toggle: Chat/Preference picks the scope, then
-        # DPO/KTO picks the format once Preference is on.
+        # Two-level top-bar toggle: Chat/Datasets picks the scope, then
+        # Single/DPO/KTO picks the format once Datasets is on.
         self.assertIn('id="chat-mode-toggle"', html)
         self.assertIn('id="pref-kind-toggle"', html)
         self.assertIn('data-scope="chat"', html)
         self.assertIn('data-scope="pref"', html)
+        self.assertIn('data-mode="single"', html)
         self.assertIn('data-mode="kto"', html)
         self.assertIn('data-mode="dpo"', html)
         self.assertIn('id="ratings-sys-a"', html)
@@ -659,26 +849,34 @@ class TestUiWiring(unittest.TestCase):
     def test_capture_defaults_to_off(self):
         # Chat (no capture) is the default: the scope toggle pre-selects
         # it and the JS falls back to 'off' for unknown/unset persisted
-        # modes. DPO is the format Preference opens on first use.
+        # modes. Single is the kind Datasets opens on first use.
         html = (REPO_ROOT / "ezexl3/chat/static/index.html").read_text()
         self.assertIn('data-scope="chat" class="active"', html)
-        self.assertIn('data-mode="dpo" class="active"', html)
+        self.assertIn('data-mode="single" class="active"', html)
         js = (REPO_ROOT / "ezexl3/chat/static/js/ratings.js").read_text()
         self.assertIn("let ratingsMode = 'off'", js)
-        self.assertIn("let lastPrefKind = 'dpo'", js)
+        self.assertIn("let lastPrefKind = 'single'", js)
 
     def test_preference_controls_hide_until_enabled(self):
-        # The decluttering contract: the whole Preference Data block is
-        # hidden in Chat mode, and the DPO-only group inside it hides
-        # under KTO, where none of those controls do anything.
+        # The decluttering contract: the whole Datasets block is hidden
+        # in Chat mode; the generation group inside it hides under KTO,
+        # where none of those controls do anything; and the DPO-only rows
+        # of that group hide under Single.
         html = (REPO_ROOT / "ezexl3/chat/static/index.html").read_text()
         self.assertIn('id="pref-panel" hidden', html)
-        self.assertIn('id="pref-dpo-only"', html)
+        for el_id in ("pref-gen-group", "ratings-queue-mode-row",
+                      "ratings-bulk-dpo-opts", "ratings-sys-b-row"):
+            self.assertIn(f'id="{el_id}"', html)
         js = (REPO_ROOT / "ezexl3/chat/static/js/ratings.js").read_text()
         self.assertIn("function syncModeToggles()", js)
-        # syncModeToggles owns all three visibility decisions.
-        for target in ("pref-panel", "pref-dpo-only", "pref-kind-toggle"):
+        # syncModeToggles owns every visibility decision.
+        for target in ("pref-panel", "pref-gen-group", "pref-kind-toggle",
+                       "ratings-queue-mode-row", "ratings-bulk-dpo-opts",
+                       "ratings-sys-b-row"):
             self.assertIn(target, js)
+        # Rows toggled via the hidden attribute must actually hide.
+        css = (REPO_ROOT / "ezexl3/chat/static/style.css").read_text()
+        self.assertIn("#pref-panel [hidden] { display: none !important; }", css)
 
     def test_render_wires_rating_controls(self):
         js = (REPO_ROOT / "ezexl3/chat/static/js/render.js").read_text()
@@ -704,7 +902,12 @@ class TestUiWiring(unittest.TestCase):
         js = (REPO_ROOT / "ezexl3/chat/static/js/chat.js").read_text()
         self.assertIn("runDuel", js)
         self.assertIn("regenerateDuelCandidates", js)
-        self.assertIn("ratingsMode === 'dpo'", js)
+        # Send/regen branch on candidateSendActive(): DPO always, Single
+        # only while its queue drives.
+        self.assertIn("candidateSendActive()", js)
+        self.assertNotIn("ratingsMode === 'dpo'", js)
+        rjs = (REPO_ROOT / "ezexl3/chat/static/js/ratings.js").read_text()
+        self.assertIn("function candidateSendActive()", rjs)
         # Duels pass the per-candidate generation prompts to /api/chat
         self.assertIn("duelSystemPrompts", js)
         self.assertIn("system_prompts", js)
@@ -730,6 +933,22 @@ class TestUiWiring(unittest.TestCase):
         js = (REPO_ROOT / "ezexl3/chat/static/js/render.js").read_text()
         self.assertIn("saveAllBulk", js)
         self.assertIn("pendingDuel.bulk", js)
+
+    def test_single_mode_wiring(self):
+        js = (REPO_ROOT / "ezexl3/chat/static/js/ratings.js").read_text()
+        for name in ("saveSingleNode", "isSavedSingle", "candidateSendActive",
+                     "RATINGS_KINDS"):
+            self.assertIn(name, js)
+        # Unattended Single runs tag the bulk endpoint with kind=single;
+        # the review flow posts a single section with source 'bulk'.
+        self.assertIn("kind: ratingsMode === 'single' ? 'single' : 'dpo'", js)
+        self.assertIn("single: {completions, source: 'bulk'", js)
+        self.assertIn("{remove: [nodeId]}", js)
+        render = (REPO_ROOT / "ezexl3/chat/static/js/render.js").read_text()
+        self.assertIn("saveSingleNode", render)
+        self.assertIn("rated-saved", render)
+        css = (REPO_ROOT / "ezexl3/chat/static/style.css").read_text()
+        self.assertIn(".rated-saved", css)
 
 
 if __name__ == "__main__":

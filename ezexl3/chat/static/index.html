@@ -290,9 +290,10 @@
     </div>
   </div>
 
-  <!-- Hidden wholesale in Chat mode; the inner group is DPO-only. -->
+  <!-- Hidden wholesale in Chat mode; the generation group inside is
+       Single/DPO-only, and its DPO-only rows hide under Single. -->
   <div id="pref-panel" hidden>
-  <h2>Preference Data</h2>
+  <h2>Datasets</h2>
   <div class="sb-section">
     <div class="sb-row">
       <label class="sb-label">Dataset</label>
@@ -307,13 +308,13 @@
       <input type="checkbox" id="ratings-strip-think"> Strip thinking
     </label>
     <div class="sb-hint">Remove thought blocks (<code>&lt;|channel&gt;&hellip;&lt;channel|&gt;</code> / <code>&lt;think&gt;&hellip;&lt;/think&gt;</code>, tags included) from completions and prompt history before writing dataset rows.</div>
-    <div id="pref-dpo-only">
+    <div id="pref-gen-group">
     <div class="sb-row">
       <label class="sb-label">Candidates per prompt</label>
       <input type="number" id="ratings-batch" min="1" max="8" step="1" value="2">
     </div>
-    <div class="sb-hint">Replies generated side by side per prompt (duels need 2+; bulk allows 1). On recurrent/hybrid models (Gemma4, Qwen3.5&hellip;) each extra candidate reserves a cache slot at load, so <strong>reload the model</strong> after changing it; non-recurrent models update immediately.</div>
-    <div class="sb-row">
+    <div class="sb-hint">Replies generated side by side per prompt (duels need 2+; bulk and Single allow 1). On recurrent/hybrid models (Gemma4, Qwen3.5&hellip;) each extra candidate reserves a cache slot at load, so <strong>reload the model</strong> after changing it; non-recurrent models update immediately.</div>
+    <div class="sb-row" id="ratings-queue-mode-row">
       <label class="sb-label">Queue mode</label>
       <select id="ratings-queue-mode">
         <option value="duel">Judge pairs (duel)</option>
@@ -321,6 +322,7 @@
       </select>
     </div>
     <div id="ratings-bulk-opts" style="display:none">
+      <div id="ratings-bulk-dpo-opts">
       <div class="sb-row">
         <label class="sb-label">Save replies as</label>
         <select id="ratings-bulk-target">
@@ -332,6 +334,7 @@
         <input type="checkbox" id="ratings-bulk-carry" checked> Carry source columns (full pairs)
       </label>
       <div class="sb-hint">When the loaded rows already hold the other side (e.g. a <code>chosen</code> column), copy it into each saved row so pairs come out trainer-ready. Unchecked: the other side is left <code>""</code> to join later; the source <code>id</code> rides along either way.</div>
+      </div>
       <label class="gpu-auto-label">
         <input type="checkbox" id="ratings-queue-review"> Review each batch before saving
       </label>
@@ -347,19 +350,19 @@
       <button id="queue-stop-btn" class="sb-btn danger" type="button" style="display:none">&#9632; Stop</button>
     </div>
     <div class="sb-hint" id="queue-status" style="display:none"></div>
-    <div class="sb-hint">Accepts a JSON array, JSONL, or plain text (one prompt/line) &mdash; pasted or loaded. JSON rows are reduced to their user text (<code>prompt</code>, <code>text</code>, <code>messages</code>/<code>conversations</code> turn lists, Alpaca <code>instruction</code>+<code>input</code>, ShareGPT&hellip;), so the model never sees raw JSON; <code>chosen</code>/<code>rejected</code>/<code>id</code> columns are kept for bulk mode. Duel/review queues run each prompt in a fresh conversation and auto-advance on commit/save/skip.</div>
+    <div class="sb-hint">Accepts a JSON array, JSONL, or plain text (one prompt/line) &mdash; pasted or loaded. JSON rows are reduced to their user text (<code>prompt</code>, <code>text</code>, <code>messages</code>/<code>conversations</code> turn lists, Alpaca <code>instruction</code>+<code>input</code>, ShareGPT&hellip;), so the model never sees raw JSON; <code>chosen</code>/<code>rejected</code>/<code>id</code> columns are kept for DPO bulk mode (<code>id</code> also rides along on Single rows). Duel/review queues run each prompt in a fresh conversation and auto-advance on commit/save/skip.</div>
     <div class="sb-row">
       <label class="sb-label">System Prompt A</label>
       <textarea class="sb-textarea" id="ratings-sys-a" rows="3" placeholder="(main system prompt)"></textarea>
     </div>
-    <div class="sb-row">
+    <div class="sb-row" id="ratings-sys-b-row">
       <label class="sb-label">System Prompt B</label>
       <textarea class="sb-textarea" id="ratings-sys-b" rows="3" placeholder="(main system prompt)"></textarea>
     </div>
-    <div class="sb-hint">Generation-only prompts. Duels: candidates A and B get these two &mdash; e.g. one biasing toward the behavior you want, one against. Bulk generate: <strong>System Prompt A applies to every candidate</strong> (B is ignored). Blank = main system prompt. The dataset's <code>prompt</code> column always keeps the main system prompt; these are recorded as <code>chosen_system</code>/<code>rejected_system</code> metadata the trainer ignores.</div>
+    <div class="sb-hint">Generation-only prompts. Duels: candidates A and B get these two &mdash; e.g. one biasing toward the behavior you want, one against. Bulk generate and Single: <strong>System Prompt A applies to every candidate</strong> (B is ignored). Blank = main system prompt. The saved <code>prompt</code> column / <code>messages</code> system turn always keeps the main system prompt; the generation prompt is recorded as <code>chosen_system</code>/<code>rejected_system</code>/<code>gen_system</code> metadata the trainer ignores.</div>
     </div>
     <div class="sb-hint" id="ratings-info"></div>
-    <div class="sb-hint">Switch Chat/Preference and DPO/KTO in the top bar. KTO: &#x1F44D;/&#x1F44E; a reply &rarr; labeled row. DPO: each send generates candidates side by side &mdash; mark &#9650; chosen / &#9660; rejected and commit &rarr; pair. Regenerate replaces every candidate you haven't pinned with &#9650;/&#9660;. Trainer-ready JSONL.</div>
+    <div class="sb-hint">Switch Chat/Datasets and Single/DPO/KTO in the top bar. Single: &#x1F4BE; a reply &rarr; one <code>messages</code> conversation row; a queue run saves every kept reply the same way. KTO: &#x1F44D;/&#x1F44E; a reply &rarr; labeled row. DPO: each send generates candidates side by side &mdash; mark &#9650; chosen / &#9660; rejected and commit &rarr; pair. Regenerate replaces every candidate you haven't pinned with &#9650;/&#9660;. Trainer-ready JSONL.</div>
   </div>
   </div>
 
@@ -375,12 +378,13 @@
     <button id="toggle-sidebar" title="Toggle settings">&#9776;</button>
     <span id="header-title">ezexl3 chat</span>
     <div id="mode-toggles">
-      <div id="chat-mode-toggle" class="seg-toggle" title="Preference-data capture">
-        <button data-scope="chat" class="active" title="Normal chat — no preference-data capture">Chat</button>
-        <button data-scope="pref" title="Capture preference data while you chat">Preference</button>
+      <div id="chat-mode-toggle" class="seg-toggle" title="Dataset capture">
+        <button data-scope="chat" class="active" title="Normal chat — no dataset capture">Chat</button>
+        <button data-scope="pref" title="Build training datasets while you chat">Datasets</button>
       </div>
-      <div id="pref-kind-toggle" class="seg-toggle" title="Preference dataset format" hidden>
-        <button data-mode="dpo" class="active" title="DPO: each send generates candidates side by side; mark &#9650;/&#9660; and commit to record a pair">DPO</button>
+      <div id="pref-kind-toggle" class="seg-toggle" title="Dataset format" hidden>
+        <button data-mode="single" class="active" title="Single: &#x1F4BE; a reply saves the conversation as one plain messages row; queue runs save every kept reply">Single</button>
+        <button data-mode="dpo" title="DPO: each send generates candidates side by side; mark &#9650;/&#9660; and commit to record a pair">DPO</button>
         <button data-mode="kto" title="KTO: &#x1F44D;/&#x1F44E; a reply writes one labeled row">KTO</button>
       </div>
     </div>
@@ -409,7 +413,7 @@
 
 <!-- Hidden file input for session load -->
 <input type="file" id="file-input" accept=".json" style="display:none">
-<!-- Hidden file input for DPO prompt-queue import -->
+<!-- Hidden file input for prompt-queue import -->
 <input type="file" id="queue-file-input" accept=".txt,.jsonl,.json" style="display:none">
 
 <!-- ── Scripts (order matters: state → tree → render → settings → lora → draft → model → chat → session → main) ── -->

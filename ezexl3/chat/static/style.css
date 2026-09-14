@@ -60,6 +60,8 @@ body { display: flex; overflow: hidden; }
   overflow: hidden;
 }
 .seg-toggle[hidden] { display: none; }
+/* Sidebar rows toggled with the hidden attribute (mode-specific controls). */
+#pref-panel [hidden] { display: none !important; }
 .seg-toggle button {
   background: transparent; border: none; cursor: pointer;
   color: var(--text-dim); font-size: 11px; font-weight: 600;
@@ -628,7 +630,9 @@ body { display: flex; overflow: hidden; }
 .msg-rating button:hover { filter: none; border-color: var(--border-light); }
 .msg-rating button.rated-good,
 .msg-rating button.rated-bad,
+.msg-rating button.rated-saved,
 .msg-rating button.rated-pair { filter: none; }
+.msg-rating button.rated-saved { border-color: #2f5f7a; background: rgba(96, 165, 250, 0.12); color: #93c5fd; }
 .msg-rating button.rated-good { border-color: #2f6e3b; background: rgba(74, 222, 128, 0.12); }
 .msg-rating button.rated-bad { border-color: #7a3030; background: rgba(248, 113, 113, 0.12); }
 .msg-rating button.rated-pair { border-color: #6b5b1e; background: rgba(250, 204, 21, 0.12); color: #facc15; }

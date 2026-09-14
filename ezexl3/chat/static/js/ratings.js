@@ -1,18 +1,22 @@
-// ── Ratings: KTO/DPO preference-data capture ────────────────────
+// ── Ratings: Single/KTO/DPO dataset capture ─────────────────────
 // A header toggle picks the capture mode:
 //   Off — normal chat, no capture UI (the default).
+//   Single — 💾 on any assistant reply saves the conversation up to it as
+//         one plain {messages} row (SFT data); the prompt queue saves
+//         every kept reply the same way, reviewed or unattended.
 //   KTO — 👍/👎 on any assistant reply writes one independent labeled row.
 //   DPO — each send/regen generates N candidates side by side; mark one
 //         ▲ chosen and one ▼ rejected, then Commit writes the pair. ✗
 //         marks a candidate failed so Regenerate replaces just that one.
-// The prompt queue additionally supports a bulk-generate mode: every
+// The DPO prompt queue additionally supports a bulk-generate mode: every
 // non-✗ reply is saved on one side (chosen|rejected) — reviewed batch by
 // batch in the browser, or fully unattended via the server-side
-// cross-prompt runner (/api/ratings/bulk).
-// Rows land in <ratings_dir>/<dataset>.{kto,dpo}.jsonl, trainer-ready.
+// cross-prompt runner (/api/ratings/bulk). Single queues always run
+// bulk-style (review or unattended), writing conversation rows instead.
+// Rows land in <ratings_dir>/<dataset>.{single,kto,dpo}.jsonl, trainer-ready.
 
 let ratingsDataset = 'chat';
-let ratingsMode = 'off';    // 'off' | 'kto' | 'dpo'
+let ratingsMode = 'off';    // 'off' | 'single' | 'kto' | 'dpo'
 let ratingsStripThink = false;  // strip thought blocks from saved rows
 let ratingsBatch = 2;       // candidates per prompt (duel 2..8, bulk 1..8)
 // Queue mode: 'duel' judges ▲/▼ pairs; 'bulk' saves every non-✗ reply on
@@ -39,11 +43,13 @@ let pendingDuel = null;
 const ratingsState = {
   kto: new Map(),           // node_id -> bool
   pairs: [],                // [{chosen, rejected}] node-id pairs on disk
-  counts: {kto: 0, dpo: 0},
+  single: new Set(),        // node ids saved as Single rows
+  counts: {single: 0, kto: 0, dpo: 0},
   dir: '',
 };
 
 function getRating(nodeId) { return ratingsState.kto.get(nodeId); }
+function isSavedSingle(nodeId) { return ratingsState.single.has(nodeId); }
 
 function duelCount() {
   // Candidates per DPO duel, clamped to the batch ceiling.
@@ -58,8 +64,18 @@ function bulkCount() {
 }
 
 function bulkQueueActive() {
-  // Queue-driven sends generate in bulk mode (single prompt, save-all UI).
-  return promptQueue.active && ratingsQueueMode === 'bulk';
+  // Queue-driven sends generate bulk-style (✗-only marks, save-all UI):
+  // always under Single, and under DPO when the queue mode says bulk.
+  return promptQueue.active &&
+         (ratingsMode === 'single' || ratingsQueueMode === 'bulk');
+}
+
+function candidateSendActive() {
+  // Should send/regenerate stream side-by-side candidates (runDuel)
+  // instead of one streamed reply? DPO always; Single only while its
+  // queue is driving — ordinary Single chatting streams one reply and
+  // offers 💾 on it.
+  return ratingsMode === 'dpo' || bulkQueueActive();
 }
 
 function bulkGenSystem() {
@@ -91,7 +107,10 @@ function applyRatingsPayload(data) {
   ratingsState.pairs = (data.dpo || [])
     .filter(p => p.chosen && p.rejected)
     .map(p => ({chosen: p.chosen, rejected: p.rejected}));
+  const single = data.single || {};
+  ratingsState.single = new Set(single.nodes || []);
   ratingsState.counts = {
+    single: single.count || 0,
     kto: Object.keys(data.kto || {}).length,
     dpo: (data.dpo || []).length,
   };
@@ -110,18 +129,21 @@ async function refreshRatings() {
 
 // ── Capture mode ────────────────────────────────────────────────
 
-// Which preference format the Preference tab returns to. Seeded from
-// whatever mode we restore at load, so a KTO session survives a reload
-// and a round-trip through Chat; DPO is only the cold-start default.
-let lastPrefKind = 'dpo';
+// Which dataset kind the Datasets tab returns to. Seeded from whatever
+// mode we restore at load, so a KTO session survives a reload and a
+// round-trip through Chat; Single is only the cold-start default.
+let lastPrefKind = 'single';
+const RATINGS_KINDS = ['single', 'dpo', 'kto'];
 
 function setRatingsMode(mode, persist = true) {
-  ratingsMode = (mode === 'dpo' || mode === 'kto') ? mode : 'off';
+  const prev = ratingsMode;
+  ratingsMode = RATINGS_KINDS.includes(mode) ? mode : 'off';
   if (ratingsMode !== 'off') lastPrefKind = ratingsMode;
   syncModeToggles();
-  // A queue/duel can't outlive a switch away from DPO. Stop the queue
-  // first so the skip below doesn't auto-advance it.
-  if (ratingsMode !== 'dpo') {
+  // A queue/duel can't outlive a mode switch — its save semantics belong
+  // to the kind it started under. Stop the queue first so the skip
+  // below doesn't auto-advance it.
+  if (ratingsMode !== prev) {
     if (promptQueue.active) stopQueue();
     if (pendingDuel) skipDuel();
   }
@@ -136,9 +158,10 @@ function setRatingsMode(mode, persist = true) {
 }
 
 // Paint both header toggles and the sidebar from ratingsMode. The whole
-// Preference Data block hides in Chat mode; inside it, the DPO-only
-// group (candidates, queue, system prompts A/B) hides under KTO, where
-// none of those controls do anything.
+// Datasets block hides in Chat mode; inside it, the generation group
+// (candidates, queue, system prompts) hides under KTO, where none of
+// those controls do anything, and its DPO-only rows (queue mode, save
+// side + carry, System Prompt B) hide under Single.
 function syncModeToggles() {
   const onPref = ratingsMode !== 'off';
   document.querySelectorAll('#chat-mode-toggle button').forEach(b =>
@@ -149,8 +172,25 @@ function syncModeToggles() {
   if (kindToggle) kindToggle.hidden = !onPref;
   const panel = document.getElementById('pref-panel');
   if (panel) panel.hidden = !onPref;
-  const dpoOnly = document.getElementById('pref-dpo-only');
-  if (dpoOnly) dpoOnly.hidden = ratingsMode !== 'dpo';
+  const genGroup = document.getElementById('pref-gen-group');
+  if (genGroup) genGroup.hidden = !(ratingsMode === 'dpo' || ratingsMode === 'single');
+  const single = ratingsMode === 'single';
+  for (const id of ['ratings-queue-mode-row', 'ratings-bulk-dpo-opts',
+                    'ratings-sys-b-row']) {
+    const el = document.getElementById(id);
+    if (el) el.hidden = single;
+  }
+  syncBulkOpts();
+}
+
+// The bulk sub-options (save side, carry, review-each-batch) show when
+// the queue will run bulk-style: always under Single, else when the DPO
+// queue mode says bulk.
+function syncBulkOpts() {
+  const el = document.getElementById('ratings-bulk-opts');
+  if (!el) return;
+  const show = ratingsMode === 'single' || ratingsQueueMode === 'bulk';
+  el.style.display = show ? '' : 'none';
 }
 
 // ── Row construction ────────────────────────────────────────────
@@ -201,6 +241,20 @@ async function rateNode(nodeId, label) {
     kto: {node_id: nodeId, completion: stripThink(node.content),
           label: newLabel},
   });
+}
+
+async function saveSingleNode(nodeId) {
+  // Single mode 💾: save the conversation up to and including this reply
+  // as one {messages} row; clicking again withdraws it.
+  const node = tree.nodes.get(nodeId);
+  if (!node || node.role !== 'assistant' || !node.content.trim()) return;
+  const prompt = buildPromptTurns(nodeId);
+  if (!prompt) return;
+  const single = isSavedSingle(nodeId)
+    ? {remove: [nodeId]}
+    : {completions: [{node_id: nodeId, content: stripThink(node.content)}],
+       source: 'manual', gen_system: node.genSystem ?? null};
+  await postRate({dataset: ratingsDataset, prompt, single});
 }
 
 function setDuelMark(nodeId, mark) {
@@ -267,7 +321,8 @@ async function commitDuel() {
 
 async function saveAllBulk() {
   // Bulk review flow: save every candidate not marked ✗ as one dataset
-  // row each (generated text on the ratingsBulkTarget side), then
+  // row each — a {messages} conversation row under Single, else a DPO
+  // row with the generated text on the ratingsBulkTarget side — then
   // continue/advance. With every candidate ✗-marked this is a skip.
   if (!pendingDuel || !pendingDuel.bulk) return;
   const {ids, marks} = pendingDuel;
@@ -285,15 +340,24 @@ async function saveAllBulk() {
   const prompt = buildPromptTurns(continueId);
   if (completions.length && prompt) {
     const genSys = tree.nodes.get(completions[0].node_id)?.genSystem ?? null;
-    let source_row = null;
-    if (sourceRow && ratingsBulkCarry) source_row = sourceRow;
-    else if (sourceRow && sourceRow.id) source_row = {id: sourceRow.id};
-    await postRate({
-      dataset: ratingsDataset,
-      prompt,
-      bulk: {completions, target: ratingsBulkTarget,
-             gen_system: genSys, source_row},
-    });
+    if (ratingsMode === 'single') {
+      await postRate({
+        dataset: ratingsDataset,
+        prompt,
+        single: {completions, source: 'bulk', gen_system: genSys,
+                 source_row_id: sourceRow && sourceRow.id ? sourceRow.id : null},
+      });
+    } else {
+      let source_row = null;
+      if (sourceRow && ratingsBulkCarry) source_row = sourceRow;
+      else if (sourceRow && sourceRow.id) source_row = {id: sourceRow.id};
+      await postRate({
+        dataset: ratingsDataset,
+        prompt,
+        bulk: {completions, target: ratingsBulkTarget,
+               gen_system: genSys, source_row},
+      });
+    }
   }
   renderActiveTree();
   inputBox.focus();
@@ -357,7 +421,8 @@ async function postRate(body) {
 
 function queueAfterJudgment() {
   // Called at the end of commit/skip: advance the queue if it's running.
-  if (promptQueue.active && ratingsMode === 'dpo') advanceQueue();
+  if (promptQueue.active &&
+      (ratingsMode === 'dpo' || ratingsMode === 'single')) advanceQueue();
 }
 
 function startQueue() {
@@ -365,11 +430,12 @@ function startQueue() {
   const ta = document.getElementById('ratings-queue-text');
   const rows = parseQueueRows(ta ? ta.value : '');
   if (!rows.length) return;
-  if (ratingsQueueMode === 'bulk' && !ratingsQueueReview) {
+  const single = ratingsMode === 'single';
+  if ((single || ratingsQueueMode === 'bulk') && !ratingsQueueReview) {
     startBulkRun(rows);          // unattended: server-side cross-prompt run
     return;
   }
-  if (ratingsMode !== 'dpo') setRatingsMode('dpo');
+  if (!single && ratingsMode !== 'dpo') setRatingsMode('dpo');
   promptQueue = {rows, index: 0, active: true, finished: false, current: null};
   advanceQueue();
 }
@@ -399,14 +465,15 @@ async function runQueuePrompt() {
   updateQueueUI();
   await clearContext();          // fresh conversation per prompt
   inputBox.value = row.prompt;
-  await sendMessage();           // DPO mode → runDuel arms the judgment UI
+  await sendMessage();           // candidate send → runDuel arms the judgment UI
 }
 
 // ── Unattended bulk run ─────────────────────────────────────────
 // POST the parsed rows once; the server enqueues every prompt × N jobs in
 // one generator pool (batching across prompts), writes each reply to the
-// dataset as it finishes, and streams progress back over SSE. Stop calls
-// /api/stop — everything already written stays.
+// dataset as it finishes (DPO side rows, or {messages} conversation rows
+// under Single), and streams progress back over SSE. Stop calls /api/stop
+// — everything already written stays.
 
 async function startBulkRun(rows) {
   bulkRun = {active: true, itemsDone: 0, totalItems: rows.length,
@@ -420,6 +487,7 @@ async function startBulkRun(rows) {
         dataset: ratingsDataset,
         rows,
         n: bulkCount(),
+        kind: ratingsMode === 'single' ? 'single' : 'dpo',
         system_prompt: bulkGenSystem(),
         target: ratingsBulkTarget,
         carry: ratingsBulkCarry,
@@ -674,7 +742,7 @@ function updateRatingsSidebar(datasets) {
   if (info) {
     const c = ratingsState.counts;
     info.textContent =
-      `${c.kto} rated · ${c.dpo} pairs → ${ratingsState.dir}`;
+      `${c.single} single · ${c.kto} rated · ${c.dpo} pairs → ${ratingsState.dir}`;
   }
   const list = document.getElementById('ratings-datasets');
   if (list) {
@@ -691,8 +759,8 @@ async function initRatings() {
   // Bind the mode toggles before anything is awaited. Everything below
   // hangs on /api/config, and a page that loads faster than the server
   // answers used to leave the top bar inert until a manual reload.
-  // Chat/Preference picks the scope; entering Preference restores the
-  // last format used rather than always snapping back to DPO.
+  // Chat/Datasets picks the scope; entering Datasets restores the last
+  // kind used rather than always snapping back to Single.
   document.querySelectorAll('#chat-mode-toggle button').forEach(btn =>
     btn.addEventListener('click', () =>
       setRatingsMode(btn.dataset.scope === 'pref' ? lastPrefKind : 'off')));
@@ -745,18 +813,12 @@ async function initRatings() {
 
     // Queue mode (duel | bulk) + bulk options, all persisted.
     const queueModeEl = document.getElementById('ratings-queue-mode');
-    const bulkOptsEl = document.getElementById('ratings-bulk-opts');
-    const showBulkOpts = () => {
-      if (bulkOptsEl) {
-        bulkOptsEl.style.display = ratingsQueueMode === 'bulk' ? '' : 'none';
-      }
-    };
     if (queueModeEl) {
       ratingsQueueMode = cfg.ratings_queue_mode === 'bulk' ? 'bulk' : 'duel';
       queueModeEl.value = ratingsQueueMode;
       queueModeEl.addEventListener('change', () => {
         ratingsQueueMode = queueModeEl.value === 'bulk' ? 'bulk' : 'duel';
-        showBulkOpts();
+        syncBulkOpts();
         fetch('/api/config', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
@@ -805,7 +867,7 @@ async function initRatings() {
         }).catch(() => {});
       });
     }
-    showBulkOpts();
+    syncBulkOpts();
 
     // Prompt queue controls
     const queueStart = document.getElementById('queue-start-btn');

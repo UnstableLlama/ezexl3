@@ -423,9 +423,11 @@ async def handle_model_load(request: web.Request) -> web.Response:
             "settings": engine.settings.to_dict(),
         })
     except Exception as e:
-        return web.json_response(
-            {"ok": False, "error": str(e)}, status=500,
-        )
+        err = str(e)
+    # Outside the except block so the traceback (which pins the half-loaded
+    # model's frames) is gone before the final gc + empty_cache.
+    await asyncio.to_thread(engine.unload)
+    return web.json_response({"ok": False, "error": err}, status=500)
 
 
 async def handle_model_unload(request: web.Request) -> web.Response:
@@ -657,7 +659,7 @@ async def handle_config_set(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
-# Preference ratings (KTO / DPO data collection)
+# Dataset capture (Single / KTO / DPO data collection)
 # ---------------------------------------------------------------------------
 
 def _ratings_store() -> RatingsStore:
@@ -687,18 +689,25 @@ async def handle_ratings_get(request: web.Request) -> web.Response:
 
 
 async def handle_rate(request: web.Request) -> web.Response:
-    """Record preference data for chat messages.
+    """Record dataset rows for chat messages.
 
     Body: {dataset, prompt, kto?: {node_id, completion, label},
            pair?: {chosen: {node_id, content},
                    rejected: {node_id, content}, remove?},
            bulk?: {completions: [{node_id, content}], target,
-                   gen_system?, source_row?}}
+                   gen_system?, source_row?},
+           single?: {completions: [{node_id, content}], source?,
+                     gen_system?, source_row_id?}
+                  | {remove: [node_id, ...]}}
 
     kto upserts one thumbs row (KTO mode); pair upserts the DPO row for a
     two-candidate duel (DPO mode), keyed by the unordered node-id duo;
     bulk appends one row per completion with the generated text on the
-    *target* side (review-flow "Save all"). Returns the updated snapshot.
+    *target* side (DPO review-flow "Save all"); single appends one plain
+    {messages} conversation row per completion (Single mode: 💾 on a
+    reply with source "manual", or the review flow's "Save all" with
+    source "bulk"), or with remove deletes the rows keyed by those node
+    ids. Returns the updated snapshot.
     """
     engine: ChatEngine = request.app[_KEY_ENGINE]
     data = await request.json()
@@ -711,9 +720,10 @@ async def handle_rate(request: web.Request) -> web.Response:
     kto = data.get("kto")
     pair = data.get("pair")
     bulk = data.get("bulk")
-    if not (kto or pair or bulk):
+    single = data.get("single")
+    if not (kto or pair or bulk or single):
         return web.json_response(
-            {"error": "Nothing to record: need kto, pair, or bulk"},
+            {"error": "Nothing to record: need kto, pair, bulk, or single"},
             status=400,
         )
     prompt = data.get("prompt")
@@ -777,6 +787,45 @@ async def handle_rate(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": "source_row must be an object or null"}, status=400,
             )
+    if single is not None:
+        if not isinstance(single, dict):
+            return web.json_response(
+                {"error": "single must be an object"}, status=400,
+            )
+        rm = single.get("remove")
+        comps = single.get("completions")
+        if rm is not None:
+            if (not isinstance(rm, list) or not rm
+                    or not all(isinstance(x, str) and x for x in rm)):
+                return web.json_response(
+                    {"error": "single.remove needs a non-empty list of "
+                              "node ids"}, status=400,
+                )
+        elif (not isinstance(comps, list) or not comps
+                or not all(isinstance(c, dict)
+                           and isinstance(c.get("content"), str)
+                           for c in comps)):
+            return web.json_response(
+                {"error": "single needs a non-empty completions list of "
+                          "{node_id, content} (or remove: [node_id, …])"},
+                status=400,
+            )
+        if single.get("source", "bulk") not in ("manual", "bulk"):
+            return web.json_response(
+                {"error": "single source must be 'manual' or 'bulk'"},
+                status=400,
+            )
+        gs = single.get("gen_system")
+        if gs is not None and not isinstance(gs, str):
+            return web.json_response(
+                {"error": "gen_system must be a string or null"}, status=400,
+            )
+        srid = single.get("source_row_id")
+        if srid is not None and not isinstance(srid, (str, int)):
+            return web.json_response(
+                {"error": "source_row_id must be a string, number, or null"},
+                status=400,
+            )
 
     # Full model dir as provenance — the basename alone is ambiguous for
     # layouts like .../Llama-3.2-3B-Instruct/4.
@@ -796,6 +845,15 @@ async def handle_rate(request: web.Request) -> web.Response:
                                 bulk["target"], model,
                                 source_row=bulk.get("source_row"),
                                 gen_system=bulk.get("gen_system"))
+        if single is not None:
+            if single.get("remove") is not None:
+                store.remove_single_rows(dataset, single["remove"])
+            else:
+                store.add_single_rows(
+                    dataset, prompt, single["completions"], model,
+                    source=single.get("source", "bulk"),
+                    source_row_id=single.get("source_row_id"),
+                    gen_system=single.get("gen_system"))
         state = store.state(dataset)
         return {
             "dataset": dataset,
@@ -811,17 +869,20 @@ async def handle_rate(request: web.Request) -> web.Response:
 
 
 async def handle_ratings_bulk(request: web.Request) -> web.Response:
-    """SSE endpoint: unattended bulk generation into a preference dataset.
+    """SSE endpoint: unattended bulk generation into a dataset.
 
     Body: {dataset, rows: [{prompt, chosen?, rejected?, id?}], n,
-           system_prompt?, target, carry?, strip_think?}
+           system_prompt?, kind?: "dpo"|"single", target, carry?,
+           strip_think?}
 
     Every row's prompt becomes a fresh single-turn conversation; the
     engine batches all rows × n jobs across prompts in one generator
-    pool. Each completion is written to <dataset>.dpo.jsonl as it
-    finishes (generated text on the *target* side; with carry=true the
-    opposite side comes from the source row). Streams progress events;
-    POST /api/stop cancels, keeping everything already written.
+    pool. Each completion is written as it finishes: kind "dpo" (the
+    default) to <dataset>.dpo.jsonl with the generated text on the
+    *target* side (with carry=true the opposite side comes from the
+    source row); kind "single" to <dataset>.single.jsonl as one plain
+    {messages} conversation row (target/carry ignored). Streams progress
+    events; POST /api/stop cancels, keeping everything already written.
     """
     engine: ChatEngine = request.app[_KEY_ENGINE]
     data = await request.json()
@@ -846,8 +907,13 @@ async def handle_ratings_bulk(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "n must be an integer in 1..8"}, status=400,
         )
+    kind = data.get("kind", "dpo")
+    if kind not in ("dpo", "single"):
+        return web.json_response(
+            {"error": "kind must be 'dpo' or 'single'"}, status=400,
+        )
     target = data.get("target")
-    if target not in ("chosen", "rejected"):
+    if kind == "dpo" and target not in ("chosen", "rejected"):
         return web.json_response(
             {"error": "target must be 'chosen' or 'rejected'"}, status=400,
         )
@@ -907,12 +973,19 @@ async def handle_ratings_bulk(request: web.Request) -> web.Response:
         items_done += 1
         if not comps:
             return
-        written = await asyncio.to_thread(
-            store.add_bulk_rows, dataset, _turns_for(prompts[i]), comps,
-            target, model,
-            source_row=rows[i] if carry else {"id": rows[i].get("id")},
-            gen_system=gen_system,
-        )
+        if kind == "single":
+            written = await asyncio.to_thread(
+                store.add_single_rows, dataset, _turns_for(prompts[i]),
+                comps, model, source="bulk",
+                source_row_id=rows[i].get("id"), gen_system=gen_system,
+            )
+        else:
+            written = await asyncio.to_thread(
+                store.add_bulk_rows, dataset, _turns_for(prompts[i]), comps,
+                target, model,
+                source_row=rows[i] if carry else {"id": rows[i].get("id")},
+                gen_system=gen_system,
+            )
         rows_written += written
         preview = comps[-1]["content"]
         await _send({

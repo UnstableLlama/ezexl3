@@ -257,9 +257,9 @@ function renderActiveTree() {
     }
 
     // Rating controls (assistant only), gated by the capture mode:
-    // Off shows nothing; KTO mode shows 👍/👎; DPO mode shows a
-    // "preferred" badge on messages whose duel pick is recorded
-    // (click to withdraw).
+    // Off shows nothing; Single shows 💾 save / ✓ saved (click to
+    // withdraw); KTO mode shows 👍/👎; DPO mode shows a "preferred"
+    // badge on messages whose duel pick is recorded (click to withdraw).
     if (node.role === 'assistant' && typeof getRating === 'function' &&
         ratingsMode !== 'off') {
       const ratingSpan = document.createElement('span');
@@ -275,7 +275,14 @@ function renderActiveTree() {
         ratingSpan.appendChild(btn);
       }
 
-      if (ratingsMode === 'kto') {
+      if (ratingsMode === 'single') {
+        const saved = isSavedSingle(nodeId);
+        addRate(saved ? '✓ saved' : '\u{1F4BE} save',
+          saved ? 'Saved as a conversation row — click to withdraw'
+                : 'Save the conversation up to this reply as one dataset row',
+          () => saveSingleNode(nodeId), 'rated-saved', saved);
+        if (saved) ratingSpan.classList.add('has-rating');
+      } else if (ratingsMode === 'kto') {
         addRate('\u{1F44D}', 'Good response (KTO)',
           () => rateNode(nodeId, true), 'rated-good', rating === true);
         addRate('\u{1F44E}', 'Bad response (KTO)',
@@ -343,8 +350,9 @@ function renderActiveTree() {
 // be judged from either end. Regenerate replaces the un-pinned
 // candidates; Commit (one ▲ + one ▼) writes the pair; Skip continues
 // without recording. Bulk review: only ✗ (discard) marks; Save all
-// writes every non-✗ candidate on the configured side and Regenerate
-// replaces just the ✗ ones. The action bar is repeated above and below.
+// writes every non-✗ candidate (on the configured DPO side, or as a
+// conversation row under Single) and Regenerate replaces just the ✗
+// ones. The action bar is repeated above and below.
 function renderDuelChoice(container) {
   const block = document.createElement('div');
   block.className = 'duel-block';
@@ -402,9 +410,11 @@ function renderDuelChoice(container) {
       const saveBtn = document.createElement('button');
       saveBtn.className = 'duel-commit-btn';
       saveBtn.textContent = `✓ Save all & next (${kept.length})`;
-      saveBtn.title = 'Save every non-✗ reply as a ' +
-        (typeof ratingsBulkTarget !== 'undefined' ? ratingsBulkTarget : '') +
-        ' row and continue';
+      saveBtn.title = ratingsMode === 'single'
+        ? 'Save every non-✗ reply as a conversation row and continue'
+        : 'Save every non-✗ reply as a ' +
+          (typeof ratingsBulkTarget !== 'undefined' ? ratingsBulkTarget : '') +
+          ' row and continue';
       saveBtn.disabled = kept.length === 0;
       saveBtn.addEventListener('click', () => saveAllBulk());
       bar.appendChild(saveBtn);

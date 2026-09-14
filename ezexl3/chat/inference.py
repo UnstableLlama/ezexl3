@@ -218,11 +218,34 @@ class ChatEngine:
         devices = self._devices or list(range(torch.cuda.device_count()))
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(d) for d in devices)
 
+        # Auto split: exllamav3's own "auto" packs the first device down to
+        # ~0.5 GB before spilling, but LoRA tensors are copied onto whichever
+        # device their target layer landed on AFTER the split — so a multi-GB
+        # adapter OOMs on GPU 0 while the next card sits empty. Hand exllamav3
+        # explicit per-device budgets that leave room for the adapters instead.
+        device_ratios = self._device_ratios
+        if not device_ratios and len(devices) > 1:
+            device_ratios = _auto_gpu_split(
+                len(devices), _lora_vram_bytes(self.lora_dirs),
+            )
+            if device_ratios:
+                print(f"  GPU split (GB): {device_ratios}")
+
+        try:
+            self._load_inner(model_init, devices, device_ratios)
+        except BaseException:
+            # A failure anywhere in the load (LoRA OOM after the generator
+            # exists, draft model, cache) must not leave a half-resident
+            # model that the UI reports as loaded.
+            self.unload()
+            raise
+
+    def _load_inner(self, model_init, devices, device_ratios):
         # Build a minimal args namespace that model_init.init() expects
         args = _build_model_args(
             self.model_dir,
             devices,
-            self._device_ratios,
+            device_ratios,
             self._cache_size,
             self._cache_quant,
             self.batch_slots,
@@ -327,8 +350,9 @@ class ChatEngine:
             raise ValueError("Cannot specify both a draft model directory and MTP drafting")
         if ngram_min and (use_mtp or draft_model_dir):
             raise ValueError("Cannot combine n-gram drafting with a draft model or MTP drafting")
-        if self.is_loaded:
-            self.unload()
+        # Unconditional: a failed earlier load can leave weights resident
+        # without a generator (is_loaded False).
+        self.unload()
         self.model_dir = os.path.abspath(model_dir)
         self.model_name = os.path.basename(self.model_dir)
         self.lora_dirs = [os.path.abspath(p) for p in (lora_dirs or [])]
@@ -1108,6 +1132,84 @@ def ngram_ram_support() -> bool:
     except Exception:
         return False
     return "-ngr" in opts
+
+
+_SAFETENSORS_DTYPE_BYTES = {
+    "F64": 8, "I64": 8, "U64": 8,
+    "F32": 4, "I32": 4, "U32": 4,
+    "F16": 2, "BF16": 2, "I16": 2, "U16": 2,
+    "F8_E4M3": 1, "F8_E5M2": 1, "I8": 1, "U8": 1, "BOOL": 1,
+}
+
+# Adapter files exllamav3.model.lora.LoRA copies onto the model's devices.
+_LORA_WEIGHT_FILES = (
+    "adapter_model.safetensors",
+    "lora_modules.safetensors",
+    "modules_to_save.safetensors",
+)
+
+
+def _lora_vram_bytes(lora_dirs: list[str] | None) -> int:
+    """Approximate VRAM the given LoRA adapters occupy once loaded.
+
+    LoRA.from_directory casts fp32/bf16 tensors to fp16 before moving them
+    to each target module's device, so count elements x 2 bytes. Reads only
+    the safetensors headers — no tensor data. Unreadable files fall back to
+    their on-disk size; missing files count as zero.
+    """
+    import json
+    import struct
+    total = 0
+    for d in lora_dirs or []:
+        for name in _LORA_WEIGHT_FILES:
+            path = os.path.join(d, name)
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path, "rb") as f:
+                    (hlen,) = struct.unpack("<Q", f.read(8))
+                    header = json.loads(f.read(hlen))
+                for key, info in header.items():
+                    if key == "__metadata__":
+                        continue
+                    start, end = info["data_offsets"]
+                    per = _SAFETENSORS_DTYPE_BYTES.get(info.get("dtype"), 2)
+                    total += ((end - start) // per) * 2
+            except Exception:
+                total += os.path.getsize(path)
+    return total
+
+
+def _auto_gpu_split(
+    num_devices: int,
+    extra_reserve_bytes: int = 0,
+    reserve_gb: float = 0.5,
+) -> str | None:
+    """Per-device VRAM budgets (GB, comma separated) for exllamav3's -gs.
+
+    Each visible device gets its currently free VRAM minus exllamav3's usual
+    0.5 GB headroom minus *extra_reserve_bytes* (the LoRA footprint, which
+    lands on whichever device each target layer was split to). Autosplit
+    then stops filling a card early enough that the adapters still fit.
+    Returns None when the budgets can't be measured (no CUDA), so the
+    caller falls back to exllamav3's own auto split.
+    """
+    if not torch.cuda.is_available():
+        return None
+    gib = 1024 ** 3
+    budgets = []
+    for i in range(num_devices):
+        try:
+            free, _total = torch.cuda.mem_get_info(i)
+        except Exception:
+            return None
+        budget = free - int(reserve_gb * gib) - int(extra_reserve_bytes)
+        # A device that can't fit the headroom is left out of the split
+        # (exllamav3 treats a 0 budget as inactive) rather than forced.
+        budgets.append(max(0.0, budget / gib))
+    if not any(b > 0 for b in budgets):
+        return None
+    return ",".join(f"{b:.2f}" for b in budgets)
 
 
 def _build_model_args(

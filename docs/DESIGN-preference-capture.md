@@ -54,6 +54,28 @@ candidate shows the prompt it was generated under (hover to read it).
 Every row carries provenance the trainer ignores: node ids, `source`
 ("duel" for v1 DPO picks), `model` (full model directory path), `ts`.
 
+## Single mode (added 2026-09-12)
+
+The top-bar scope toggle became **Chat | Datasets** and the kind toggle
+gained a first position, **Single**, for plain SFT data. One gesture, one
+kind of row, as before:
+
+- **💾 on any reply** saves the conversation up to and including it as
+  one `{"messages": [...]}` row in `<dataset>.single.jsonl` (upsert by
+  node id; click again withdraws). This is the fork's SFT layout
+  (`--messages-key messages`), single- or multi-turn.
+- **The prompt queue always runs bulk-style** under Single: n candidates
+  per prompt (1 by default), ✗ / Regenerate / "Save all & next" when
+  reviewing, or the unattended cross-prompt runner with `kind: "single"`.
+  Every kept reply becomes its own row. Queue mode, save-side and carry
+  are DPO-only and hide; the review checkbox and System Prompt A stay.
+- **System prompts** follow the DPO convention: the saved system turn is
+  always the main system prompt; the generation prompt (System Prompt A)
+  is recorded as `gen_system` metadata. Generating under a spoofed
+  prompt and training against the plain one is thus available for SFT.
+- Queue rows are still reduced to their last user turn (single-turn
+  prompts). Feeding a row's earlier turns as context is a follow-up.
+
 ## Deferred / future work
 
 1. **BOTH (hybrid) mode** — a third toggle position where thumbs and

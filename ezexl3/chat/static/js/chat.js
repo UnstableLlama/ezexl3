@@ -122,9 +122,9 @@ async function streamDuel(message, context, bodies, systemPrompts = null) {
 async function runDuel(userNode, context) {
   // Streams N candidates side by side, adds each as a sibling assistant
   // node, and (unless stopped) arms pendingDuel so renderActiveTree shows
-  // the judgment UI. Queue-driven bulk mode allows a single candidate,
-  // generates every candidate under System Prompt A, and swaps the ▲/▼
-  // pick UI for ✗ / Save-all.
+  // the judgment UI. Queue-driven bulk mode (DPO bulk, or any Single
+  // queue) allows a single candidate, generates every candidate under
+  // System Prompt A, and swaps the ▲/▼ pick UI for ✗ / Save-all.
   duelStopped = false;
   const bulk = bulkQueueActive();
   const n = bulk ? bulkCount() : duelCount();
@@ -291,7 +291,7 @@ async function sendMessage() {
   stopBtn.style.display = 'flex';
   sendBtn.disabled = true;
 
-  if (ratingsMode === 'dpo') {
+  if (candidateSendActive()) {
     try {
       await runDuel(userNode, context);
     } catch (e) {
@@ -354,7 +354,7 @@ async function regenerateResponse(assistantNodeId) {
   stopBtn.style.display = 'flex';
   sendBtn.disabled = true;
 
-  if (ratingsMode === 'dpo') {
+  if (candidateSendActive()) {
     try {
       await runDuel(userNode, context);
     } catch (e) {

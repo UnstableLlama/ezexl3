@@ -7,6 +7,22 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **chat: Single datasets** — the top-bar **Preference** toggle is now
+  **Datasets**, with a new first kind, **Single**, beside DPO and KTO.
+  Single saves plain conversations for SFT: `<dataset>.single.jsonl` rows
+  of `{"messages": [system?, user, assistant]}` (what the fork's SFT
+  trainers read with `--messages-key messages`) plus `node_id` / `source`
+  / `gen_system` / `source_row_id` / `model` / `ts` provenance. Capture
+  works both ways KTO/DPO do: 💾 on any reply records the conversation up
+  to it (click again withdraws; upsert by node id), and the prompt queue
+  runs bulk-style — ✗ / Regenerate / Save all & next per batch, or
+  unattended via `/api/ratings/bulk` with `kind: "single"` (the server
+  batches across prompts and saves each reply as it finishes). System
+  Prompt A stays generation-only: the saved system turn is the main
+  prompt, the generation prompt lands in `gen_system`. Single is the
+  cold-start default kind. `/api/rate` gains a `single` section
+  (`completions` or `remove`); `/api/ratings` snapshots report
+  `single: {nodes, count}`.
 - **`ezexl3 qbench`**: exllamav3's qbench quant-comparison harness (the
   upstream replacement for `compare_q.py`), vendored (`eval/qbench.py` plus
   the `qbench/` package) and driven from the ezexl3 directory layout. A
@@ -47,6 +63,19 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   **High Quality** toggle on the dashboard's MTP form.
 
 ### Fixed
+- **chat: multi-GPU auto split leaves room for LoRA adapters.** exllamav3's
+  `-gs auto` packs the first card down to ~0.5 GB before spilling, but LoRA
+  tensors are copied onto whichever device their target layer landed on
+  *after* the split, so a multi-GB adapter OOMed on GPU 0 while the next
+  card sat empty. The chat engine now passes explicit per-device budgets
+  (free VRAM minus 0.5 GB minus the adapters' fp16 size, read from the
+  safetensors headers) so autosplit spills earlier and the adapter fits.
+  An explicit split from the load panel still wins.
+- **chat: a failed model load unloads.** An exception anywhere in the load
+  (e.g. the LoRA step OOMing after the generator existed) left a half-
+  resident model that `/api/status` reported as loaded with zero adapters.
+  `load()` now tears everything down on any error and the load handler
+  frees VRAM again once the traceback is dropped.
 - `ezexl3 readme` without `-b` crashed with a TypeError instead of
   auto-detecting BPW subdirectories (None was passed to the CSV list
   normalizer). Auto-detection now actually happens, and `qbench` relies on

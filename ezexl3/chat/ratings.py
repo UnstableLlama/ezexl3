@@ -1,24 +1,30 @@
-# Preference-rating store for the chat UI (KTO / DPO data collection).
+# Dataset store for the chat UI (Single / KTO / DPO data collection).
 #
-# The UI captures in one of two modes (header toggle; a third "Off"
+# The UI captures in one of three modes (header toggle; an "Off"
 # position — the default — disables capture entirely):
+#   Single — a reply is saved as one plain conversation row (SFT data):
+#            💾 on any reply, or every kept reply of a queue run.
 #   KTO — 👍/👎 on a reply writes one independent labeled row.
 #   DPO — each send/regen produces two candidates; marking one ▲ chosen
 #         and one ▼ rejected then committing writes one pair.
 #
-# Rows are appended to plain JSONL files in the exact column format that
-# UnstableLlama/exllamav3's training/qlora_train_pref.py reads with its
-# default keys, so a collected dataset trains with zero conversion:
+# Rows are appended to plain JSONL files in the exact column format the
+# UnstableLlama/exllamav3 fork's trainers read with their default keys, so
+# a collected dataset trains with zero conversion:
 #
-#   <dataset>.kto.jsonl : {"prompt": [...], "completion": str, "label": bool}
-#   <dataset>.dpo.jsonl : {"prompt": [...], "chosen": str, "rejected": str}
+#   <dataset>.single.jsonl : {"messages": [...turns..., assistant turn]}
+#                            (SFT: qlora_train*.py --messages-key messages)
+#   <dataset>.kto.jsonl    : {"prompt": [...], "completion": str, "label": bool}
+#   <dataset>.dpo.jsonl    : {"prompt": [...], "chosen": str, "rejected": str}
+#                            (training/qlora_train_pref.py)
 #
-# "prompt" is a TRL-conversational list of {role, content} turns (full chat
-# history; the trainer currently folds this to system + last user turn, but
-# the stored data keeps the full context for future multi-turn training).
-# Extra provenance keys (node_id, model, ts, source, and on DPO rows the
-# chosen_system/rejected_system generation prompts) ride along on every
-# row; the trainer selects columns by name and ignores them.
+# "prompt" / "messages" are TRL-conversational lists of {role, content}
+# turns (full chat history; the preference trainer currently folds this to
+# system + last user turn, but the stored data keeps the full context for
+# future multi-turn training). Extra provenance keys (node_id, model, ts,
+# source, and the generation prompts — chosen_system/rejected_system on
+# DPO rows, gen_system on Single rows) ride along on every row; the
+# trainers select columns by name and ignore them.
 
 from __future__ import annotations
 
@@ -87,7 +93,7 @@ def strip_think_text(text: str) -> str:
 
 
 class RatingsStore:
-    """JSONL-backed store; one .kto.jsonl + one .dpo.jsonl per dataset.
+    """JSONL-backed store; .single/.kto/.dpo.jsonl files per dataset.
 
     Files are small (human-scale ratings), so mutations do an atomic
     read-filter-append-rewrite. Lines that don't parse as JSON objects
@@ -244,10 +250,62 @@ class RatingsStore:
             self._write(path, rows)
         return written
 
+    def add_single_rows(self, dataset: str, prompt: list, completions: list,
+                        model: str, source: str = "bulk",
+                        source_row_id=None,
+                        gen_system: str | None = None) -> int:
+        """Append one plain conversation row per completion (Single mode).
+
+        Each row is {"messages": prompt + [assistant turn]} — the OpenAI
+        layout the fork's SFT trainers read with --messages-key messages
+        — plus provenance. *completions* is a list of {"content": str,
+        "node_id": str|None}; rows carrying a node id upsert (re-saving
+        the same reply replaces its row). *source* is "manual" (💾 on a
+        reply) or "bulk" (queue runs, reviewed or unattended).
+        *gen_system* is the generation-time system prompt when it
+        differed from the saved system turn — metadata only, the trainer
+        ignores it. Returns the number of rows written.
+        """
+        if source not in ("manual", "bulk"):
+            raise ValueError(f"invalid single source: {source!r}")
+        path = self._path(dataset, "single")
+        ids = {c["node_id"] for c in completions if c.get("node_id")}
+        with _LOCK:
+            rows = [r for r in self._read(path)
+                    if isinstance(r, str) or r.get("node_id") not in ids]
+            written = 0
+            for c in completions:
+                content = c.get("content")
+                if not isinstance(content, str) or not content.strip():
+                    continue
+                rows.append({
+                    "messages": list(prompt)
+                                + [{"role": "assistant", "content": content}],
+                    "node_id": c.get("node_id"),
+                    "gen_system": gen_system,
+                    "source": source,
+                    "source_row_id": source_row_id,
+                    "model": model,
+                    "ts": _now(),
+                })
+                written += 1
+            self._write(path, rows)
+        return written
+
+    def remove_single_rows(self, dataset: str, node_ids: list) -> None:
+        """Delete the Single rows keyed by any of *node_ids* (💾 withdraw)."""
+        path = self._path(dataset, "single")
+        drop = {n for n in node_ids if n}
+        with _LOCK:
+            rows = [r for r in self._read(path)
+                    if isinstance(r, str) or r.get("node_id") not in drop]
+            self._write(path, rows)
+
     # ── queries ───────────────────────────────────────────────────
 
     def state(self, dataset: str) -> dict:
-        """UI-facing state: node-keyed labels + pair ids (no content)."""
+        """UI-facing state: node-keyed labels, pair ids, saved-single
+        node ids + row count (no content)."""
         kto = {}
         for r in self._read(self._path(dataset, "kto")):
             if isinstance(r, dict) and r.get("node_id"):
@@ -265,14 +323,24 @@ class RatingsStore:
                     "rejected": r.get("rejected_node_id"),
                     "source": r.get("source", "manual"),
                 })
-        return {"kto": kto, "dpo": dpo}
+        # Single rows: node ids drive the 💾/✓ badge; the count includes
+        # unattended rows (no node id) and any hand-added JSON rows.
+        single_nodes, single_count = [], 0
+        for r in self._read(self._path(dataset, "single")):
+            if not isinstance(r, dict):
+                continue
+            single_count += 1
+            if r.get("node_id"):
+                single_nodes.append(r["node_id"])
+        return {"kto": kto, "dpo": dpo,
+                "single": {"nodes": single_nodes, "count": single_count}}
 
     def list_datasets(self) -> list[str]:
         if not self.root.is_dir():
             return []
         names = set()
         for p in self.root.iterdir():
-            for kind in (".kto.jsonl", ".dpo.jsonl"):
+            for kind in (".single.jsonl", ".kto.jsonl", ".dpo.jsonl"):
                 if p.name.endswith(kind):
                     names.add(p.name[: -len(kind)])
         return sorted(names)
