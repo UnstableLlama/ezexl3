@@ -308,18 +308,29 @@ class EvalTraceTests(unittest.TestCase):
             cmd = measure.call_args.args[0]
             self.assertEqual(cmd[cmd.index("-d") + 1], "3")
 
-    def test_five_bpw_donor_matches_selfcal_selection(self):
+    def test_six_bpw_donor_matches_selfcal_selection(self):
         from ezexl3.repo_selfcal import _find_trace_donor
         with tempfile.TemporaryDirectory() as tmp:
-            model = _make_model_dir(tmp, ("3", "5", "8"))
-            for bpw in ("3", "5"):
+            model = _make_model_dir(tmp, ("3", "5", "6", "8"))
+            for bpw in ("3", "5", "6"):
                 Path(model, bpw, "config.json").write_text("{}")
-            # The incomplete 8 bpw directory must not displace the completed 5.
+            # The incomplete 8 bpw directory must not displace the completed 6,
+            # and the completed 5 is below the 6 bpw donor floor.
             with patch("ezexl3.repo_selfcal._run_script", side_effect=_generate_trace) as generate:
                 qbench.ensure_eval_trace(model, 0)
             cmd = generate.call_args.args[0]
             self.assertEqual(cmd[cmd.index("-m") + 1], _find_trace_donor(model))
-            self.assertEqual(cmd[cmd.index("-m") + 1], str(Path(model, "5")))
+            self.assertEqual(cmd[cmd.index("-m") + 1], str(Path(model, "6")))
+
+    def test_five_bpw_quant_is_not_a_donor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model = _make_model_dir(tmp, ("3", "5"))
+            for bpw in ("3", "5"):
+                Path(model, bpw, "config.json").write_text("{}")
+            with patch("ezexl3.repo_selfcal._run_script", side_effect=_generate_trace) as generate:
+                qbench.ensure_eval_trace(model, 0)
+            cmd = generate.call_args.args[0]
+            self.assertEqual(cmd[cmd.index("-m") + 1], model)
 
     def test_generates_separate_trace_once_from_high_precision_donor(self):
         with tempfile.TemporaryDirectory() as tmp:

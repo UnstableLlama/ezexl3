@@ -253,8 +253,8 @@ def build_parser() -> argparse.ArgumentParser:
                                 "Bare flag applies to all BPWs; with args applies to listed BPWs only. "
                                 "Example: -hb8 6,8")
         p_sub.add_argument("-hb", "--head-bits", type=int, default=None,
-                           help="Head (output layer) bitrate for all BPWs, 1-8 (exllamav3 default: 6). "
-                                "Takes precedence over -hb8 paints. Example: -hb 4")
+                           help="Head (output layer) bitrate for all BPWs, 1-8, or 16 to store unquantized "
+                                "(exllamav3 default: 6). Takes precedence over -hb8 paints. Example: -hb 16")
         p_sub.add_argument("-vb", "--vision-bits", type=int, default=None,
                            help="Vision tower bitrate for all BPWs, 1-8, or 16 to store unquantized "
                                 "(default: architecture's default). Requires a recent exllamav3. "
@@ -280,7 +280,7 @@ def build_parser() -> argparse.ArgumentParser:
                                 "with args applies to listed BPWs only. Example: -sc 2.5,3.14")
         p_sub.add_argument("-scd", "--sc-donor", type=str, default=None,
                            help="Model directory the -sc calibration trace is sampled from. "
-                                "Default: the highest completed quant >= 5 bpw under the model "
+                                "Default: the highest completed quant >= 6 bpw under the model "
                                 "dir, else the unquantized model (correct but much slower). "
                                 "Example: -scd /models/Foo/6.0")
         p_sub.add_argument("-opt", nargs="*", default=None,
@@ -349,8 +349,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Use 8-bit head quantization (exllamav3 -hb 8) instead of default 6. "
                         "Bare flag applies to all BPWs; with args applies to listed BPWs only.")
     q.add_argument("-hb", "--head-bits", type=int, default=None,
-                   help="Head (output layer) bitrate for all BPWs, 1-8 (exllamav3 default: 6). "
-                        "Takes precedence over -hb8 paints.")
+                   help="Head (output layer) bitrate for all BPWs, 1-8, or 16 to store unquantized "
+                        "(exllamav3 default: 6). Takes precedence over -hb8 paints.")
     q.add_argument("-vb", "--vision-bits", type=int, default=None,
                    help="Vision tower bitrate for all BPWs, 1-8, or 16 to store unquantized "
                         "(default: architecture's default). Requires a recent exllamav3.")
@@ -372,7 +372,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "Bare flag applies to all BPWs; with args applies to listed BPWs only.")
     q.add_argument("-scd", "--sc-donor", type=str, default=None,
                    help="Model directory the -sc calibration trace is sampled from. "
-                        "Default: the highest completed quant >= 5 bpw under the model dir, "
+                        "Default: the highest completed quant >= 6 bpw under the model dir, "
                         "else the unquantized model (correct but much slower).")
     q.add_argument("-opt", nargs="*", default=None,
                    help="Use optimized quantization pipeline for fractional BPWs. "
@@ -680,8 +680,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     # via the quant_args passthrough, so every conversion picks them up.
     head_bits = getattr(args, "head_bits", None)
     if head_bits is not None:
-        if not (1 <= head_bits <= 8):
-            raise SystemExit(f"--head-bits must be 1-8, got {head_bits}")
+        if not (1 <= head_bits <= 8 or head_bits == 16):
+            raise SystemExit(f"--head-bits must be 1-8 or 16, got {head_bits}")
         if hb8_bpws:
             print("⚠️  Both -hb and -hb8 given: -hb takes precedence for all BPWs")
         if "-hb" not in pt.quant_args:

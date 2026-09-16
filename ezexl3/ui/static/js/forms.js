@@ -444,7 +444,7 @@ function rebuildBpwTokens(fieldName, paintFlags) {
         // Rebuild so the token glow + button active state stay in sync
         rebuildBpwTokens(fieldName, paintFlags);
         // -sc needs a low-distortion model to sample its calibration trace
-        // from. It always runs, but with nothing >= 5 bpw around it falls back
+        // from. It always runs, but with nothing >= 6 bpw around it falls back
         // to the bf16 model, which is far slower — worth flagging up front.
         if (pf.name === "sc" && turningOn) {
           checkSelfcalDonor(document.querySelector(`#tokens-${fieldName} [data-paint-flag="sc"]`));

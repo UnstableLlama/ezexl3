@@ -26,9 +26,10 @@ _SC_MEASURE_SCRIPT = os.path.join(_VENDOR_DIR, "sc_measure.py")
 _SC_MEASURE_PARALLEL_SCRIPT = os.path.join(os.path.dirname(__file__), "sc_measure_parallel.py")
 _SC_OPTIMIZE_SCRIPT = os.path.join(_VENDOR_DIR, "sc_optimize.py")
 
-# The trace should come from a minimally-distorted model; upstream recommends
-# the unquantized model or a >= 5-6 bpw quant (much faster than bf16).
-_TRACE_DONOR_MIN_BPW = 5.0
+# The trace should come from a minimally-distorted model: the unquantized
+# model or a >= 6 bpw quant (much faster than bf16). Lower quants are never
+# auto-picked as donors.
+_TRACE_DONOR_MIN_BPW = 6.0
 
 
 def check_selfcal_support() -> Optional[str]:

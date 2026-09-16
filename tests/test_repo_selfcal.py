@@ -56,17 +56,21 @@ class SelfcalDiscoveryTests(unittest.TestCase):
     def test_trace_donor_prefers_highest_quant_at_or_above_min(self):
         with tempfile.TemporaryDirectory() as model_dir:
             _make_quant_dir(model_dir, "2")
-            five = _make_quant_dir(model_dir, "5")
+            _make_quant_dir(model_dir, "5")  # below the 6 bpw floor
             six = _make_quant_dir(model_dir, "6")
+            eight = _make_quant_dir(model_dir, "8")
             os.makedirs(os.path.join(model_dir, "w-4"))  # ignored: no config
+            self.assertEqual(repo_selfcal._find_trace_donor(model_dir), eight)
+            os.remove(os.path.join(eight, "config.json"))
             self.assertEqual(repo_selfcal._find_trace_donor(model_dir), six)
             os.remove(os.path.join(six, "config.json"))
-            self.assertEqual(repo_selfcal._find_trace_donor(model_dir), five)
+            self.assertIsNone(repo_selfcal._find_trace_donor(model_dir))
 
     def test_trace_donor_none_when_only_low_bpw_quants(self):
         with tempfile.TemporaryDirectory() as model_dir:
             _make_quant_dir(model_dir, "2")
             _make_quant_dir(model_dir, "4.5")
+            _make_quant_dir(model_dir, "5.5")
             self.assertIsNone(repo_selfcal._find_trace_donor(model_dir))
 
     def test_probe_anchor_is_lowest_integer_quant(self):
@@ -254,6 +258,18 @@ class SelfcalCliWiringTests(unittest.TestCase):
         self.assertEqual(kwargs["sc_bpws"], {"4.5"})
         self.assertEqual(kwargs["head_bits"], 5)
         self.assertEqual(kwargs["quant_args"], ["-hb", "5", "-vb", "16"])
+
+    def test_head_bits_accepts_16_and_rejects_out_of_range(self):
+        with patch("ezexl3.repo.run_repo", return_value=0) as mock_run:
+            rc = cli.main(["repo", "-m", "/tmp/model", "-b", "4", "-hb", "16", "-np"])
+        self.assertEqual(rc, 0)
+        kwargs = mock_run.call_args.kwargs
+        self.assertEqual(kwargs["head_bits"], 16)
+        self.assertEqual(kwargs["quant_args"], ["-hb", "16"])
+        for bad in ("0", "9", "12"):
+            with patch("ezexl3.repo.run_repo", return_value=0):
+                with self.assertRaises(SystemExit):
+                    cli.main(["repo", "-m", "/tmp/model", "-b", "4", "-hb", bad, "-np"])
 
     def test_bare_sc_applies_to_all_bpws(self):
         with patch("ezexl3.repo.run_repo", return_value=0) as mock_run:
