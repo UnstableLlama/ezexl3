@@ -29,6 +29,8 @@ _KEY_ENGINE = web.AppKey("engine", ChatEngine)
 _KEY_SPAWN = web.AppKey("_spawn_on_exit", list)
 _KEY_HOST = web.AppKey("_host", str)
 _KEY_PORT = web.AppKey("_port", int)
+# In-flight /api/model/load: {"task": asyncio.Task | None, "error": str}.
+_KEY_LOAD = web.AppKey("_load", dict)
 
 
 @web.middleware
@@ -43,6 +45,7 @@ def create_app(engine: ChatEngine) -> web.Application:
     app = web.Application(middlewares=[_no_cache_static])
     app[_KEY_ENGINE] = engine
     app[_KEY_SPAWN] = None  # set by handle_ui_launch
+    app[_KEY_LOAD] = {"task": None, "error": ""}
 
     async def _cleanup_spawn(app):
         cmd = app.get(_KEY_SPAWN)
@@ -93,7 +96,11 @@ async def handle_index(request: web.Request) -> web.Response:
 
 async def handle_status(request: web.Request) -> web.Response:
     engine: ChatEngine = request.app[_KEY_ENGINE]
-    return web.json_response(engine.get_status())
+    load = request.app[_KEY_LOAD]
+    status = engine.get_status()
+    status["loading"] = load["task"] is not None and not load["task"].done()
+    status["load_error"] = load["error"]
+    return web.json_response(status)
 
 
 async def handle_get_settings(request: web.Request) -> web.Response:
@@ -400,33 +407,53 @@ async def handle_model_load(request: web.Request) -> web.Response:
         batch_slots = ChatEngine.BATCH_SLOTS
     batch_slots = max(1, min(8, batch_slots))
 
-    try:
-        await asyncio.to_thread(
-            engine.load_model,
-            model_dir=model_dir,
-            lora_dirs=lora_dirs,
-            lora_weights=lora_weights,
-            draft_model_dir=draft_model_dir,
-            use_mtp=use_mtp,
-            ngram_min=ngram_min,
-            devices=data.get("devices"),
-            device_ratios=data.get("device_ratios"),
-            cache_size=data.get("cache_size"),
-            cache_quant=data.get("cache_quant"),
-            batch_slots=batch_slots,
-            cpu_offload=_parse_cpu_offload(data.get("cpu_offload")),
-            ngram_ram=bool(data.get("ngram_ram")),
+    load = request.app[_KEY_LOAD]
+    if load["task"] is not None and not load["task"].done():
+        return web.json_response(
+            {"ok": False, "error": "A model load is already in progress"},
+            status=409,
         )
+
+    async def run_load() -> str:
+        try:
+            await asyncio.to_thread(
+                engine.load_model,
+                model_dir=model_dir,
+                lora_dirs=lora_dirs,
+                lora_weights=lora_weights,
+                draft_model_dir=draft_model_dir,
+                use_mtp=use_mtp,
+                ngram_min=ngram_min,
+                devices=data.get("devices"),
+                device_ratios=data.get("device_ratios"),
+                cache_size=data.get("cache_size"),
+                cache_quant=data.get("cache_quant"),
+                batch_slots=batch_slots,
+                cpu_offload=_parse_cpu_offload(data.get("cpu_offload")),
+                ngram_ram=bool(data.get("ngram_ram")),
+            )
+            return ""
+        except Exception as e:
+            err = str(e) or type(e).__name__
+        # Outside the except block so the traceback (which pins the half-loaded
+        # model's frames) is gone before the final gc + empty_cache.
+        await asyncio.to_thread(engine.unload)
+        load["error"] = err
+        return err
+
+    # A multi-minute load can outlive the browser's connection (Firefox drops
+    # idle requests on a network link change). The load runs as its own task,
+    # shielded from the handler's cancellation, so it always finishes and
+    # cleans up; the UI then reads the outcome from /api/status.
+    load["error"] = ""
+    load["task"] = asyncio.ensure_future(run_load())
+    err = await asyncio.shield(load["task"])
+    if not err:
         return web.json_response({
             "ok": True,
             "status": engine.get_status(),
             "settings": engine.settings.to_dict(),
         })
-    except Exception as e:
-        err = str(e)
-    # Outside the except block so the traceback (which pins the half-loaded
-    # model's frames) is gone before the final gc + empty_cache.
-    await asyncio.to_thread(engine.unload)
     return web.json_response({"ok": False, "error": err}, status=500)
 
 

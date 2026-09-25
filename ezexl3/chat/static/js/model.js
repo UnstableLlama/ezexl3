@@ -447,25 +447,65 @@ async function loadModel() {
     });
     const data = await res.json();
     if (data.ok) {
-      modelLoaded = true;
-      settings = data.settings;
-      modes = data.status.available_modes || {};
-      populateUI(data.status);
-      setModelPanelLoaded(data.status.model_name);
-      updateChatEnabled();
-      updateDashboardButton();
-      showLoraPanel(true);
-      syncLoraState(data.status);
-      showDraftPanel(true);
-      syncDraftState(data.status);
-      saveCpuOffload(cpuOffload);
+      onModelLoaded(data.status, data.settings, cpuOffload);
     } else {
       loadingEl.textContent = 'Error: ' + (data.error || 'Unknown error');
       loadBtn.disabled = !browseIsModel;
     }
   } catch (e) {
-    loadingEl.textContent = 'Error: ' + e.message;
+    // The connection dropped mid-load (e.g. Firefox pruning idle requests on
+    // a network change). The server keeps loading; wait for it via status.
+    await awaitLoadViaStatus(cpuOffload, e);
+  }
+}
+
+function onModelLoaded(status, loadedSettings, cpuOffload) {
+  modelLoaded = true;
+  settings = loadedSettings;
+  modes = status.available_modes || {};
+  populateUI(status);
+  setModelPanelLoaded(status.model_name);
+  updateChatEnabled();
+  updateDashboardButton();
+  showLoraPanel(true);
+  syncLoraState(status);
+  showDraftPanel(true);
+  syncDraftState(status);
+  saveCpuOffload(cpuOffload);
+}
+
+async function awaitLoadViaStatus(cpuOffload, fetchError) {
+  const loadingEl = document.getElementById('model-loading');
+  const loadBtn = document.getElementById('load-btn');
+  let failures = 0;
+  while (true) {
+    await new Promise(r => setTimeout(r, 2000));
+    let status;
+    try {
+      status = await (await fetch('/api/status')).json();
+      failures = 0;
+    } catch (e) {
+      // Server unreachable for ~a minute: give up and report.
+      if (++failures >= 30) {
+        loadingEl.textContent = 'Error: ' + fetchError.message;
+        loadBtn.disabled = !browseIsModel;
+        return;
+      }
+      continue;
+    }
+    if (status.loading) continue;
+    if (status.loaded) {
+      try {
+        const s = await (await fetch('/api/settings')).json();
+        onModelLoaded(status, s, cpuOffload);
+        return;
+      } catch (e) {
+        continue;
+      }
+    }
+    loadingEl.textContent = 'Error: ' + (status.load_error || fetchError.message);
     loadBtn.disabled = !browseIsModel;
+    return;
   }
 }
 

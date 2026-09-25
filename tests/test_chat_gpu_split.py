@@ -227,3 +227,54 @@ class FailedLoadServerTests(unittest.TestCase):
         self.assertFalse(data["ok"])
         self.assertIn("out of memory", data["error"])
         engine.unload.assert_called_once()
+
+    def test_load_outlives_client_disconnect(self):
+        """A client that drops mid-load (Firefox on a network change) must
+        not orphan the load: it still finishes, a failure still unloads,
+        and /api/status reports the outcome."""
+        import asyncio
+        import threading
+        from aiohttp.test_utils import TestClient, TestServer
+        from ezexl3.chat.server import create_app
+
+        model_dir = tempfile.mkdtemp()
+        with open(os.path.join(model_dir, "config.json"), "w") as f:
+            f.write("{}")
+        release = threading.Event()
+
+        def slow_fail(**kwargs):
+            release.wait(10)
+            raise RuntimeError("CUDA out of memory")
+
+        engine = inference.ChatEngine(model_dir=None)
+        engine.load_model = MagicMock(side_effect=slow_fail)
+        engine.unload = MagicMock()
+        engine.get_status = MagicMock(return_value={"loaded": False})
+
+        async def run():
+            with patch("ezexl3.chat.server._load_config", return_value={}):
+                async with TestClient(TestServer(create_app(engine))) as client:
+                    req = asyncio.ensure_future(client.post(
+                        "/api/model/load", json={"model_dir": model_dir}))
+                    for _ in range(100):
+                        if engine.load_model.called:
+                            break
+                        await asyncio.sleep(0.02)
+                    req.cancel()  # browser drops the connection
+                    busy = await (await client.get("/api/status")).json()
+                    second = await client.post(
+                        "/api/model/load", json={"model_dir": model_dir})
+                    release.set()
+                    for _ in range(100):
+                        done = await (await client.get("/api/status")).json()
+                        if not done["loading"]:
+                            break
+                        await asyncio.sleep(0.02)
+                    return busy, second.status, done
+
+        busy, second_status, done = asyncio.run(run())
+        self.assertTrue(busy["loading"])
+        self.assertEqual(second_status, 409)
+        self.assertFalse(done["loading"])
+        self.assertIn("out of memory", done["load_error"])
+        engine.unload.assert_called_once()
